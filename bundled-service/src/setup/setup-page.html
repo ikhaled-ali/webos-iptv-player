@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
 <meta name="description" content="Set up IPTV with playlist URL(s), Xtream account(s), or M3U file(s)">
 <title>Set up IPTV</title>
 <style>
@@ -2234,7 +2235,10 @@
   // Refresh persisted rows from /uploads. Leaves in-progress and just-finished
   // rows (data-id set after success) alone so a stale fetch doesn't wipe them.
   function refresh() {
-    fetch("/uploads").then(function (r) { return r.json(); }).then(function (items) {
+    fetch(authenticatedUrl("/uploads"), { cache: "no-store" }).then(function (r) {
+      if (!r.ok) throw new Error("Could not list uploads");
+      return r.json();
+    }).then(function (items) {
       var existingIds = {};
       Array.from(list.querySelectorAll("li[data-id]")).forEach(function (n) { existingIds[n.dataset.id] = n; });
       var seen = {};

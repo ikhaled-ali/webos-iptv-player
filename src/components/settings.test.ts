@@ -2393,7 +2393,7 @@ describe('Settings Xtream section', () => {
       {
         id,
         name: 'My Provider',
-        url: 'http://host:8080',
+        url: 'https://host:8080',
         source: 'xtream',
         xtream: { username: 'user1', password: 'pass1', liveOutput: 'ts' },
       },
@@ -2581,7 +2581,10 @@ describe('Settings Xtream Live categories', () => {
     state.playlists = [account({ liveCategories })];
     settings.render();
     const card = container.querySelector<HTMLElement>('#xtream-entries .xtream-card')!;
-    card.querySelector<HTMLInputElement>('.xtream-url')!.value = 'host:8080/';
+    // Preserve the *explicit* HTTP origin of the previously saved account.
+    // A scheme-less URL now defaults to HTTPS and changes the origin, so
+    // clearing origin-specific category filters would be correct in that case.
+    card.querySelector<HTMLInputElement>('.xtream-url')!.value = 'http://host:8080/';
     card.querySelector<HTMLInputElement>('.xtream-password')!.value = 'p2';
     click('#save-settings');
     expect(savedXtream()[0].xtream).toEqual({

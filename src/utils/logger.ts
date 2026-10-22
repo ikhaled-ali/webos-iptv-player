@@ -4,11 +4,12 @@
  * All logs are prefixed with `[tag]` so they can be filtered in ares-inspect
  * (Chromium DevTools), and timing helpers make stage durations visible.
  *
- * Default level is 'debug' so everything is visible in ares-inspect without
- * any setup. Logging cost is negligible (<0.01% CPU even on webOS 5).
- * To quiet things down: Logger.setLevel('warn') or
+ * Default level is 'warn' to reduce disclosure on production TVs.
+ * To enable diagnostics: Logger.setLevel('debug') or
  *   localStorage.setItem('iptv_log_level', 'warn'); location.reload();
  */
+
+import { redactLogString, redactLogValue } from './redact-log';
 
 type Level = 'debug' | 'info' | 'warn' | 'error' | 'silent';
 
@@ -16,7 +17,7 @@ const LEVEL_RANK: Record<Level, number> = {
   debug: 10, info: 20, warn: 30, error: 40, silent: 100,
 };
 
-let currentLevel: Level = 'debug';
+let currentLevel: Level = 'warn';
 try {
   const stored = localStorage.getItem('iptv_log_level');
   if (stored && stored in LEVEL_RANK) currentLevel = stored as Level;
@@ -38,14 +39,14 @@ export interface TaggedLogger {
 export function createLogger(tag: string): TaggedLogger {
   const prefix = `[${tag}]`;
   return {
-    debug: (...args) => { if (should('debug')) console.log(prefix, ...args); },
-    info:  (...args) => { if (should('info'))  console.log(prefix, ...args); },
-    warn:  (...args) => { if (should('warn'))  console.warn(prefix, ...args); },
-    error: (...args) => { if (should('error')) console.error(prefix, ...args); },
+    debug: (...args) => { if (should('debug')) console.log(prefix, ...args.map(a => redactLogValue(a))); },
+    info:  (...args) => { if (should('info')) console.log(prefix, ...args.map(a => redactLogValue(a))); },
+    warn:  (...args) => { if (should('warn')) console.warn(prefix, ...args.map(a => redactLogValue(a))); },
+    error: (...args) => { if (should('error')) console.error(prefix, ...args.map(a => redactLogValue(a))); },
     time(label: string) {
       const start = Date.now();
       return () => {
-        if (should('info')) console.log(prefix, `${label}: ${Date.now() - start}ms`);
+        if (should('info')) console.log(prefix, redactLogString(`${label}: ${Date.now() - start}ms`));
       };
     },
   };

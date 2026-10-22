@@ -1592,7 +1592,7 @@ describe('Player VOD mode', () => {
     // A rejected source never becomes currentSrc, so the URL comes from the request.
     const detail = logged.mock.calls[0].join(' ');
     expect(detail).toContain('extension=mkv');
-    expect(detail).toContain('url=http://host:8080/movie/***/***/10.mkv');
+    expect(detail).toContain('url=[URL REDACTED]');
     logged.mockRestore();
     expect(showToast).toHaveBeenCalledWith('Unable to play this video.');
     expect(r.onBack).toHaveBeenCalled();

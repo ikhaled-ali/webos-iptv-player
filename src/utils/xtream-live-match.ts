@@ -175,9 +175,16 @@ function isCanonicalXtreamNonLiveUrl(value: string, basePathPrefix: string): boo
   const authorityStart = schemeEnd + 3;
   let pathStart = value.indexOf('/', authorityStart);
   if (pathStart < 0) return false;
-  if (basePathPrefix && value.indexOf(basePathPrefix) === 0
-      && value.charCodeAt(basePathPrefix.length) === 47) {
-    pathStart = basePathPrefix.length;
+  // The default Xtream protocol is HTTPS, but existing M3U streams
+  // can still use explicit HTTP. Match a configured *host/path* without
+  // imposing that default protocol on the playlist's actual URLs.
+  // No URL allocations per entry: this runs over large M3U catalogs.
+  const delimiter = basePathPrefix.indexOf('://');
+  const authorityAndPath = delimiter >= 0
+    ? basePathPrefix.slice(delimiter + 3) : '';
+  if (authorityAndPath && value.startsWith(authorityAndPath, authorityStart)
+      && value.charCodeAt(authorityStart + authorityAndPath.length) === 47) {
+    pathStart = authorityStart + authorityAndPath.length;
   }
   if (pathStart !== kindStart) return false;
   let pathEnd = value.indexOf('?', pathStart);

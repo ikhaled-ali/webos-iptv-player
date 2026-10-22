@@ -27,10 +27,10 @@ export function normalizeXtreamLiveOutputPreference(
   return value === 'auto' || value === 'm3u8' || value === 'ts' ? value : 'ts';
 }
 
-/** `scheme://host[:port][/path]` with a default http scheme and no trailing slash. */
+/** `scheme://host[:port][/path]` with a default https scheme and no trailing slash. */
 export function normalizeXtreamBaseUrl(input: string): string {
   let s = input.trim();
-  if (!/^https?:\/\//i.test(s)) s = 'http://' + s;
+  if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
   return s.replace(/\/+$/, '');
 }
 

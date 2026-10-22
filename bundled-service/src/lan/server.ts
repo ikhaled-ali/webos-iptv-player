@@ -40,11 +40,18 @@ function getLanIp(): string {
 
 function send(res: http.ServerResponse, status: number, contentType: string, body: string | Buffer): void {
   const buf = typeof body === 'string' ? bufferFrom(body, 'utf-8') : body;
-  res.writeHead(status, {
+  const headers: http.OutgoingHttpHeaders = {
     'Content-Type': contentType,
     'Content-Length': buf.length,
-    'Access-Control-Allow-Origin': '*',
-  });
+    'Cache-Control': 'no-store',
+    'Pragma': 'no-cache',
+    'Referrer-Policy': 'no-referrer',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+  };
+  // Cross-origin reads are needed by the packaged TV client only.
+  if (isLoopback(res.req)) headers['Access-Control-Allow-Origin'] = '*';
+  res.writeHead(status, headers);
   res.end(buf);
 }
 
@@ -106,6 +113,8 @@ export function startServer(
   setupState = new SetupStateStore(),
 ): Promise<{ server: http.Server; port: number }> {
   let boundPort = port;
+  // TV-local by default. Remote HTTP setup explicitly opts into LAN exposure.
+  const allowInsecureLanSetup = process.env.IPTV_ALLOW_INSECURE_LAN_SETUP === '1';
   const setupToken = randomBytes(6).toString('hex');
   const pairingCode = padStart(String(secureRandomInt(10000)), 4, '0');
   const pairingAttempts = Object.create(null) as {
@@ -130,9 +139,10 @@ export function startServer(
         sendJson(res, 200, {
           ip,
           port: parseInt(hostPort, 10) || boundPort,
-          setupUrl: 'http://' + ip + ':' + hostPort + '/setup?token=' + setupToken,
-          manualUrl: 'http://' + ip + ':' + hostPort,
-          pairingCode,
+          setupUrl: allowInsecureLanSetup
+            ? 'http://' + ip + ':' + hostPort + '/setup?token=' + setupToken : '',
+          manualUrl: allowInsecureLanSetup ? 'http://' + ip + ':' + hostPort : '',
+          pairingCode: allowInsecureLanSetup ? pairingCode : '',
           dataDir,
         });
       } else if ((pathname === '/' || pathname === '/setup') && req.method === 'GET') {
@@ -240,7 +250,11 @@ export function startServer(
         } catch (e) {
           sendJson(res, 400, { error: e instanceof Error ? e.message : String(e) });
         }
-      } else if (pathname === '/uploads') {
+      } else if (pathname === '/uploads' && req.method === 'GET') {
+        if (!isLoopback(req) && query('token') !== setupToken) {
+          sendJson(res, 403, { error: 'Invalid setup token' });
+          return;
+        }
         const base = 'http://' + host;
         const items = uploads.list().map((m) => ({
           ...m,
@@ -267,12 +281,21 @@ export function startServer(
           const ok = uploads.delete(id);
           if (ok) { try { onChange?.('uploads-changed'); } catch (cbErr) { console.error('[lan] onChange callback threw:', cbErr); } }
           sendJson(res, ok ? 200 : 404, { deleted: ok, id });
-        } else {
+        } else if (req.method === 'GET') {
+          // Raw M3U files may contain live provider usernames/passwords.
+          // Do not expose contents over the unencrypted LAN, even to a
+          // paired client holding the setup token.
+          if (!isLoopback(req)) {
+            sendJson(res, 403, { error: 'TV-local access only' });
+            return;
+          }
           try {
             send(res, 200, 'audio/mpegurl; charset=utf-8', uploads.read(id));
           } catch {
-            send(res, 404, 'text/plain; charset=utf-8', 'Upload not found: ' + id);
+            send(res, 404, 'text/plain; charset=utf-8', 'Upload not found');
           }
+        } else {
+          sendJson(res, 405, { error: 'Method not allowed' });
         }
       } else {
         send(res, 404, 'text/plain; charset=utf-8',
@@ -281,7 +304,7 @@ export function startServer(
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.indexOf('EPIPE') >= 0 || msg.indexOf('ECONNRESET') >= 0) return;
-      try { send(res, 500, 'text/plain; charset=utf-8', 'Internal error: ' + msg); } catch { /* ignore */ }
+      try { send(res, 500, 'text/plain; charset=utf-8', 'Internal server error'); } catch { /* ignore */ }
     }
   }
 
@@ -300,14 +323,17 @@ export function startServer(
       const addr = server.address();
       const actualPort = addr && typeof addr === 'object' ? addr.port : port;
       boundPort = actualPort;
-      console.log('[lan] listening on http://0.0.0.0:' + actualPort);
-      console.log('[lan] setup page: http://' + getLanIp() + ':' + actualPort + '/setup');
+      const bindHost = allowInsecureLanSetup ? '0.0.0.0' : '127.0.0.1';
+      console.log('[lan] listening on http://' + bindHost + ':' + actualPort);
+      if (allowInsecureLanSetup) {
+        console.warn('[lan] INSECURE phone setup explicitly enabled; HTTP can expose IPTV credentials');
+      }
       // Permanent error handler so post-listen errors don't crash the process.
       server.on('error', (e) => console.error('[lan] server error:', e));
       resolve({ server, port: actualPort });
     };
     server.once('error', onError);
     server.once('listening', onListening);
-    server.listen(port, '0.0.0.0');
+    server.listen(port, allowInsecureLanSetup ? '0.0.0.0' : '127.0.0.1');
   });
 }

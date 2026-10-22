@@ -36,6 +36,9 @@ async function postUpload(name: string, body: string): Promise<Response> {
 
 beforeAll(async () => {
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'upload-svc-test-'));
+  // This existing suite covers the legacy phone setup behavior. Explicit
+  // opt-in is required after the security hardening; production is local-only.
+  process.env.IPTV_ALLOW_INSECURE_LAN_SETUP = '1';
   const result = await startServer(0, dataDir);
   server = result.server;
   baseUrl = `http://127.0.0.1:${result.port}`;
@@ -52,6 +55,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
   fs.rmSync(dataDir, { recursive: true, force: true });
+  delete process.env.IPTV_ALLOW_INSECURE_LAN_SETUP;
 });
 
 beforeEach(async () => {

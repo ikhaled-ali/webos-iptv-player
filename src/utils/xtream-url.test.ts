@@ -22,8 +22,8 @@ describe('normalizeXtreamBaseUrl', () => {
     expect(normalizeXtreamBaseUrl('http://host:8080')).toBe('http://host:8080');
   });
 
-  it('defaults a missing scheme to http', () => {
-    expect(normalizeXtreamBaseUrl('host:8080')).toBe('http://host:8080');
+  it('defaults a missing scheme to https', () => {
+    expect(normalizeXtreamBaseUrl('host:8080')).toBe('https://host:8080');
   });
 
   it('preserves an https scheme', () => {
@@ -39,7 +39,7 @@ describe('normalizeXtreamBaseUrl', () => {
   });
 
   it('trims surrounding whitespace', () => {
-    expect(normalizeXtreamBaseUrl('  host:8080  ')).toBe('http://host:8080');
+    expect(normalizeXtreamBaseUrl('  host:8080  ')).toBe('https://host:8080');
   });
 });
 
@@ -57,7 +57,7 @@ describe('xtreamPlaylistUrl', () => {
 
   it('normalizes a scheme-less, trailing-slash base', () => {
     expect(xtreamPlaylistUrl({ ...creds, baseUrl: 'host:8080/' })).toBe(
-      'http://host:8080/get.php?username=u1&password=p1&type=m3u_plus&output=ts',
+      'https://host:8080/get.php?username=u1&password=p1&type=m3u_plus&output=ts',
     );
   });
 
@@ -139,7 +139,7 @@ describe('xtreamVodUrl', () => {
   });
   it('normalizes a bare host and strips a trailing slash', () => {
     expect(xtreamVodUrl({ baseUrl: 'host:8080/', username: 'u1', password: 'p1' }, '10', 'mkv'))
-      .toBe('http://host:8080/movie/u1/p1/10.mkv');
+      .toBe('https://host:8080/movie/u1/p1/10.mkv');
   });
   it('URL-encodes credentials', () => {
     expect(xtreamVodUrl({ baseUrl: 'http://host', username: 'a b', password: 'p/1' }, '5', 'mp4'))

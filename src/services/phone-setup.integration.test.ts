@@ -15,7 +15,11 @@ let baseUrl: string;
 let setupToken: string;
 let dataDir: string;
 
+const previousLanOptIn = process.env.IPTV_ALLOW_INSECURE_LAN_SETUP;
 beforeAll(async () => {
+  // Integration test deliberately exercises the legacy, opt-in HTTP setup
+  // using fake credentials; production stays loopback-only by default.
+  process.env.IPTV_ALLOW_INSECURE_LAN_SETUP = '1';
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phone-setup-test-'));
   const result = await startServer(0, dataDir);
   server = result.server;
@@ -29,6 +33,8 @@ afterAll(async () => {
   setServicePort(null);
   await new Promise<void>((resolve) => server.close(() => resolve()));
   fs.rmSync(dataDir, { recursive: true, force: true });
+  if (previousLanOptIn === undefined) delete process.env.IPTV_ALLOW_INSECURE_LAN_SETUP;
+  else process.env.IPTV_ALLOW_INSECURE_LAN_SETUP = previousLanOptIn;
 });
 
 beforeEach(async () => {

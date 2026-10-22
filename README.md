@@ -14,6 +14,12 @@ It modifies a local clone after verifying exact source-code anchors. The origina
 GitHub code could have changed; if it has, the patch script stops without
 writing partial changes.
 
+This checkout already contains the applied hardening changes. Do not rerun
+the patcher here. The applied code also fixes Node.js 0.12 response handling,
+redacts quoted assignments and authorization headers, and bounds cyclic
+error causes. The runtime smoke test checks both the secure default and
+the explicitly enabled legacy mode.
+
 ## Changes included
 
 - **LAN service binds to 127.0.0.1 by default**, not 0.0.0.0. Phone-based setup

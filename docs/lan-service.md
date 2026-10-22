@@ -10,6 +10,12 @@ ES5/CommonJS, and `scripts/service-compat-gate.mjs` scans the final JavaScript
 for newer syntax and APIs. `bundled-service/src/compat.ts` prefers native APIs
 on newer TVs and supplies focused fallbacks for Node 0.12.
 
+The listener binds only to `127.0.0.1` by default. Phone setup and uploads
+are disabled, and `/info` returns empty setup URLs and pairing code. Setting
+`IPTV_ALLOW_INSECURE_LAN_SETUP=1` explicitly enables the legacy LAN mode
+described below. That mode uses plain HTTP and can expose credentials to
+network interception. Raw playlist downloads remain local even when paired.
+
 ## Architecture
 
 ```
@@ -23,7 +29,8 @@ on newer TVs and supplies focused fallbacks for Node 0.12.
 ```
 
 - **Luna bus** — in-process IPC between the app and the service.
-- **HTTP** — `0.0.0.0:<ephemeral>` for phones, `127.0.0.1:<same>` for the app's reconcile fetches.
+- **HTTP** — loopback only by default; explicit legacy opt-in binds to all
+  interfaces for phones and the app's reconcile fetches.
 
 ## APIs
 
@@ -54,9 +61,9 @@ HTTP (called by phones, and by the app for reconcile):
 | `/setup-actions` | GET | Loopback-only list consumed by the TV app. |
 | `/setup-actions/:id` | DELETE | Loopback-only acknowledgement from the TV app. |
 | `/setup-actions/:id?token=…` | GET | Phone-facing application status. |
-| `/uploads` | GET | List all stored uploads with serve-back URLs. |
+| `/uploads` | GET | List uploads; remote callers require the setup token. |
 | `/uploads?name=foo.m3u&token=…` | POST | Save a playlist; fires `serviceEvents`. |
-| `/uploads/:id[.m3u]` | GET | Serve a stored playlist. |
+| `/uploads/:id[.m3u]` | GET | Serve a stored playlist over loopback only. |
 | `/uploads/:id?token=…` | DELETE | Remove an upload; loopback callers do not need the token. |
 
 ## Event-driven updates
@@ -102,8 +109,13 @@ the QR code. It also returns a random four-digit code for computers that open
 the short root URL manually. The public page exchanges that code for the full
 token; five failures from one client lock pairing for one minute.
 
+Setup URLs and pairing codes are advertised only in the explicit legacy
+mode. Responses disable caching, referrers, framing, and content sniffing.
+Only loopback requests receive the cross-origin read header needed by the
+packaged app. These controls do not encrypt the legacy HTTP connection.
+
 The token is required to submit source changes, query their status, upload M3U
-files, read the sanitized setup state, or remotely delete uploads. Publishing
+files, list uploads remotely, read the sanitized setup state, or remotely delete uploads. Publishing
 state and reading or acknowledging queued actions is loopback-only, which
 prevents another LAN client from injecting state or reading Xtream
 credentials. Upload identifiers are validated before file access so requests

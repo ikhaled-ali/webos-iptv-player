@@ -16,7 +16,7 @@ REDACT_LOG_TS = r'''/**
  * path segments, queries, URL userinfo, and provider-defined formats.
  */
 const URL_IN_TEXT = /\b(?:https?|rtsp):\/\/[^\s<>"'`]+/gi;
-const CREDENTIAL_ASSIGNMENT = /\b(password|passwd|username|token|api[_-]?key|authorization|secret)\s*[:=]\s*[^\s,;}]+/gi;
+const CREDENTIAL_ASSIGNMENT = /\b(password|passwd|username|token|api[_-]?key|authorization|secret)["']?\s*[:=]\s*(?:(?:Bearer|Basic)\s+[^\s,;}]+|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)/gi;
 const SECRET_PROPERTY = /password|passwd|username|token|api[_-]?key|authorization|secret|\burl\b|uri|headers/i;
 
 export function redactLogString(input: string): string {
@@ -28,14 +28,14 @@ export function redactLogString(input: string): string {
 export function redactLogValue(value: unknown, depth = 0): unknown {
   if (typeof value === 'string') return redactLogString(value);
   if (value === null || typeof value !== 'object') return value;
+  if (depth >= 4) return '[OBJECT HIDDEN]';
   if (value instanceof Error) {
     return {
-      name: value.name,
+      name: redactLogString(value.name),
       message: redactLogString(value.message),
       stack: value.stack ? redactLogString(value.stack) : undefined,
     };
   }
-  if (depth >= 4) return '[OBJECT HIDDEN]';
   if (Array.isArray(value)) return value.map(item => redactLogValue(item, depth + 1));
   const result: Record<string, unknown> = {};
   for (const key of Object.keys(value)) {
@@ -87,14 +87,98 @@ describe('credential-safe logger', () => {
 '''
 
 
-SERVER_SECURITY_TEST_TS = r'''import { describe, it, expect } from 'vitest';
+SERVER_SECURITY_TEST_TS = r'''import { describe, it, expect, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import type { AddressInfo } from 'net';
 import { startServer } from './server';
+import { UploadStore } from '../upload/store';
 
 describe('secure-by-default LAN service', () => {
+  it('requires remote listing authorization and keeps raw playlists local even when paired', async () => {
+    const previous = process.env.IPTV_ALLOW_INSECURE_LAN_SETUP;
+    process.env.IPTV_ALLOW_INSECURE_LAN_SETUP = '1';
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'iptv-remote-access-'));
+    let server: Awaited<ReturnType<typeof startServer>>['server'] | undefined;
+    try {
+      const started = await startServer(0, directory);
+      server = started.server;
+      expect((server.address() as AddressInfo).address).toBe('0.0.0.0');
+      const base = `http://127.0.0.1:${started.port}`;
+      const info = await (await fetch(`${base}/info`)).json() as { setupUrl: string };
+      const token = new URL(info.setupUrl).searchParams.get('token')!;
+      const playlist = '#EXTM3U\n#EXTINF:-1,ch1\nhttp://host/live/u1/p1/1.ts\n';
+      const upload = new UploadStore(directory).save('a.m3u', playlist);
+
+      const remoteGet = (url: string): { status: number; headers: Record<string, unknown>; body: string } => {
+        const request = {
+          url, method: 'GET', headers: { host: '127.0.0.1' },
+          socket: { remoteAddress: '192.0.2.1' },
+        };
+        const result = { status: 0, headers: {} as Record<string, unknown>, body: '' };
+        server!.emit('request', request, {
+          req: request,
+          setHeader: (name: string, value: unknown) => { result.headers[name] = value; },
+          writeHead: (status: number, headers: Record<string, unknown>) => {
+            result.status = status;
+            Object.assign(result.headers, headers);
+          },
+          end: (body: Buffer) => { result.body = body.toString('utf8'); },
+        });
+        expect(result.headers['Access-Control-Allow-Origin']).toBeUndefined();
+        expect(result.headers['Cache-Control']).toBe('no-store');
+        expect(result.headers['Referrer-Policy']).toBe('no-referrer');
+        expect(result.headers['X-Content-Type-Options']).toBe('nosniff');
+        expect(result.headers['X-Frame-Options']).toBe('DENY');
+        return result;
+      };
+
+      expect(remoteGet('/uploads').status).toBe(403);
+      expect(remoteGet('/uploads?token=invalid').status).toBe(403);
+      const listing = remoteGet(`/uploads?token=${token}`);
+      expect(listing.status).toBe(200);
+      expect(JSON.parse(listing.body)).toHaveLength(1);
+      for (const suffix of ['', `?token=${token}`]) {
+        const raw = remoteGet(`/uploads/${upload.id}.m3u${suffix}`);
+        expect(raw.status).toBe(403);
+        expect(raw.body).not.toContain('p1');
+      }
+      expect(await (await fetch(`${base}/uploads/${upload.id}.m3u`)).text()).toBe(playlist);
+    } finally {
+      if (server) await new Promise<void>(resolve => server!.close(() => resolve()));
+      fs.rmSync(directory, { recursive: true, force: true });
+      if (previous === undefined) delete process.env.IPTV_ALLOW_INSECURE_LAN_SETUP;
+      else process.env.IPTV_ALLOW_INSECURE_LAN_SETUP = previous;
+    }
+  });
+
+  it('sends local responses without the newer ServerResponse.req property', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'iptv-legacy-response-'));
+    const { server } = await startServer(0, directory);
+    try {
+      const headers: Record<string, unknown> = {};
+      const response = {
+        setHeader: vi.fn((name: string, value: unknown) => { headers[name] = value; }),
+        writeHead: vi.fn((_status: number, values: Record<string, unknown>) => {
+          Object.assign(headers, values);
+        }),
+        end: vi.fn(),
+      };
+      server.emit('request', {
+        url: '/info', method: 'GET', headers: { host: '127.0.0.1' },
+        socket: { remoteAddress: '127.0.0.1' },
+      }, response);
+      expect(response.writeHead).toHaveBeenCalledWith(200, expect.any(Object));
+      expect(response.end).toHaveBeenCalledOnce();
+      expect(headers['Access-Control-Allow-Origin']).toBe('*');
+      expect(headers['Cache-Control']).toBe('no-store');
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it('binds to loopback and does not advertise insecure phone onboarding', async () => {
     const previous = process.env.IPTV_ALLOW_INSECURE_LAN_SETUP;
     delete process.env.IPTV_ALLOW_INSECURE_LAN_SETUP;
@@ -149,8 +233,6 @@ REPLACEMENTS = {
       "    'X-Content-Type-Options': 'nosniff',\n" \
       "    'X-Frame-Options': 'DENY',\n" \
       "  };\n" \
-      "  // Cross-origin reads are needed by the packaged TV client only.\n" \
-      "  if (isLoopback(res.req)) headers['Access-Control-Allow-Origin'] = '*';\n" \
       "  res.writeHead(status, headers);",
     ),
     (
@@ -212,6 +294,55 @@ REPLACEMENTS = {
       "    server.listen(port, '0.0.0.0');",
       "    server.listen(port, allowInsecureLanSetup ? '0.0.0.0' : '127.0.0.1');",
     ),
+    (
+      "    const server = http.createServer((req, res) => {",
+      "    const server = http.createServer((req, res) => {\n"
+      "      // Node 0.12 has no res.req; decide CORS while the request is available.\n"
+      "      if (isLoopback(req)) res.setHeader('Access-Control-Allow-Origin', '*');",
+    ),
+  ],
+  'scripts/service-runtime-smoke.js': [
+    (
+      "          status: res.statusCode,",
+      "          status: res.statusCode,\n          headers: res.headers,",
+    ),
+    (
+      "    req.on('error', reject);",
+      "    req.on('error', reject);\n"
+      "    req.setTimeout(5000, function () {\n"
+      "      req.abort();\n"
+      "      reject(new Error('HTTP request timed out: ' + method + ' ' + route.split('?')[0]));\n"
+      "    });",
+    ),
+    (
+      "startServer(0, dataDir).then(function (bound) {",
+      r'''delete process.env.IPTV_ALLOW_INSECURE_LAN_SETUP;
+startServer(0, dataDir).then(function (bound) {
+  server = bound.server;
+  if (server.address().address !== '127.0.0.1') {
+    throw new Error('Default service must bind only to loopback');
+  }
+  return request(bound.port, 'GET', '/info').then(function (response) {
+    var info = expectStatus(response, 200, '/info');
+    if (info.setupUrl !== '' || info.manualUrl !== '' || info.pairingCode !== '') {
+      throw new Error('Default service must not advertise phone setup');
+    }
+    if (response.headers['access-control-allow-origin'] !== '*' ||
+        response.headers['cache-control'] !== 'no-store' ||
+        response.headers['referrer-policy'] !== 'no-referrer' ||
+        response.headers['x-content-type-options'] !== 'nosniff' ||
+        response.headers['x-frame-options'] !== 'DENY') {
+      throw new Error('Missing local response security headers');
+    }
+    return new Promise(function (resolve) {
+      server.close(function () { server = null; resolve(); });
+    });
+  });
+}).then(function () {
+  process.env.IPTV_ALLOW_INSECURE_LAN_SETUP = '1';
+  return startServer(0, dataDir);
+}).then(function (bound) {''',
+    ),
   ],
   'bundled-service/src/lan/server.test.ts': [
     (
@@ -242,6 +373,10 @@ REPLACEMENTS = {
     ),
   ],
   'src/utils/logger.ts': [
+    (
+      " *   localStorage.setItem('iptv_log_level', 'warn'); location.reload();",
+      " *   localStorage.setItem('iptv_log_level', 'debug'); location.reload();",
+    ),
     (
       " * Default level is 'debug' so everything is visible in ares-inspect without\n" \
       " * any setup. Logging cost is negligible (<0.01% CPU even on webOS 5).\n" \

@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { redactLogString, redactLogValue } from './redact-log';
+import { createLogger } from './logger';
 
 describe('credential-safe logger', () => {
   it('removes Xtream query credentials and URLs completely', () => {
@@ -27,6 +28,38 @@ describe('credential-safe logger', () => {
   });
   it('redacts plain assignments outside URLs', () => {
     expect(redactLogString('password=SECRETPASS')).toBe('password=[REDACTED]');
+  });
+
+  it.each([
+    'Authorization: Bearer SYNTHETIC_SECRET',
+    'Authorization: Basic SYNTHETIC_SECRET',
+    '{"password":"SYNTHETIC_SECRET"}',
+    "password='SYNTHETIC_SECRET with spaces'",
+  ])('scrubs credential assignments through the logger: %s', input => {
+    const output = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      createLogger('Test').warn(input);
+      expect(output).toHaveBeenCalledOnce();
+      expect(JSON.stringify(output.mock.calls)).not.toContain('SYNTHETIC_SECRET');
+      expect(JSON.stringify(output.mock.calls)).not.toContain('with spaces');
+      expect(JSON.stringify(output.mock.calls)).toContain('[REDACTED]');
+    } finally {
+      output.mockRestore();
+    }
+  });
+
+  it('bounds cyclic Error causes before reaching the stack limit', () => {
+    const error = new Error('Request failed') as Error & { cause?: unknown };
+    error.cause = error;
+    const clean = redactLogValue(error) as { cause: { cause: { cause: { cause: unknown } } } };
+    expect(clean.cause.cause.cause.cause).toBe('[OBJECT HIDDEN]');
+  });
+
+  it('redacts credentials in an Error name', () => {
+    const error = new Error('Request failed');
+    error.name = 'token=SYNTHETIC_SECRET';
+    error.stack = 'Request failed';
+    expect(JSON.stringify(redactLogValue(error))).not.toContain('SYNTHETIC_SECRET');
   });
 });
 

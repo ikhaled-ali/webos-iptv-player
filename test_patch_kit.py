@@ -58,6 +58,13 @@ class PatcherTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             patcher.transformed(first, '// fake source')
 
+    def test_server_patch_does_not_require_response_request_property(self):
+        filename = 'bundled-service/src/lan/server.ts'
+        source = (self.root / filename).read_text()
+        patched = patcher.transformed(filename, source)
+        self.assertNotIn('isLoopback(res.req)', patched)
+        self.assertIn("if (isLoopback(req)) res.setHeader('Access-Control-Allow-Origin', '*')", patched)
+
     def test_files_to_add_are_valid_and_distinct(self):
         self.assertIn('src/utils/redact-log.ts', patcher.ADDITIONS)
         self.assertIn('src/utils/redact-log.test.ts', patcher.ADDITIONS)
@@ -79,6 +86,8 @@ assert(!x.includes('alice') && !x.includes('pass123'));
 const y = JSON.stringify(redactLogValue({password:'pw987',key: new Error('https://host/live/u/pw987/42.ts')}));
 assert(!y.includes('pw987') && !y.includes('https://host'));
 assert.equal(redactLogString('token=XYZ'), 'token=[REDACTED]');
+assert(!redactLogString('Authorization: Bearer SYNTHETIC_SECRET').includes('SYNTHETIC_SECRET'));
+assert(!redactLogString('{"password":"SYNTHETIC_SECRET"}').includes('SYNTHETIC_SECRET'));
 '''
             (path / 'test.cjs').write_text(js)
             subprocess.run(['node', str(path / 'test.cjs')], cwd=path,

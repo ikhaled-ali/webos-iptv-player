@@ -6,7 +6,7 @@
  *
  * Default level is 'warn' to reduce disclosure on production TVs.
  * To enable diagnostics: Logger.setLevel('debug') or
- *   localStorage.setItem('iptv_log_level', 'warn'); location.reload();
+ *   localStorage.setItem('iptv_log_level', 'debug'); location.reload();
  */
 
 import { redactLogString, redactLogValue } from './redact-log';

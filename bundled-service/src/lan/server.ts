@@ -49,8 +49,6 @@ function send(res: http.ServerResponse, status: number, contentType: string, bod
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
   };
-  // Cross-origin reads are needed by the packaged TV client only.
-  if (isLoopback(res.req)) headers['Access-Control-Allow-Origin'] = '*';
   res.writeHead(status, headers);
   res.end(buf);
 }
@@ -93,7 +91,7 @@ function setupPageHtml(): string {
 }
 
 /**
- * Bind the HTTP server on all interfaces. Pass `0` to let the OS assign a
+ * Bind locally unless insecure LAN setup is enabled. Pass `0` to assign a
  * free ephemeral port (typical production use — the bound port is returned
  * via the resolved promise and reported to the in-app client through Luna).
  *
@@ -310,6 +308,8 @@ export function startServer(
 
   return new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
+      // Node 0.12 has no res.req; decide CORS while the request is available.
+      if (isLoopback(req)) res.setHeader('Access-Control-Allow-Origin', '*');
       handleRequest(req, res).catch(() => {
         try { res.writeHead(500); res.end('Internal Server Error'); } catch { /* ignore */ }
       });

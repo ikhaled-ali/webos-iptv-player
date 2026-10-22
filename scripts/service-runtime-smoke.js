@@ -53,11 +53,16 @@ function request(port, method, route, body) {
       res.on('end', function () {
         resolve({
           status: res.statusCode,
+          headers: res.headers,
           body: Buffer.concat(chunks).toString('utf8'),
         });
       });
     });
     req.on('error', reject);
+    req.setTimeout(5000, function () {
+      req.abort();
+      reject(new Error('HTTP request timed out: ' + method + ' ' + route.split('?')[0]));
+    });
     if (body) req.write(body);
     req.end();
   });
@@ -128,7 +133,32 @@ var state = {
   },
 };
 
+delete process.env.IPTV_ALLOW_INSECURE_LAN_SETUP;
 startServer(0, dataDir).then(function (bound) {
+  server = bound.server;
+  if (server.address().address !== '127.0.0.1') {
+    throw new Error('Default service must bind only to loopback');
+  }
+  return request(bound.port, 'GET', '/info').then(function (response) {
+    var info = expectStatus(response, 200, '/info');
+    if (info.setupUrl !== '' || info.manualUrl !== '' || info.pairingCode !== '') {
+      throw new Error('Default service must not advertise phone setup');
+    }
+    if (response.headers['access-control-allow-origin'] !== '*' ||
+        response.headers['cache-control'] !== 'no-store' ||
+        response.headers['referrer-policy'] !== 'no-referrer' ||
+        response.headers['x-content-type-options'] !== 'nosniff' ||
+        response.headers['x-frame-options'] !== 'DENY') {
+      throw new Error('Missing local response security headers');
+    }
+    return new Promise(function (resolve) {
+      server.close(function () { server = null; resolve(); });
+    });
+  });
+}).then(function () {
+  process.env.IPTV_ALLOW_INSECURE_LAN_SETUP = '1';
+  return startServer(0, dataDir);
+}).then(function (bound) {
   server = bound.server;
   return request(bound.port, 'GET', '/info').then(function (response) {
     var info = expectStatus(response, 200, '/info');

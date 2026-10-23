@@ -1,3 +1,5 @@
+import { protectCredentialFields, revealCredentialFields } from './credential-fields';
+import { unseal, vaultReady, type SealedValue } from './credential-vault';
 import {
   openPersistenceDb,
   requestResult,
@@ -18,6 +20,23 @@ export interface UserDataRecord<T = unknown> {
   expiresAt?: number;
 }
 
+const SNAPSHOT_KEY = 'sealed-user-v1';
+async function decodeRecords<T>(store: UserDataStore, records: UserDataRecord[]): Promise<UserDataRecord<T>[]> {
+  if (!vaultReady()) return records as UserDataRecord<T>[];
+  if (records.length === 1 && records[0].key === SNAPSHOT_KEY) {
+    return unseal(records[0].value as SealedValue, 'user:' + store);
+  }
+  return revealCredentialFields(records) as Promise<UserDataRecord<T>[]>;
+}
+async function encodeRecords(store: UserDataStore, records: UserDataRecord[]): Promise<UserDataRecord[]> {
+  void store;
+  return protectCredentialFields(records);
+}
+export async function migrateEncryptedUserData(): Promise<void> {
+  if (!vaultReady()) return;
+  const records = await loadAllUserRecords();
+  await replaceAllUserData(records);
+}
 let writeChain: Promise<void> = Promise.resolve();
 let writeFailure: unknown = null;
 
@@ -55,7 +74,8 @@ export async function loadUserRecords<T = unknown>(
   }
   try {
     const tx = db.transaction(storeName, 'readonly');
-    return await requestResult(tx.objectStore(storeName).getAll()) as UserDataRecord<T>[];
+    const records = await requestResult(tx.objectStore(storeName).getAll()) as UserDataRecord[];
+    return await decodeRecords<T>(storeName, records);
   } catch (err) {
     log.error(
       'User data read failed',
@@ -97,7 +117,7 @@ Record<UserDataStore, UserDataRecord[]>
       await requestResult(tx.objectStore(storeName).getAll()) as UserDataRecord[],
     ] as const));
     const result = {} as Record<UserDataStore, UserDataRecord[]>;
-    for (const [storeName, items] of records) result[storeName] = items;
+    for (const [storeName, items] of records) result[storeName] = await decodeRecords(storeName, items);
     return result;
   } catch (err) {
     log.error(
@@ -155,6 +175,32 @@ export function migrateUserRecordSets(migrations: UserDataMigration[]): Promise<
         'operation=migrate',
       );
       throw new Error('IndexedDB unavailable');
+    }
+    if (vaultReady()) {
+      const snapshots = new Map<UserDataStore, UserDataRecord[]>();
+      for (const migration of migrations) {
+        let records = snapshots.get(migration.storeName);
+        if (!records) {
+          const tx = db.transaction(migration.storeName);
+          records = await decodeRecords(migration.storeName,
+            await requestResult(tx.objectStore(migration.storeName).getAll()));
+        }
+        if (migration.replaceExisting) records = records.filter(record =>
+          migration.replacePrefix !== null && !record.key.startsWith(migration.replacePrefix));
+        const byKey = new Map(records.map(record => [record.key, record]));
+        for (const record of migration.records) byKey.set(record.key, record);
+        snapshots.set(migration.storeName, [...byKey.values()]);
+      }
+      const encoded = await Promise.all([...snapshots].map(async ([store, records]) =>
+        [store, await encodeRecords(store, records)] as const));
+      const tx = db.transaction([...snapshots.keys(), USER_META_STORE], 'readwrite');
+      for (const [store, records] of encoded) {
+        tx.objectStore(store).clear();
+        for (const record of records) tx.objectStore(store).put(record);
+      }
+      for (const migration of migrations) tx.objectStore(USER_META_STORE).put({ key: `migration:${migration.legacyKey}` });
+      await transactionDone(tx);
+      return;
     }
     try {
       const storeNames = [...new Set(migrations.map(item => item.storeName))];
@@ -225,10 +271,12 @@ export function applyUserChanges(
       throw new Error('IndexedDB unavailable');
     }
     try {
+      const records = await encodeRecords(storeName, puts);
+      const removed = await protectCredentialFields(deletes);
       const tx = db.transaction(storeName, 'readwrite');
       const store = tx.objectStore(storeName);
-      for (const key of deletes) store.delete(key);
-      for (const record of puts) store.put(record);
+      for (const key of removed) store.delete(key);
+      for (const record of records) store.put(record);
       await transactionDone(tx);
     } catch (err) {
       log.error(
@@ -257,11 +305,13 @@ export function replaceAllUserData(
       throw new Error('IndexedDB unavailable');
     }
     try {
+      const encoded = new Map(await Promise.all(USER_DATA_STORES.map(async store =>
+        [store, await encodeRecords(store, records[store] ?? [])] as const)));
       const tx = db.transaction(USER_DATA_STORES, 'readwrite');
       for (const storeName of USER_DATA_STORES) {
         const store = tx.objectStore(storeName);
         store.clear();
-        for (const item of records[storeName] ?? []) store.put(item);
+        for (const item of encoded.get(storeName) ?? []) store.put(item);
       }
       await transactionDone(tx);
     } catch (err) {

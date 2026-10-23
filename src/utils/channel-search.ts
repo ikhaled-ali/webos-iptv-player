@@ -90,7 +90,8 @@ function tokenScore(
       let score: number | null = null;
       if (fieldToken === variant) score = variantIndex === 0 ? 0 : 4;
       else if (fieldToken.startsWith(variant)) score = variantIndex === 0 ? 1 : 5;
-      else if (variantIndex === 0 && variant.length >= 4 && withinOneEdit(variant, fieldToken)) score = 2;
+      else if (fieldToken.includes(variant)) score = variantIndex === 0 ? 2 : 6;
+      else if (variantIndex === 0 && variant.length >= 4 && withinOneEdit(variant, fieldToken)) score = 3;
       if (score !== null && (best === null || score < best)) best = score;
     }
   }
@@ -313,17 +314,26 @@ export function rankPreparedNamesTopK<T>(
 ): RankedSearchResult<T> {
   const q = fold(query.trim());
   if (!q || limit <= 0) return { items: [], hasMore: false };
+  const terms = tokens(query);
   const heap = new BoundedHeap<ScoredNameItem<T>>(limit, compareNameScored);
   let matches = 0;
   for (let i = 0; i < index.items.length; i++) {
     const value = index.values[i];
-    const pos = value.indexOf(q);
-    if (pos === -1) continue;
-    const tier = value === q
-      ? 0
-      : pos === 0
-        ? 1
-        : !isLetterOrNumber(value[pos - 1]) ? 2 : 3;
+    let pos = value.indexOf(q);
+    let tier: number;
+    if (pos >= 0) {
+      tier = value === q ? 0 : pos === 0 ? 1 : !isLetterOrNumber(value[pos - 1]) ? 2 : 3;
+    } else {
+      if (!terms.length) continue;
+      pos = Infinity;
+      for (const term of terms) {
+        const next = value.indexOf(term);
+        if (next < 0) { pos = -1; break; }
+        if (pos === Infinity) pos = next;
+      }
+      if (pos < 0) continue;
+      tier = 4;
+    }
     matches++;
     heap.add({
       item: index.items[i],

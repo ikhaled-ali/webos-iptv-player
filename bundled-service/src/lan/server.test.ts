@@ -7,7 +7,21 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import type * as http from 'http';
-import { startServer } from './server';
+import { startServer as startHttpServer } from './server';
+
+const localTokens = new Map<number, string>();
+async function startServer(...args: Parameters<typeof startHttpServer>): ReturnType<typeof startHttpServer> {
+  const started = await startHttpServer(...args);
+  localTokens.set(started.port, started.localToken);
+  return started;
+}
+
+function fetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  const token = localTokens.get(Number(new URL(url).port));
+  if (token) headers.set('X-IPTV-Local-Token', token);
+  return globalThis.fetch(url, { ...init, headers });
+}
 
 let server: http.Server;
 let baseUrl: string;
@@ -437,7 +451,8 @@ describe('GET /uploads (populated)', () => {
     const items = (await res.json()) as Array<{ id: string; url: string; count: number }>;
     expect(items.map((i) => i.id).sort()).toEqual(['one', 'two']);
     for (const it of items) {
-      expect(it.url).toMatch(new RegExp(`^${baseUrl}/uploads/${it.id}\\.m3u$`));
+      expect(new URL(it.url).pathname).toBe(`/uploads/${it.id}.m3u`);
+      expect(new URL(it.url).searchParams.get('localToken')).toBe(localTokens.get(Number(new URL(baseUrl).port)));
     }
   });
 });

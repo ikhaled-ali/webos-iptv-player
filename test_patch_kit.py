@@ -3,6 +3,7 @@
 import importlib.util
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -57,6 +58,16 @@ class PatcherTests(unittest.TestCase):
         first = next(iter(patcher.REPLACEMENTS))
         with self.assertRaises(ValueError):
             patcher.transformed(first, '// fake source')
+
+    def test_historical_patcher_cannot_recreate_the_unauthenticated_service(self):
+        before = {file: file.read_bytes() for file in self.root.rglob('*') if file.is_file()}
+        result = subprocess.run(
+            [sys.executable, str(Path(patcher.__file__)), str(self.root), '--apply'],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('historical', result.stderr)
+        self.assertEqual(before, {file: file.read_bytes() for file in self.root.rglob('*') if file.is_file()})
 
     def test_server_patch_does_not_require_response_request_property(self):
         filename = 'bundled-service/src/lan/server.ts'

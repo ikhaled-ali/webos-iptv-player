@@ -26,6 +26,7 @@ const {
     channels: [] as unknown[],
     search: vi.fn(() => [] as unknown[]),
     searchRanked: vi.fn(),
+    searchLocalRanked: vi.fn(),
     indexOf: vi.fn(() => 0),
     getChannelCacheSource: vi.fn((): unknown => null),
   },
@@ -109,6 +110,7 @@ vi.mock('../workers/app-worker-client', async () => {
 
 import { Search } from './search';
 import { CONFIG } from '../config';
+import { rankChannels } from '../utils/channel-search';
 import { Focus } from '../navigation/focus-scope';
 
 const account: PlaylistEntry = {
@@ -137,6 +139,7 @@ beforeEach(() => {
     const items = playlistMock.search(query);
     return { items: items.slice(0, limit), hasMore: items.length > limit };
   });
+  playlistMock.searchLocalRanked.mockImplementation((query: string, limit: number) => playlistMock.searchRanked(query, limit));
   playlistMock.indexOf.mockReturnValue(0);
   playlistMock.getChannelCacheSource.mockReturnValue(null);
   epgMock.programmeCacheOrigin.mockReturnValue(null);
@@ -1530,7 +1533,7 @@ describe('Search', () => {
     expect(handlers.onOpenSeries).toHaveBeenCalledWith(account, expect.objectContaining({ seriesId: 's1' }));
   });
 
-  it('shows the preparing hint instead of results or No results until the index is ready', async () => {
+  it('shows available channel matches while the catalog prepares and adds movies when ready', async () => {
     playlistMock.channels = [chan('Alpha')];
     let finishVod!: (items: unknown[]) => void;
     catalogMock.loadAllVodStreams.mockReturnValue(new Promise((resolve) => { finishVod = resolve; }));
@@ -1540,12 +1543,11 @@ describe('Search', () => {
     await view.open(account, 'alpha');
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    const hint = container.querySelector('.search-results .catalog-hint.search-empty');
+    const hint = container.querySelector('.search-results .catalog-hint');
     expect(hint?.textContent).toBe('Preparing search…');
     expect(container.textContent).not.toContain('No results');
-    // No partial results: the channel already indexed stays hidden.
-    expect(container.querySelector('.catalog-tile')).toBeNull();
-    expect(workerMock.run.mock.calls.some(([task]) => task === 'search.query')).toBe(false);
+    expect(container.querySelector('.catalog-tile[data-channel-index="0"]')).not.toBeNull();
+    expect(workerMock.run.mock.calls.some(([task]) => task === 'search.query')).toBe(true);
     await view.setQuery('zzz');
     expect(container.textContent).toContain('Preparing search…');
     expect(container.textContent).not.toContain('No results');
@@ -1561,8 +1563,8 @@ describe('Search', () => {
     info.mockRestore();
   });
 
-  it('waits in the search box while the index prepares, then focuses the first result', async () => {
-    playlistMock.channels = [chan('Alpha')];
+  it('waits in the search box when prepared sources have no match, then focuses an arriving movie', async () => {
+    playlistMock.channels = [chan('Bravo')];
     let finishVod!: (items: unknown[]) => void;
     catalogMock.loadAllVodStreams.mockReturnValue(new Promise((resolve) => { finishVod = resolve; }));
     catalogMock.loadAllSeries.mockResolvedValue([]);
@@ -1581,9 +1583,9 @@ describe('Search', () => {
     expect(document.activeElement).toBe(box);
     expect(container.querySelector('.focused')).toBeNull();
 
-    finishVod([vod('10', 'Movie Two')]);
+    finishVod([vod('10', 'Alpha Movie')]);
     await vi.waitFor(() => expect(handlers.onReleaseTabBar).toHaveBeenCalledTimes(1));
-    expect(container.querySelector('.catalog-tile[data-channel-index="0"]')?.classList.contains('focused'))
+    expect(container.querySelector('.catalog-tile[data-vod-id="10"]')?.classList.contains('focused'))
       .toBe(true);
     box.remove();
   });
@@ -1968,6 +1970,36 @@ describe('Search', () => {
     await view.setQuery('report');
     expect(container.querySelector('.search-program-row')?.textContent).toContain('Evening Report');
     info.mockRestore();
+  });
+
+  it.each([false, true])('matches interior text and partial words across all sources with local fallback=%s', async fallback => {
+    const channel = chan('Alpha Bravo');
+    playlistMock.channels = [channel, chan('Charlie')];
+    epgMock.programmes = {
+      [channel.id]: [prog('Alpha Bravo Report', Date.now() + 3600000, Date.now() + 7200000)],
+    };
+    const { view } = await openWith({
+      vod: [vod('10', 'Alpha—Bravo Movie'), vod('11', 'Charlie Movie')],
+      series: [ser('s1', 'Alpha Bravo Series'), ser('s2', 'Charlie Series')],
+    });
+    const run = workerMock.run.getMockImplementation()!;
+    if (fallback) {
+      workerMock.run.mockRejectedValue(new Error('worker unavailable'));
+      playlistMock.searchLocalRanked.mockImplementation((query: string, limit: number) => {
+        const items = rankChannels([channel, chan('Charlie')], query);
+        return { items: items.slice(0, limit), hasMore: items.length > limit };
+      });
+    }
+    try {
+      for (const query of ['PHA', 'pha   rav', 'rav pha']) {
+        await view.setQuery(query);
+        expect(container.querySelector('.catalog-tile[data-channel-index="0"]')?.textContent).toContain('Alpha Bravo');
+        expect(container.querySelector('.search-program-row')?.textContent).toContain('Alpha Bravo Report');
+        expect(container.querySelector('.catalog-tile[data-vod-id="10"]')?.textContent).toContain('Alpha—Bravo Movie');
+        expect(container.querySelector('.catalog-tile[data-series-id="s1"]')?.textContent).toContain('Alpha Bravo Series');
+        expect(container.textContent).not.toContain('Charlie');
+      }
+    } finally { workerMock.run.mockImplementation(run); }
   });
 
   it('searches EPG program metadata and shows its channel and airtime', async () => {

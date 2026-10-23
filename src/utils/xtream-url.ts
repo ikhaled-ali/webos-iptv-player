@@ -86,6 +86,14 @@ export function xtreamLiveUrl(c: XtreamCredentials, streamId: string, output: Xt
   return `${base}/live/${encodeURIComponent(c.username)}/${encodeURIComponent(c.password)}/${encodeURIComponent(streamId)}.${output}`;
 }
 
+export function xtreamHlsUrl(url: string, account: XtreamCredentials): string | null {
+  const parts = xtreamCredentialsFromLiveUrl(url, account.baseUrl);
+  if (!parts || parts.credentials.username !== account.username || parts.credentials.password !== account.password) return null;
+  const parsed = new URL(url);
+  parsed.pathname = parsed.pathname.replace(/(?:\.(?:ts|m3u8))?$/i, '.m3u8');
+  return parsed.toString();
+}
+
 /** Recover an Xtream account only from unambiguous standard live URL shapes. */
 export function xtreamCredentialsFromLiveUrl(
   url: string,

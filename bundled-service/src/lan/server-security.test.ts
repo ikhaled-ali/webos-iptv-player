@@ -17,14 +17,14 @@ describe('secure-by-default LAN service', () => {
       server = started.server;
       expect((server.address() as AddressInfo).address).toBe('0.0.0.0');
       const base = `http://127.0.0.1:${started.port}`;
-      const info = await (await fetch(`${base}/info`)).json() as { setupUrl: string };
+      const info = await (await fetch(`${base}/info`, { headers: { 'X-IPTV-Local-Token': started.localToken } })).json() as { setupUrl: string };
       const token = new URL(info.setupUrl).searchParams.get('token')!;
       const playlist = '#EXTM3U\n#EXTINF:-1,ch1\nhttp://host/live/u1/p1/1.ts\n';
       const upload = new UploadStore(directory).save('a.m3u', playlist);
 
       const remoteGet = (url: string): { status: number; headers: Record<string, unknown>; body: string } => {
         const request = {
-          url, method: 'GET', headers: { host: '127.0.0.1' },
+          url, method: 'GET', headers: { host: `127.0.0.1:${started.port}` },
           socket: { remoteAddress: '192.0.2.1' },
         };
         const result = { status: 0, headers: {} as Record<string, unknown>, body: '' };
@@ -55,7 +55,7 @@ describe('secure-by-default LAN service', () => {
         expect(raw.status).toBe(403);
         expect(raw.body).not.toContain('p1');
       }
-      expect(await (await fetch(`${base}/uploads/${upload.id}.m3u`)).text()).toBe(playlist);
+      expect(await (await fetch(`${base}/uploads/${upload.id}.m3u`, { headers: { 'X-IPTV-Local-Token': started.localToken } })).text()).toBe(playlist);
     } finally {
       if (server) await new Promise<void>(resolve => server!.close(() => resolve()));
       fs.rmSync(directory, { recursive: true, force: true });
@@ -66,7 +66,7 @@ describe('secure-by-default LAN service', () => {
 
   it('sends local responses without the newer ServerResponse.req property', async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'iptv-legacy-response-'));
-    const { server } = await startServer(0, directory);
+    const { server, port, localToken } = await startServer(0, directory);
     try {
       const headers: Record<string, unknown> = {};
       const response = {
@@ -77,12 +77,13 @@ describe('secure-by-default LAN service', () => {
         end: vi.fn(),
       };
       server.emit('request', {
-        url: '/info', method: 'GET', headers: { host: '127.0.0.1' },
+        url: '/info', method: 'GET', headers: { host: `127.0.0.1:${port}`,
+          origin: 'null', 'x-iptv-local-token': localToken },
         socket: { remoteAddress: '127.0.0.1' },
       }, response);
       expect(response.writeHead).toHaveBeenCalledWith(200, expect.any(Object));
       expect(response.end).toHaveBeenCalledOnce();
-      expect(headers['Access-Control-Allow-Origin']).toBe('*');
+      expect(headers['Access-Control-Allow-Origin']).toBe('null');
       expect(headers['Cache-Control']).toBe('no-store');
     } finally {
       await new Promise<void>(resolve => server.close(() => resolve()));
@@ -100,7 +101,7 @@ describe('secure-by-default LAN service', () => {
       server = started.server;
       expect((server.address() as AddressInfo).address).toBe('127.0.0.1');
       const base = `http://127.0.0.1:${started.port}`;
-      const res = await fetch(`${base}/info`);
+      const res = await fetch(`${base}/info`, { headers: { 'X-IPTV-Local-Token': started.localToken } });
       expect(res.status).toBe(200);
       expect(res.headers.get('cache-control')).toBe('no-store');
       const info = await res.json();

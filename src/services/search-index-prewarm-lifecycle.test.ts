@@ -9,8 +9,9 @@ import {
 } from '../workers/app-worker-client';
 
 const { cacheMock } = vi.hoisted(() => ({
-  cacheMock: { reserveDelayMs: 0, settled: [] as boolean[] },
+  cacheMock: { reserveDelayMs: 0, settled: [] as boolean[], vaultReady: false },
 }));
+vi.mock('./credential-vault', () => ({ vaultReady: () => cacheMock.vaultReady }));
 vi.mock('./idb-cache', () => ({
   reserveSearchIndex: vi.fn(() => new Promise(resolve => {
     setTimeout(() => resolve({ generation: 0, fields: { cacheCategory: 'search' } }), cacheMock.reserveDelayMs);
@@ -88,6 +89,7 @@ describe('SearchIndexPrewarmer worker lifetime', () => {
     FakeWorker.last = null;
     cacheMock.reserveDelayMs = 0;
     cacheMock.settled = [];
+    cacheMock.vaultReady = false;
   });
 
   afterEach(() => {
@@ -107,6 +109,15 @@ describe('SearchIndexPrewarmer worker lifetime', () => {
     await vi.advanceTimersByTimeAsync(CONFIG.WORKER_IDLE_TERMINATION_MS);
     expect(appWorkerGeneration()).toBeNull();
     expect(FakeWorker.terminations).toBe(1);
+  });
+
+  it('skips background cache reads when protected lookup keys cannot be resolved in the worker', async () => {
+    cacheMock.vaultReady = true;
+    const prewarm = new SearchIndexPrewarmer(() => [{ store: 'catalog-cache', key: 'x1|vod_all' }]);
+    prewarm.schedule('startup');
+    await vi.advanceTimersByTimeAsync(10);
+    expect(FakeWorker.created).toBe(0);
+    expect(FakeWorker.tasks).toEqual([]);
   });
 
   it('keeps the building worker until a slow reservation lets it write', async () => {

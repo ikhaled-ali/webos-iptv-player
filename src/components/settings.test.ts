@@ -33,6 +33,7 @@ const {
     manualEpgSources: [] as ManualEpgSource[],
     autoPlay: false,
     livePreview: false,
+    prebuffering: true,
     animationMode: 'reduced' as AnimationMode,
     theme: 'midnight' as string,
     overlayStyle: 'dark' as string,
@@ -87,6 +88,7 @@ const {
       }))),
       getAutoPlay: vi.fn(() => state.autoPlay),
       getLivePreview: vi.fn(() => state.livePreview),
+      getPrebuffering: vi.fn(() => state.prebuffering),
       getAnimationMode: vi.fn(() => state.animationMode),
       getTheme: vi.fn(() => state.theme),
       getOverlayStyle: vi.fn(() => state.overlayStyle),
@@ -123,6 +125,7 @@ const {
       }),
       setAutoPlay: vi.fn(),
       setLivePreview: vi.fn((value: boolean) => { state.livePreview = value; }),
+      setPrebuffering: vi.fn((value: boolean) => { state.prebuffering = value; }),
       setAnimationMode: vi.fn((value: AnimationMode) => { state.animationMode = value; }),
       setTheme: vi.fn((id: string) => { state.theme = id; }),
       setOverlayStyle: vi.fn((s: string) => { state.overlayStyle = s; }),
@@ -255,6 +258,7 @@ beforeEach(() => {
   state.manualEpgSources = [];
   state.autoPlay = false;
   state.livePreview = false;
+  state.prebuffering = true;
   state.animationMode = 'reduced';
   state.theme = 'midnight';
   state.overlayStyle = 'dark';
@@ -1522,6 +1526,38 @@ describe('Settings.save', () => {
     settings.render();
     expect(container.querySelector('#live-preview-setting .toggle-option.active')?.getAttribute('data-value'))
       .toBe(enabled ? 'on' : 'off');
+  });
+
+  it('defaults prebuffering to On in Playback settings', () => {
+    const item = container.querySelector('#prebuffering-setting')!.closest('.settings-item')!;
+    expect(item.closest('[data-settings-category]')?.getAttribute('data-settings-category')).toBe('playback');
+    expect(item.querySelector('.settings-item-title')?.textContent).toBe('Prebuffering');
+    expect(item.querySelector('.toggle-option.active')?.getAttribute('data-value')).toBe('on');
+    expect(storageMock.setPrebuffering).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('saves prebuffering from %s without reloading sources', enabled => {
+    state.playlists = [];
+    state.prebuffering = enabled;
+    settings.render();
+    click(`#prebuffering-setting [data-value="${enabled ? 'off' : 'on'}"]`);
+    expect(state.prebuffering).toBe(enabled);
+    click('#save-settings');
+    expect(storageMock.setPrebuffering).toHaveBeenCalledExactlyOnceWith(!enabled);
+    expect(onSave).toHaveBeenCalledWith('apply');
+    settings.render();
+    expect(container.querySelector('#prebuffering-setting .toggle-option.active')?.getAttribute('data-value'))
+      .toBe(enabled ? 'off' : 'on');
+  });
+
+  it('discards an unsaved prebuffering change on Cancel', () => {
+    click('#prebuffering-setting [data-value="off"]');
+    click('#cancel-settings');
+    expect(onSave).toHaveBeenCalledWith('cancel');
+    expect(storageMock.setPrebuffering).not.toHaveBeenCalled();
+    expect(state.prebuffering).toBe(true);
+    settings.render();
+    expect(container.querySelector('#prebuffering-setting .toggle-option.active')?.getAttribute('data-value')).toBe('on');
   });
 
   it('persists trimmed playlists, EPG and auto-play, then reloads', () => {

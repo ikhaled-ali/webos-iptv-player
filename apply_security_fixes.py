@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply narrowly scoped hardening changes to lennylxx/webos-iptv-player.
+"""Inspect historical first-pass hardening anchors for webos-iptv-player.
 
 Requires an existing, clean clone of upstream; no downloads or credentials.
 Source anchors reviewed against upstream main on 2026-10-22. Fails closed on drift.
@@ -15,7 +15,7 @@ REDACT_LOG_TS = r'''/**
  * Deliberately hide entire URLs: Xtream credentials can occur in arbitrary
  * path segments, queries, URL userinfo, and provider-defined formats.
  */
-const URL_IN_TEXT = /\b(?:https?|rtsp):\/\/[^\s<>"'`]+/gi;
+const URL_IN_TEXT = /\b(?:https?|rtsp):\/\/[^\s<>"`]+/gi;
 const CREDENTIAL_ASSIGNMENT = /\b(password|passwd|username|token|api[_-]?key|authorization|secret)["']?\s*[:=]\s*(?:(?:Bearer|Basic)\s+[^\s,;}]+|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)/gi;
 const SECRET_PROPERTY = /password|passwd|username|token|api[_-]?key|authorization|secret|\burl\b|uri|headers/i;
 
@@ -464,8 +464,11 @@ def transformed(path: str, original: str) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('repository', type=Path, help='The local cloned GitHub repository')
-    parser.add_argument('--apply', action='store_true', help='Write the changes (without --apply, only verify compatibility)')
+    parser.add_argument('--apply', action='store_true', help='Disabled historical apply mode; use the current project sources')
     args = parser.parse_args()
+    if args.apply:
+        print('This historical patcher is disabled. Build the current project sources for authenticated service access.', file=sys.stderr)
+        return 2
     root = args.repository.resolve()
     if not (root / 'package.json').is_file() or not (root / 'bundled-service').is_dir():
         print(f'Error: {root} does not look like the IPTV repository', file=sys.stderr)
@@ -486,14 +489,7 @@ def main() -> int:
     except (OSError, ValueError) as exc:
         print(f'ERROR (nothing changed): {exc}', file=sys.stderr)
         return 1
-    if not args.apply:
-        print(f'Compatibility checked: {len(prepared)} files. Run again with --apply to write changes.')
-        return 0
-    for file, data in prepared.items():
-        file.parent.mkdir(parents=True, exist_ok=True)
-        file.write_text(data, encoding='utf-8')
-        print(f'Updated {file.relative_to(root)}')
-    print('Applied hardening. Run npm ci, npm test, npm run typecheck, npm run service:smoke; inspect git diff.')
+    print(f'Historical anchor compatibility checked: {len(prepared)} files. Build the current project sources.')
     return 0
 
 

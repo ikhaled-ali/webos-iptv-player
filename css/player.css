@@ -64,6 +64,7 @@
 .subs-overlay,
 .subs-offset-card,
 .number-entry,
+.player-status,
 .live-preview-message {
   --text-primary: #e8e8e8;
   --text-secondary: #a0a0b0;
@@ -85,6 +86,7 @@
 [data-overlay="frosted"] .subs-overlay,
 [data-overlay="frosted"] .subs-offset-card,
 [data-overlay="frosted"] .number-entry,
+[data-overlay="frosted"] .player-status,
 [data-overlay="frosted"] .live-preview-message {
   background: rgba(244, 246, 249, 0.85);
   border-color: rgba(0, 0, 0, 0.1);
@@ -99,6 +101,46 @@
   --overlay-divider: rgba(0, 0, 0, 0.18);
   --overlay-chip: rgba(0, 0, 0, 0.08);
   color: var(--text-primary);
+}
+
+#view-player .player-status,
+#view-player .player-status * {
+  pointer-events: none;
+}
+
+.player-status {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  max-width: calc(100% - 160px);
+  min-width: 280px;
+  padding: 24px 32px;
+  border: 1px solid var(--overlay-divider);
+  border-radius: var(--radius);
+  background: rgba(30, 30, 50, 0.9);
+  text-align: center;
+  z-index: 61;
+}
+
+.player-status-text {
+  font-size: 32px;
+  line-height: 1.4;
+}
+
+.player-status-engine {
+  margin-top: 8px;
+  font-size: 22px;
+  color: var(--text-secondary);
+}
+
+.player-status-detail {
+  max-width: 1000px;
+  margin-top: 12px;
+  font-size: 22px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  overflow-wrap: break-word;
 }
 
 .osd-channel {
@@ -900,6 +942,19 @@
   overflow-y: auto;   /* long track lists scroll instead of running off-screen */
   margin: -20px;
   padding: 20px;
+}
+
+.player-menu .menu-quality-note {
+  padding: 16px 24px;
+  font-size: 22px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.player-menu .menu-track-label.menu-quality-label {
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: break-word;
 }
 
 .player-menu .menu-item {

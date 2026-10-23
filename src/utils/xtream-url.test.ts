@@ -5,6 +5,7 @@ import {
   xtreamEpgUrl,
   xtreamPlayerApi,
   xtreamLiveUrl,
+  xtreamHlsUrl,
   xtreamVodUrl,
   xtreamEpisodeUrl,
   xtreamCatchupSource,
@@ -16,6 +17,21 @@ import {
 } from './xtream-url';
 
 const creds = { baseUrl: 'http://host:8080', username: 'u1', password: 'p1' };
+
+describe('Xtream HLS playback alternative', () => {
+  it('changes only the container for a matching account and preserves query parameters', () => {
+    expect(xtreamHlsUrl('http://host:8080/live/u1/p1/42.ts?token=t1', creds))
+      .toBe('http://host:8080/live/u1/p1/42.m3u8?token=t1');
+    expect(xtreamHlsUrl('http://host:8080/live/u1/p1/42.m3u8', creds))
+      .toBe('http://host:8080/live/u1/p1/42.m3u8');
+  });
+
+  it('does not rewrite direct sources or streams from a different account', () => {
+    expect(xtreamHlsUrl('http://host:8080/direct/42.ts', creds)).toBeNull();
+    expect(xtreamHlsUrl('http://host:8080/live/u2/p2/42.ts', creds)).toBeNull();
+    expect(xtreamHlsUrl('http://host:9090/live/u1/p1/42.ts', creds)).toBeNull();
+  });
+});
 
 describe('normalizeXtreamBaseUrl', () => {
   it('keeps a full scheme+host+port', () => {

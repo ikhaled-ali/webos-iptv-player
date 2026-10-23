@@ -1,3 +1,4 @@
+import { writeProtectedLocal, installKeymanagerMock, readProtected } from './protected-storage';
 import { enterTab, test, expect, isChromium53, neuterVideo, routeLiveManifest, routePlaylist, type Page } from './helpers';
 import { type Browser } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -73,10 +74,11 @@ async function stubLanService(page: Page): Promise<void> {
     class FakePalmServiceBridge {
       onservicecallback: ((message: string) => void) | null = null;
 
-      call(uri: string): void {
+      call(uri: string, payload: string): void {
+          if ((window as any).__keymanagerMock(uri, payload, (response: string) => this.onservicecallback?.(response))) return;
         const method = uri.slice(uri.lastIndexOf('/') + 1);
         const response = method === 'start'
-          ? { running: true, port: 9999 }
+          ? { running: true, port: 9999, localToken: '1'.repeat(64) }
           : method === 'serviceEvents'
             ? { subscribed: true }
             : { returnValue: false, errorText: 'unmocked: ' + method };
@@ -430,7 +432,7 @@ const M3U_SCREENS: Screen[] = [
     name: 'live-preview',
     budget: 0,
     go: async (p) => {
-      await p.evaluate(() => localStorage.setItem('iptv_live_preview', 'true'));
+      await writeProtectedLocal(p, 'iptv_live_preview', 'true');
       await p.reload();
       await expect(p.locator('.channel-item')).toHaveCount(2);
       await p.locator('.channel-item').first().click();
@@ -448,12 +450,12 @@ const M3U_SCREENS: Screen[] = [
     name: 'reminder-prompt',
     budget: 0,
     go: async (p) => {
-      await p.addInitScript((k) => {
-        localStorage.setItem('iptv_reminders', JSON.stringify([{
-          channelKey: k, channelName: 'Channel One', title: 'Later Show',
-          startMs: Date.now() - 60_000, stopMs: Date.now() + 3600_000,
-        }]));
-      }, channelKey({ url: 'http://streams.example.com/one.m3u8' } as Channel));
+      const now = await p.evaluate(() => Date.now());
+      await writeProtectedLocal(p, 'iptv_reminders', JSON.stringify([{
+        channelKey: channelKey({ url: 'http://streams.example.com/one.m3u8' } as Channel),
+        channelName: 'Channel One', title: 'Later Show',
+        startMs: now - 60_000, stopMs: now + 3600_000,
+      }]));
       await p.reload();
       await expect(p.locator('.reminder-prompt:not(.hidden)')).toBeVisible();
     },
@@ -522,6 +524,17 @@ const M3U_SCREENS: Screen[] = [
     budget: 0,
     go: async (p) => {
       await p.route('**/playlist.m3u', (r) => new Promise(() => { void r; }));
+      await p.evaluate(() => new Promise<void>((resolve, reject) => {
+        const request = indexedDB.open('iptv');
+        request.onsuccess = () => {
+          const db = request.result;
+          const tx = db.transaction('playlist-cache', 'readwrite');
+          tx.objectStore('playlist-cache').clear();
+          tx.oncomplete = () => { db.close(); resolve(); };
+          tx.onerror = () => reject(tx.error);
+        };
+        request.onerror = () => reject(request.error);
+      }));
       await p.reload();
       await expect(p.locator('#view-loading')).toBeVisible();
     },
@@ -530,9 +543,8 @@ const M3U_SCREENS: Screen[] = [
     name: 'first-run',
     budget: 0,
     go: async (p) => {
-      // prepareM3U's init script re-seeds the playlist on every navigation, so
-      // drop it from a later one, which runs after it.
-      await p.addInitScript(() => localStorage.removeItem('iptv_playlists'));
+      // The previous screen intentionally holds startup; update its saved snapshot.
+      await readProtected(p, 'iptv_playlists', 'local', { rawValue: null });
       await p.reload();
       await expect(p.locator('#view-settings')).toBeVisible();
     },
@@ -769,17 +781,7 @@ async function seedUserData(
   store: string,
   records: { key: string; value: unknown; updatedAt: number }[],
 ): Promise<void> {
-  await page.evaluate(([name, rows]) => new Promise<void>((resolve, reject) => {
-    const open = indexedDB.open('iptv');
-    open.onerror = () => reject(open.error);
-    open.onsuccess = () => {
-      const db = open.result;
-      const tx = db.transaction(name as string, 'readwrite');
-      (rows as unknown[]).forEach((row) => tx.objectStore(name as string).put(row));
-      tx.oncomplete = () => { db.close(); resolve(); };
-      tx.onerror = () => reject(tx.error);
-    };
-  }), [store, records] as const);
+  await readProtected(page, store, 'user', { rawValue: JSON.stringify(records) });
   await page.reload();
 }
 
@@ -835,6 +837,7 @@ async function walk(
   screens: Screen[],
 ): Promise<void> {
   const legacy = await newLegacyPage(browser);
+  await installKeymanagerMock(legacy.page);
   await mkdir(DIFF_DIR, { recursive: true });
   try {
     await Promise.all([setUp(page), setUp(legacy.page)]);

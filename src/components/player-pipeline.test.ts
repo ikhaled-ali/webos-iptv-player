@@ -2,6 +2,8 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CONFIG } from '../config';
+import { StorageService } from '../services/storage-service';
+import * as streamCache from '../services/idb-cache';
 import type { PlayerPipelineOptions } from './player-pipeline';
 import { PlayerPipeline } from './player-pipeline';
 
@@ -9,6 +11,8 @@ type HlsListener = (event: string, data?: {
   fatal?: boolean;
   type?: string;
   details?: string;
+  response?: { code: number };
+  error?: Error;
 }) => void;
 
 class FakeLoader {}
@@ -20,6 +24,7 @@ class FakeHls {
     MANIFEST_PARSED: 'manifest',
     FRAG_BUFFERED: 'fragment',
     ERROR: 'error',
+    LEVELS_UPDATED: 'levels',
   };
   static readonly ErrorTypes = {
     NETWORK_ERROR: 'network',
@@ -46,6 +51,9 @@ class FakeHls {
   audioTrack = 1;
   subtitleTrack = 0;
   subtitleDisplay = true;
+  levels: { width: number; height: number; bitrate: number; frameRate: number }[] = [];
+  nextLevel = -1;
+  loadLevel = -1;
   loadLevelObj = {
     videoCodec: 'avc1.640028',
     audioCodec: 'mp4a.40.2',
@@ -76,6 +84,7 @@ class FakeMpegtsPlayer {
 
 const fakeMpegts = {
   Events: { ERROR: 'error' },
+  ErrorDetails: { NETWORK_STATUS_CODE_INVALID: 'HttpStatusCodeInvalid' },
   isSupported: vi.fn(() => true),
   createPlayer: vi.fn(() => new FakeMpegtsPlayer()),
 };
@@ -205,6 +214,11 @@ function callbacks(overrides: Partial<PlayerPipelineOptions> = {}): PlayerPipeli
 function videoElement(): HTMLVideoElement {
   const video = document.createElement('video');
   vi.spyOn(video, 'play').mockResolvedValue();
+  vi.spyOn(video, 'pause').mockImplementation(() => {});
+  Object.defineProperty(video, 'buffered', {
+    configurable: true,
+    get: () => ({ length: 1, start: () => 0, end: () => 30 }),
+  });
   return video;
 }
 
@@ -244,6 +258,212 @@ afterEach(() => {
 });
 
 describe('PlayerPipeline desktop routing', () => {
+  it.each([
+    ['http://host/a.ts', 'mpegts.js'],
+    ['http://host/a.m3u8', 'hls.js'],
+    ['http://host/a.mpd', 'Shaka'],
+  ])('cycles compatible players for %s and returns to native playback', (url, engine) => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('webOS');
+    const pipeline = new PlayerPipeline(callbacks());
+    expect(pipeline.engineName).toBe('webOS');
+    pipeline.cycleMode(url, null);
+    expect(pipeline.engineName).toBe(engine);
+    pipeline.cycleMode(url, null);
+    expect(pipeline.engineName).toBe('webOS');
+    pipeline.resetMode();
+    expect(pipeline.engineName).toBe('webOS');
+  });
+
+  it('uses a cached stream format when switching an extensionless channel', async () => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('webOS');
+    vi.spyOn(streamCache, 'getCachedStreamMime').mockResolvedValue('video/mp2t');
+    const pipeline = new PlayerPipeline(callbacks());
+    pipeline.setVideoElement(videoElement());
+    pipeline.load('http://host/a', null);
+    await settle();
+    pipeline.cycleMode('http://host/a', null);
+    expect(pipeline.engineName).toBe('mpegts.js');
+    pipeline.destroy();
+  });
+
+  it('normalizes an HLS MIME alias when switching an extensionless channel', async () => {
+    installPreviewGlobals();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(contentTypeResponse('application/x-mpegURL')));
+    const pipeline = new PlayerPipeline(callbacks());
+    pipeline.setVideoElement(videoElement());
+    pipeline.load('http://host/a', null);
+    await settle();
+    pipeline.cycleMode('http://host/a', null);
+    expect(pipeline.engineName).toBe('HTML5');
+    pipeline.cycleMode('http://host/a', null);
+    expect(pipeline.engineName).toBe('hls.js');
+    pipeline.destroy();
+  });
+
+  it('uses the explicitly selected TS player for the same source on webOS', async () => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('webOS');
+    installPreviewGlobals();
+    const pipeline = new PlayerPipeline(callbacks());
+    pipeline.setVideoElement(videoElement());
+    pipeline.cycleMode('http://host/a.ts', null);
+    pipeline.load('http://host/a.ts', null);
+    await settle();
+    expect(fakeMpegts.createPlayer).toHaveBeenCalledWith(
+      { type: 'mpegts', isLive: true, url: 'http://host/a.ts' },
+      expect.objectContaining({ enableStashBuffer: true, autoCleanupSourceBuffer: true }),
+    );
+    expect(pipeline.isMseActive()).toBe(true);
+    expect(pipeline.engineName).toBe('mpegts.js');
+    pipeline.destroy();
+  });
+
+  it('cycles through HLS for an Xtream TS channel using the same stream ID', async () => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('webOS');
+    installPreviewGlobals();
+    const pipeline = new PlayerPipeline(callbacks());
+    pipeline.setVideoElement(videoElement());
+    const url = 'http://host/live/u/p/42.ts';
+    const hlsUrl = 'http://host/live/u/p/42.m3u8';
+    pipeline.cycleMode(url, null, hlsUrl);
+    expect(pipeline.engineName).toBe('mpegts.js');
+    pipeline.cycleMode(url, null, hlsUrl);
+    expect(pipeline.engineName).toBe('hls.js');
+    pipeline.load(url, null);
+    await settle();
+    expect(FakeHls.instances[0].loadSource).toHaveBeenCalledWith(hlsUrl);
+    pipeline.cycleMode(url, null, hlsUrl);
+    expect(pipeline.engineName).toBe('webOS');
+    pipeline.destroy();
+  });
+
+  it('selects manual HLS qualities, restores them on retry, and returns to Auto', async () => {
+    installPreviewGlobals();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(contentTypeResponse('application/vnd.apple.mpegurl')));
+    const pipeline = new PlayerPipeline(callbacks());
+    pipeline.setVideoElement(videoElement());
+    const low = { width: 854, height: 480, bitrate: 1000000, frameRate: 30 };
+    const high = { width: 1920, height: 1080, bitrate: 5000000, frameRate: 60 };
+    pipeline.load('http://host/a.m3u8', null);
+    await settle();
+    const first = FakeHls.instances[0];
+    first.levels = [low, high];
+    first.emit('manifest');
+    expect(pipeline.getQualityState().selected).toBe(-1);
+    expect(pipeline.selectQuality(0)).toBe(true);
+    expect(first.nextLevel).toBe(0);
+    expect(pipeline.selectQuality(5)).toBe(false);
+    pipeline.load('http://host/a.m3u8', null);
+    await settle();
+    const second = FakeHls.instances[1];
+    second.levels = [high, low];
+    second.emit('manifest');
+    expect(second.loadLevel).toBe(1);
+    expect(pipeline.getQualityState().selected).toBe(1);
+    pipeline.selectQuality(-1);
+    expect(second.nextLevel).toBe(-1);
+    expect(pipeline.getQualityState().selected).toBe(-1);
+    pipeline.selectQuality(0);
+    pipeline.resetMode();
+    expect(pipeline.getQualityState().selected).toBe(-1);
+    pipeline.destroy();
+  });
+
+  it.each([false, true])('applies the selected prebuffer profile to HLS (%s)', async enabled => {
+    installPreviewGlobals();
+    vi.spyOn(StorageService, 'getPrebuffering').mockReturnValue(enabled);
+    const pipeline = new PlayerPipeline(callbacks());
+    const video = videoElement();
+    Object.defineProperty(video, 'buffered', { configurable: true, value: { length: 0, start: () => 0, end: () => 0 } });
+    pipeline.setVideoElement(video);
+    try {
+      pipeline.load('http://host/a.m3u8', null);
+      await settle();
+      const hls = FakeHls.instances[0];
+      expect(hls.config.maxMaxBufferLength).toBe(CONFIG.PLAYER.BUFFER_LENGTH);
+      expect(hls.config.backBufferLength).toBe(CONFIG.PLAYER.BACK_BUFFER_SECONDS);
+      expect(hls.config.abrEwmaDefaultEstimate).toBe(enabled ? CONFIG.PLAYER.START_BANDWIDTH : undefined);
+      hls.emit('manifest');
+      expect(pipeline.isPrebuffering()).toBe(enabled);
+      expect(video.play).toHaveBeenCalledTimes(enabled ? 0 : 1);
+    } finally { pipeline.destroy(); }
+  });
+
+  it('starts immediately with prebuffering off and reads a new preference on the next load', () => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('webOS');
+    const preference = vi.spyOn(StorageService, 'getPrebuffering').mockReturnValue(false);
+    const pipeline = new PlayerPipeline(callbacks());
+    const video = videoElement();
+    Object.defineProperty(video, 'buffered', { configurable: true, value: { length: 0, start: () => 0, end: () => 0 } });
+    pipeline.setVideoElement(video);
+    try {
+      pipeline.load('http://host/a.ts', null);
+      expect(video.play).toHaveBeenCalledOnce();
+      expect(pipeline.isPrebuffering()).toBe(false);
+      pipeline.confirmPlaying();
+      expect(pipeline.recoverBuffer()).toBe(false);
+      preference.mockReturnValue(true);
+      pipeline.load('http://host/b.ts', null);
+      expect(pipeline.isPrebuffering()).toBe(true);
+      expect(video.play).toHaveBeenCalledOnce();
+    } finally { pipeline.destroy(); }
+  });
+
+  it('holds native playback until buffered and cancels an old hold when the element changes', () => {
+    vi.useFakeTimers();
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('webOS');
+    const pipeline = new PlayerPipeline(callbacks());
+    const video = videoElement();
+    Object.defineProperty(video, 'buffered', { configurable: true, value: { length: 0, start: () => 0, end: () => 0 } });
+    pipeline.setVideoElement(video);
+    try {
+      pipeline.load('http://host/a.ts', null);
+      expect(video.play).not.toHaveBeenCalled();
+      expect(pipeline.isPrebuffering()).toBe(true);
+      const fresh = videoElement();
+      pipeline.setVideoElement(fresh);
+      vi.advanceTimersByTime(CONFIG.PLAYER.BUFFER_WAIT_MS);
+      expect(video.play).not.toHaveBeenCalled();
+      pipeline.load('http://host/b.ts', null);
+      expect(fresh.play).toHaveBeenCalledOnce();
+      expect(pipeline.engineName).toBe('webOS');
+    } finally {
+      pipeline.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  it('selects a native HLS variant and restores Auto without creating an alternative player', async () => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('webOS');
+    const master = [
+      '#EXTM3U',
+      '#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=854x480', 'low.m3u8',
+      '#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080', 'high.m3u8',
+    ].join('\n');
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      const response = new Response(master, { headers: { 'content-type': 'application/vnd.apple.mpegurl' } });
+      Object.defineProperty(response, 'url', { value: 'http://host/cdn/master.m3u8' });
+      return response;
+    }));
+    const pipeline = new PlayerPipeline(callbacks());
+    const video = videoElement();
+    pipeline.setVideoElement(video);
+    pipeline.load('http://host/master.m3u8', null);
+    for (let i = 0; i < 4; i++) await settle();
+    expect(pipeline.getQualityState().options.map(option => option.height)).toEqual([480, 1080]);
+    expect(pipeline.getQualityState().options[0]).not.toHaveProperty('url');
+    expect(pipeline.selectQuality(0)).toBe(true);
+    pipeline.load('http://host/master.m3u8', null);
+    for (let i = 0; i < 4; i++) await settle();
+    expect(video.querySelector('source')?.src).toBe('http://host/cdn/low.m3u8');
+    expect(pipeline.engineName).toBe('webOS');
+    expect(pipeline.selectQuality(-1)).toBe(true);
+    pipeline.load('http://host/master.m3u8', null);
+    expect(video.querySelector('source')?.src).toBe('http://host/master.m3u8');
+    expect(pipeline.engineName).toBe('webOS');
+    expect(FakeHls.instances).toHaveLength(0);
+    pipeline.destroy();
+  });
+
   it('routes detected direct video to the media element', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(contentTypeResponse('video/mp4')));
     const pipeline = new PlayerPipeline(callbacks());
@@ -281,6 +501,67 @@ describe('PlayerPipeline desktop routing', () => {
     expect(pipeline.isMseActive()).toBe(true);
   });
 
+  it('reports an HLS recovery cause and its HTTP status without exposing its URL', async () => {
+    installPreviewGlobals();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(contentTypeResponse('application/vnd.apple.mpegurl')));
+    const onRecovering = vi.fn();
+    const opts = callbacks({ onRecovering });
+    const pipeline = new PlayerPipeline(opts);
+    pipeline.setVideoElement(videoElement());
+    pipeline.load('http://host/a.m3u8', null);
+    await settle();
+    const hls = FakeHls.instances[0];
+    const error = {
+      fatal: true, type: 'network', details: 'manifestLoadError', response: { code: 403 },
+      error: new Error('Failed http://host/live/u/p/1.ts'),
+    };
+    hls.emit('error', error);
+    expect(onRecovering).toHaveBeenCalledWith(expect.stringContaining('HTTP 403'));
+    expect(onRecovering.mock.calls[0][0]).not.toContain('http://host');
+    for (let i = 0; i < CONFIG.PLAYER.HLS_MAX_RECOVERIES; i++) hls.emit('error', error);
+    expect(opts.onError).toHaveBeenCalledWith(undefined, expect.stringContaining('manifestLoadError | HTTP 403'));
+    pipeline.destroy();
+    onRecovering.mockClear();
+    hls.emit('error', error);
+    expect(onRecovering).not.toHaveBeenCalled();
+  });
+
+  it('reports a current native play rejection and ignores an earlier load rejection', async () => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('webOS');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(contentTypeResponse('application/vnd.apple.mpegurl')));
+    const opts = callbacks();
+    const pipeline = new PlayerPipeline(opts);
+    const video = videoElement();
+    pipeline.setVideoElement(video);
+    const earlier = deferred();
+    vi.mocked(video.play).mockReturnValueOnce(earlier.promise).mockRejectedValueOnce(new Error('Decoder failed (17)'));
+    pipeline.load('http://host/a.m3u8', null);
+    pipeline.load('http://host/b.m3u8', null);
+    earlier.reject(new Error('old failure'));
+    await settle();
+    expect(opts.onError).toHaveBeenCalledOnce();
+    expect(opts.onError).toHaveBeenCalledWith(undefined, expect.stringContaining('Decoder failed (17)'));
+    pipeline.destroy();
+  });
+
+  it('preserves MPEG-TS error identifiers, HTTP status, and a redacted engine message', async () => {
+    installPreviewGlobals();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(contentTypeResponse('video/mp2t')));
+    const opts = callbacks();
+    const pipeline = new PlayerPipeline(opts);
+    pipeline.setVideoElement(videoElement());
+    pipeline.load('http://host/a.ts', null);
+    await settle();
+    const player = fakeMpegts.createPlayer.mock.results[0].value;
+    const listener = player.on.mock.calls[0][1] as (
+      type: string, details: string, info: { code: number; msg: string },
+    ) => void;
+    listener('NetworkError', 'HttpStatusCodeInvalid', { code: 403, msg: 'Failed http://host/live/u/p/1.ts' });
+    expect(opts.onError).toHaveBeenCalledWith(undefined,
+      'mpegts.js | NetworkError | HttpStatusCodeInvalid | HTTP 403 | code=403 | Failed [URL REDACTED]');
+    pipeline.destroy();
+  });
+
   it.each([
     ['video/mp2t', 'mpegts'],
     ['video/x-flv', 'flv'],
@@ -298,7 +579,7 @@ describe('PlayerPipeline desktop routing', () => {
       type,
       isLive: true,
       url: 'http://host/a',
-    });
+    }, expect.objectContaining({ enableStashBuffer: true, autoCleanupSourceBuffer: true }));
     const player = fakeMpegts.createPlayer.mock.results[0].value;
     expect(player.attachMediaElement).toHaveBeenCalledWith(video);
     expect(player.load).toHaveBeenCalledOnce();
@@ -328,6 +609,26 @@ describe('PlayerPipeline desktop routing', () => {
 });
 
 describe('PlayerPipeline loader lifecycle', () => {
+  it('aborts stream detection when switching channels or destroying the player', async () => {
+    const signals: AbortSignal[] = [];
+    vi.stubGlobal('fetch', vi.fn((_url: string, options: RequestInit) => {
+      signals.push(options.signal!);
+      return new Promise<Response>((_resolve, reject) => {
+        options.signal!.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+      });
+    }));
+    const pipeline = new PlayerPipeline(callbacks());
+    pipeline.setVideoElement(videoElement());
+    pipeline.load('http://host/a', null);
+    expect(signals[0].aborted).toBe(false);
+    pipeline.load('http://host/b', null);
+    expect(signals[0].aborted).toBe(true);
+    expect(signals[1].aborted).toBe(false);
+    pipeline.destroy();
+    expect(signals[1].aborted).toBe(true);
+    await settle();
+  });
+
   it('ignores a content-type result that arrives after destroy', async () => {
     let resolveProbe: ((response: Response) => void) | undefined;
     const probe = new Promise<Response>(resolve => { resolveProbe = resolve; });
@@ -497,7 +798,8 @@ describe('PlayerPipeline desktop DASH', () => {
     const player = lastShakaPlayer();
 
     expect(player?.configure).toHaveBeenCalledWith({
-      streaming: { bufferingGoal: CONFIG.PLAYER.BUFFER_LENGTH },
+      streaming: expect.objectContaining({ bufferingGoal: CONFIG.PLAYER.BUFFER_LENGTH, rebufferingGoal: CONFIG.PLAYER.REBUFFER_SECONDS }),
+      abr: { defaultBandwidthEstimate: CONFIG.PLAYER.START_BANDWIDTH },
     });
     expect(player?.attach).toHaveBeenCalledWith(video);
     expect(player?.load).toHaveBeenCalledWith('http://host/a');
@@ -527,7 +829,8 @@ describe('PlayerPipeline desktop DASH', () => {
     player?.requestFilters[0]?.(2, request);
 
     expect(player?.configure).toHaveBeenCalledWith({
-      streaming: { bufferingGoal: CONFIG.PLAYER.BUFFER_LENGTH },
+      streaming: expect.objectContaining({ bufferingGoal: CONFIG.PLAYER.BUFFER_LENGTH, rebufferingGoal: CONFIG.PLAYER.REBUFFER_SECONDS }),
+      abr: { defaultBandwidthEstimate: CONFIG.PLAYER.START_BANDWIDTH },
       drm: {
         preferredKeySystems: ['com.widevine.alpha'],
         servers: { 'com.widevine.alpha': 'http://host/license' },
@@ -545,7 +848,8 @@ describe('PlayerPipeline desktop DASH', () => {
       'inputstream.adaptive.license_key': `${kid}:${key}`,
     });
     expect(lastShakaPlayer()?.configure).toHaveBeenCalledWith({
-      streaming: { bufferingGoal: CONFIG.PLAYER.BUFFER_LENGTH },
+      streaming: expect.objectContaining({ bufferingGoal: CONFIG.PLAYER.BUFFER_LENGTH, rebufferingGoal: CONFIG.PLAYER.REBUFFER_SECONDS }),
+      abr: { defaultBandwidthEstimate: CONFIG.PLAYER.START_BANDWIDTH },
       drm: { preferredKeySystems: ['org.w3.clearkey'], servers: {}, clearKeys: { [kid]: key } },
     });
     expect(pipeline.drmLabel()).toBe('ClearKey');
@@ -678,7 +982,7 @@ describe('PlayerPipeline desktop DASH', () => {
       data: [{ code: 1002, data: [] }],
     });
     expect(opts.onError).toHaveBeenCalledOnce();
-    expect(vi.mocked(opts.onError).mock.calls[0]).toEqual([]);
+    expect(opts.onError).toHaveBeenCalledWith(undefined, 'Shaka | code=6007 | category=6');
   });
 
   it('reports a rejected Shaka license as terminal', async () => {
@@ -689,7 +993,7 @@ describe('PlayerPipeline desktop DASH', () => {
       code: 6007,
       data: [{ code: 1001, data: ['http://host/license', 403] }],
     });
-    expect(opts.onError).toHaveBeenCalledWith('unsupported');
+    expect(opts.onError).toHaveBeenCalledWith('unsupported', 'Shaka | HTTP 403 | code=6007 | category=6');
   });
 
   it('destroys the Shaka player when the pipeline tears down', async () => {

@@ -10,18 +10,19 @@ import {
   type PlaybackRateState,
 } from '../services/playback-rate';
 import { Focus, type FocusScope, type Via } from '../navigation/focus-scope';
+import { qualityLabel, type QualityState } from '../utils/playback-quality';
 
 const AUTO_HIDE_MS = 5000;
 
 const MENU_ITEMS = [
-  { action: 'red', color: 'red', labelKey: 'player.guide' },
-  { action: 'green', color: 'green', labelKey: 'player.toggleFavorite' },
-  { action: 'yellow', color: 'yellow', labelKey: 'player.channelInfo' },
+  { action: 'red', color: 'red', labelKey: 'player.switchPlayer' },
+  { action: 'green', color: 'green', labelKey: 'player.retry' },
+  { action: 'yellow', color: 'yellow', labelKey: 'player.quality' },
   { action: 'blue', color: 'blue', labelKey: 'common.settings' },
 ] as const;
 
 const VOD_MENU_ITEMS = [
-  { action: 'yellow', color: 'yellow', labelKey: 'player.titleInfo' },
+  { action: 'yellow', color: 'yellow', labelKey: 'player.quality' },
   { action: 'blue', color: 'blue', labelKey: 'common.settings' },
 ] as const;
 
@@ -35,6 +36,7 @@ const OPEN_OFFSET = '__subs_offset__';
 const OPEN_SEARCH = '__subs_search__';
 const OPEN_SPEED = '__speed_open__';
 const PICK_SPEED = '__speed_rate__';
+const PICK_QUALITY = '__quality_pick__';
 
 /**
  * The action overlay shown on the right edge during playback. Owns its own
@@ -65,7 +67,7 @@ export class PlayerMenu {
   private isVisible = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private focusIdx = 0;
-  private mode: 'main' | 'audio' | 'subtitles' | 'speed' = 'main';
+  private mode: 'main' | 'audio' | 'subtitles' | 'speed' | 'quality' = 'main';
   private cancelHide: (() => void) | null = null;
   // Registered on the first show; focusIdx stays the model, the scope paints it.
   private scope: FocusScope | null = null;
@@ -84,6 +86,8 @@ export class PlayerMenu {
     selectPlaybackRate: (rate: PlaybackRate) => Promise<boolean>,
     subtitleSearchAvailable: () => boolean,
     openSubtitleSearch: () => void,
+    private getQualityState: () => QualityState = () => ({ options: [], selected: -1, loading: false }),
+    private selectQuality: (index: number) => void = () => {},
   ) {
     this.getCurrentChannel = getCurrentChannel;
     this.onAction = onAction;
@@ -156,6 +160,15 @@ export class PlayerMenu {
   // Re-reads player state, e.g. after a speed change was found not to apply.
   refresh(): void {
     if (!this.isVisible) return;
+    if (this.mode === 'quality') {
+      const key = this.keyAt(this.focusIdx);
+      this.render();
+      const index = this.rows().findIndex(row => row.dataset.key === key);
+      this.focusIdx = index >= 0 ? index : 1;
+      this.scope?.track(this.keyAt(this.focusIdx));
+      Focus.flush();
+      return;
+    }
     if (this.mode === 'speed') {
       if (this.getPlaybackRateState().available) this.render();
       else this.openMain();
@@ -184,7 +197,7 @@ export class PlayerMenu {
         return;
       }
       this.hide();
-    }, AUTO_HIDE_MS);
+    }, this.mode === 'quality' ? 30000 : AUTO_HIDE_MS);
   }
 
   /** Back inside the menu: leave a sub-menu without closing. Returns whether it
@@ -310,6 +323,12 @@ export class PlayerMenu {
           if (this.isVisible && this.mode === 'main') this.render();
         });
       }
+    } else if (action === PICK_QUALITY) {
+      if (item.getAttribute('aria-disabled') === 'true') return;
+      const index = Number(item.dataset.qualityIndex);
+      if (Number.isInteger(index)) this.selectQuality(index);
+      this.render();
+      this.resetTimer();
     } else if (action) {
       this.hide();
       this.onAction(action as Action);
@@ -343,6 +362,16 @@ export class PlayerMenu {
     this.resetTimer();
   }
 
+  showQuality(): void {
+    this.show();
+    this.mode = 'quality';
+    this.render();
+    const selected = this.getQualityState().selected;
+    const index = this.rows().findIndex(row => row.dataset.qualityIndex === String(selected));
+    this.openAt(index >= 0 ? index : 1);
+    this.resetTimer();
+  }
+
   private openMain(): void {
     this.mode = 'main';
     this.render();
@@ -354,7 +383,47 @@ export class PlayerMenu {
     if (this.mode === 'audio') this.renderAudio();
     else if (this.mode === 'subtitles') this.renderSubtitles();
     else if (this.mode === 'speed') this.renderSpeed();
+    else if (this.mode === 'quality') this.renderQuality();
     else this.renderMain();
+  }
+
+  private renderQuality(): void {
+    if (!this.el) return;
+    const state = this.getQualityState();
+    const options = state.options.slice().sort((a, b) => b.height - a.height || b.bitrate - a.bitrate);
+    morph(this.el, html`
+      <div class="menu-header">
+        <h2>${t('player.quality')}</h2>
+        ${state.player ? html`<div class="menu-subtitle">${state.player}</div>` : ''}
+      </div>
+      <div class="menu-items">
+        <div class="menu-item" data-key="${BACK}" data-focusable data-menu-action="${BACK}">
+          <span class="menu-check menu-back">‹</span>
+          <span class="menu-item-label">${t('common.back')}</span>
+        </div>
+        <div class="menu-item" data-key="quality:-1" data-focusable
+             data-menu-action="${PICK_QUALITY}" data-quality-index="-1">
+          <span class="menu-check">${state.selected === -1 ? '✓' : ''}</span>
+          <span class="menu-track-label">${t('player.qualityAuto')}</span>
+        </div>
+        ${options.map(option => html`
+          <div class="menu-item ${option.available === false ? 'unavailable' : ''}"
+               data-key="quality:${option.index}" data-focusable
+               aria-disabled="${String(option.available === false)}"
+               title="${option.available === false ? t('player.qualityUnavailable') : ''}"
+               data-menu-action="${PICK_QUALITY}" data-quality-index="${option.index}">
+            <span class="menu-check">${state.selected === option.index ? '✓' : ''}</span>
+            <span class="menu-track-label menu-quality-label">${qualityLabel(option) || t('player.qualityOriginal')}</span>
+          </div>
+        `)}
+        ${state.loading ? html`<div class="menu-quality-note" role="status">${t('common.loading')}</div>`
+          : html`
+            ${options.length === 1 ? html`<div class="menu-quality-note">${t('player.qualitySingle')}</div>` : ''}
+            ${!options.length || options.some(option => option.available === false)
+              ? html`<div class="menu-quality-note">${t('player.qualityUnavailable')}</div>` : ''}
+          `}
+      </div>
+    `);
   }
 
   private renderMain(): void {

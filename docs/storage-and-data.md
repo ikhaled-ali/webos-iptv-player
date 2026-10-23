@@ -13,6 +13,57 @@ downloaded data that can be recreated.
 | Downloaded cache | Parsed playlists, program guides, movie and series catalogs, media metadata, downloaded subtitles, channel health results | App-private database on the TV | Yes |
 | LAN-uploaded playlists | Original M3U files uploaded from another device | Private storage owned by the bundled upload service | No |
 
+## Encryption at rest
+
+Startup opens the credential vault before loading application data. Only
+credentials (usernames, passwords, API keys, authorization tokens, and credential
+parts of saved URLs) use AES-256-GCM with random 96-bit nonces and 128-bit tags.
+Preferences, channel metadata, guide programs, catalogs, and viewing records
+remain ordinary native browser records. Credential values are replaced with
+opaque references wherever they occur in saved URLs or sensitive fields; the
+small reference dictionary is encrypted under `iptv_sealed_credentials_v2`.
+URL-bearing cache lookup keys use HMAC-SHA-256 rather than plaintext URLs.
+
+On webOS 24+ the data key is wrapped by an app-owned, nonexportable AES key in
+LG Keymanager3. This includes webOS 25 / 10.3.2-33. Only the wrapped data key is
+saved in the `iptv-protected-keys` database. The app unwraps it at startup and
+passes it to the owning bundled service through the authenticated Luna `start`
+method. The service keeps it in memory and encrypts stream URLs and credential-bearing
+URL attributes inside uploaded M3U files. Ordinary M3U tags and upload metadata
+stay unencrypted. Protected files are replaced atomically with owner-only permissions.
+
+Known older TVs (SDK major version below 9) and the desktop preview use a
+nonexportable browser CryptoKey to wrap the same kind of random data key. This
+keeps passwords and key bytes out of localStorage but is weaker than a hardware
+vault if someone copies the entire browser profile. Upgrading a TV to webOS 24+
+rewraps its existing data key with Keymanager3 and deletes the browser wrapper.
+A hardware-vault failure on a newer or unidentified TV never silently selects
+the weaker backend or saves plaintext.
+
+The migration reads the previous encrypted settings and user snapshots, commits
+credential references before writing ordinary records, then retires the old
+snapshots. Disposable caches are cleared once and downloaded again. An
+interrupted migration is retried. Authentication or key failures preserve the
+previous data and stop startup. Existing synchronous configuration getters read
+resolved credentials in memory; asynchronous writes join the normal flush barrier.
+
+Cache writes no longer stringify, UTF-8 encode, encrypt, and base64-encode entire
+playlists or guides. Credential replacement yields between short tasks and
+copies only changed branches. Ordinary program arrays and Dates stay in native
+IndexedDB form. Updating one user record writes that record instead of
+re-encrypting its whole store. The small encrypted credential dictionary uses
+bounded base64 chunks to avoid long per-byte string concatenations. Search
+indexes stay in memory and receive source data from the page.
+
+Encryption does not protect running code inside the app, a compromised OS,
+plaintext provider traffic over HTTP, or old backups and deleted storage pages
+that predate migration. Keep the protected key database with encrypted app data;
+losing the key means saved data cannot be recovered. LG's API contract and the
+browser simulation are covered by tests; the hardware path was also validated on a physical webOS 25 TV (SDK 10.3.2):
+AES-GCM key wrapping, encrypted persistence, and decryption after a cold restart.
+The TV rejects `mac_length` during key generation, so the app supplies the
+128-bit tag length on `begin` operations only.
+
 ## Implementation architecture
 
 The persistence layer has four modules with deliberately separate
@@ -77,7 +128,7 @@ flowchart LR
 
 ### localStorage
 
-Small boot-critical values retain the `iptv_` prefix. `StorageService` values
+Logical boot-critical values retain the `iptv_` prefix. `StorageService` values
 use JSON encoding; the logger's standalone `iptv_log_level` key is a raw string.
 This is the complete active key inventory:
 

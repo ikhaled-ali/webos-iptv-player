@@ -10,6 +10,7 @@ import {
 } from './idb-cache';
 import { onEpgCacheWritten } from './epg-service';
 import { onCatalogListWritten } from './xtream-catalog';
+import { vaultReady } from './credential-vault';
 
 const log = createLogger('SearchIndex');
 let persistChain: Promise<void> = Promise.resolve();
@@ -130,6 +131,8 @@ export class SearchIndexPrewarmer {
   }
 
   schedule(reason: string): void {
+    // Protected cache keys are opaque to the worker; Search posts resolved arrays when opened.
+    if (vaultReady()) return;
     if (this.running) {
       this.again = true;
       return;

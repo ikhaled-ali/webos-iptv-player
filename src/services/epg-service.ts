@@ -679,12 +679,12 @@ class EpgServiceImpl {
           for (const listener of epgWriteListeners) listener(source.url);
         }
       } else {
-        log.warn('EPG has 0 programmes — not caching:', source.url);
+        log.warn('EPG has 0 programmes — not caching');
       }
       done();
       return !truncated;
     } catch (err) {
-      log.error('Failed to load EPG:', source.url, err);
+      log.error('Failed to load EPG:', err);
       done();
       return false;
     }

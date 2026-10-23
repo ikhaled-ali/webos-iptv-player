@@ -1,8 +1,23 @@
 import { describe, it, expect, vi } from 'vitest';
 import { redactLogString, redactLogValue } from './redact-log';
 import { createLogger } from './logger';
+import { xtreamEpgUrl, xtreamLiveUrl } from './xtream-url';
 
 describe('credential-safe logger', () => {
+  it('redacts complete generated URLs when credentials contain apostrophes', () => {
+    const credentials = { baseUrl: 'https://host', username: 'u1', password: "first'SYNTHETIC_SECRET" };
+    const output = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      for (const url of [xtreamEpgUrl(credentials), xtreamLiveUrl(credentials, '1', 'ts')]) {
+        createLogger('Test').error('Request failed:', url, new Error(`GET ${url}`));
+      }
+      expect(JSON.stringify(output.mock.calls)).not.toContain('SYNTHETIC_SECRET');
+      expect(JSON.stringify(output.mock.calls)).toContain('[URL REDACTED]');
+    } finally {
+      output.mockRestore();
+    }
+  });
+
   it('removes Xtream query credentials and URLs completely', () => {
     const input = 'EPG http://provider.test/xmltv.php?username=alice&password=SECRETPASS';
     const output = redactLogString(input);

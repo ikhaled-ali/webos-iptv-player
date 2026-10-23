@@ -52,7 +52,29 @@ test('remote arrow keys move focus and Enter starts playback', async ({ page }) 
   await expect(page.locator('#view-player')).toBeVisible();
 });
 
-test('live playback retries the current channel before switching', async ({ page }) => {
+test('playback color keys keep the same channel and status clears after playing', async ({ page }) => {
+  await neuterVideo(page);
+  await routePlaylist(page);
+  await seedPlaylist(page);
+  await page.goto('/');
+  await expect(page.locator('#view-channels')).toBeVisible();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#view-player')).toBeVisible();
+  const channel = await page.locator('.osd-channel-name').textContent();
+  await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 403, bubbles: true })));
+  await expect(page.locator('#view-player')).toBeVisible();
+  await expect(page.locator('#view-epg')).toBeHidden();
+  await expect(page.locator('.osd-channel-name')).toHaveText(channel!);
+  await page.locator('#video-player').evaluate(video => { video.dataset.beforeRetry = 'true'; });
+  await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 404, bubbles: true })));
+  await expect(page.locator('#video-player')).not.toHaveAttribute('data-before-retry', 'true');
+  await expect(page.locator('.player-status')).toBeVisible();
+  await page.locator('#video-player').dispatchEvent('playing');
+  await expect(page.locator('.player-status')).toBeHidden();
+  await expect(page.locator('.osd-channel-name')).toHaveText(channel!);
+});
+
+test('live playback keeps the current channel after reconnect attempts are exhausted', async ({ page }) => {
   await neuterVideo(page);
   await routePlaylist(page);
   await seedPlaylist(page);
@@ -78,8 +100,8 @@ test('live playback retries the current channel before switching', async ({ page
   await expect(video).not.toHaveAttribute('data-original-stream', 'true');
   expect(await page.evaluate(() => localStorage.getItem('iptv_last_channel'))).toBe('0');
   await video.dispatchEvent('error');
-  await expect.poll(() =>
-    page.evaluate(() => localStorage.getItem('iptv_last_channel'))).toBe('1');
+  await expect(page.locator('.player-status')).toContainText('Playback error.');
+  expect(await page.evaluate(() => localStorage.getItem('iptv_last_channel'))).toBe('0');
 });
 
 test('player sidebar focuses the playing channel; search still filters', async ({ page }) => {
@@ -564,7 +586,8 @@ test('the right-edge player menu opens and lists its color actions', async ({ pa
   const menu = page.locator('#player-menu');
   await expect(menu).toBeVisible();
   await expect(menu.locator('.menu-item')).toHaveCount(4);
-  await expect(menu).toContainText('Program Guide');
+  await expect(menu).toContainText('Switch player');
+  await expect(menu).toContainText('Retry channel');
   await expect(menu).toContainText('Settings');
 
   // The first item is focused on open; Down moves focus to the second.
@@ -966,7 +989,7 @@ test('a long player-menu list scrolls with the Magic-Remote wheel, not the chann
   await expect(page.locator('.osd-channel-number')).toHaveText('1');
 });
 
-test('starting playback shows the OSD with channel info; the yellow key re-opens it', async ({ page }) => {
+test('yellow opens quality with Auto without replacing the native player or source', async ({ page }) => {
   // Smoke-exercises the player OSD render path (player.ts renderOSD) at runtime.
   await routePlaylist(page);
   // Serve a minimal segment-less *live* manifest so hls.js reaches MANIFEST_PARSED
@@ -988,10 +1011,21 @@ test('starting playback shows the OSD with channel info; the yellow key re-opens
   await expect(osd.locator('.osd-channel-name')).toHaveText('Channel One');
   await expect(osd.locator('.osd-channel-number')).toHaveText('1');
 
-  // The yellow remote key (Channel Info) re-renders/re-shows the OSD.
+  await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 403, bubbles: true })));
+  await expect(page.locator('#video-player source')).toHaveAttribute('src', /one\.m3u8$/);
+  const source = await page.locator('#video-player source').getAttribute('src');
+  await page.locator('#video-player').evaluate(video => video.setAttribute('data-quality-player', 'same'));
   await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 405, bubbles: true })));
-  await expect(osd).toBeVisible();
-  await expect(osd.locator('.osd-channel-name')).toHaveText('Channel One');
+  const menu = page.locator('#player-menu');
+  await expect(menu).toBeVisible();
+  await expect(menu.locator('h2')).toHaveText('Quality');
+  await expect(menu.locator('.menu-subtitle')).toHaveText('HTML5');
+  await expect(page.locator('#video-player')).toHaveAttribute('data-quality-player', 'same');
+  await expect(page.locator('#video-player source')).toHaveAttribute('src', source!);
+  await expect(menu.locator('[data-quality-index="-1"]')).toContainText('Auto');
+  await expect(menu.locator('[data-quality-index="-1"]')).toHaveClass(/focused/);
+  await expect(osd).toBeHidden();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('iptv_last_channel'))).toBe('0');
 });
 
 test.describe('DVR', () => {
@@ -1018,8 +1052,10 @@ test.describe('DVR', () => {
       Object.defineProperty(v, 'paused', { configurable: true, get: () => paused });
       (v as unknown as { play: () => Promise<void> }).play = () => { paused = false; return Promise.resolve(); };
       (v as unknown as { pause: () => void }).pause = () => { paused = true; };
-      // Yellow (Channel Info) re-shows/re-renders the OSD; the DVR bar now appears.
-      document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 405, bubbles: true }));
+      v.dispatchEvent(new Event('loadedmetadata'));
+      document.getElementById('view-player')!.dispatchEvent(new MouseEvent('mousemove', {
+        bubbles: true, clientX: 960, clientY: 540,
+      }));
     });
   }
 
@@ -1029,7 +1065,9 @@ test.describe('DVR', () => {
    *  Re-shows the OSD first (it auto-hides). */
   async function okAndReadVideo(page: Page, selector: string): Promise<{ paused: boolean; currentTime: number }> {
     return page.evaluate((sel) => {
-      document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 405, bubbles: true })); // yellow → showOSD (sync render)
+      document.getElementById('view-player')!.dispatchEvent(new MouseEvent('mousemove', {
+        bubbles: true, clientX: 960, clientY: 540,
+      }));
       const el = document.querySelector(sel);
       if (!el) throw new Error(`no control ${sel}`);
       const r = el.getBoundingClientRect();

@@ -1,4 +1,5 @@
 import type { AudioOption, SubtitleOption } from '../../types';
+import type { QualityOption } from '../../utils/playback-quality';
 
 export interface PipelineStreamInfo {
   videoCodec: string;
@@ -18,5 +19,7 @@ export interface MseEngine {
   subtitleOptions(): SubtitleOption[];
   setSubtitleTrack(index: number): boolean;
   streamInfo(): PipelineStreamInfo | null;
+  qualityOptions?(): QualityOption[];
+  selectQuality?(index: number): boolean;
   destroy(): void | Promise<void>;
 }

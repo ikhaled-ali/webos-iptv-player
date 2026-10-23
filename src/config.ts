@@ -48,6 +48,14 @@ export const CONFIG = {
     LIVE_PREVIEW_REFRESH_MS: 1000,
     DEFAULT_PLAYER_OSD_TIMEOUT_MS: 5000,
     BUFFER_LENGTH: 30,
+    START_BUFFER_SECONDS: 6,
+    REBUFFER_SECONDS: 8,
+    BUFFER_WAIT_MS: 12000,
+    BUFFER_POLL_MS: 250,
+    NATIVE_BUFFER_GRACE_MS: 3000,
+    BACK_BUFFER_SECONDS: 10,
+    BUFFER_BYTES: 24 * 1024 * 1024,
+    START_BANDWIDTH: 800000,
     MANIFEST_TIMEOUT: 5000,
     MANIFEST_MAX_BYTES: 256 * 1024,
     // Long live SegmentTimelines need a larger budget so the parser receives
@@ -62,10 +70,10 @@ export const CONFIG = {
     DEFAULT_NUMBER_ENTRY_OSD_TIMEOUT_MS: 1200,
     CHANNEL_NUMBER_MAX_DIGITS: 4,  // fallback cap until the channel count is known
     SEEK_STEP: 30,              // seconds per Left/Right press while seeking catch-up or live DVR
-    HLS_MAX_RECOVERIES: 3,      // bounded hls.js fatal-error retries before giving up → next channel
+    HLS_MAX_RECOVERIES: 3,      // bounded hls.js fatal-error retries before surfacing an error
     STALL_POLL_MS: 2000,        // native stall watchdog: currentTime poll interval
     STALL_FREEZE_TICKS: 5,      // ~10s frozen before the first in-place reload
-    DEFAULT_LIVE_RECONNECT_ATTEMPTS: 3, // reconnect attempts before switching channels
+    DEFAULT_LIVE_RECONNECT_ATTEMPTS: 3, // reconnect attempts on the selected channel
     STARTUP_POLL_MS: 500,       // startup watchdog: readyState/networkState poll interval
     STARTUP_TIMEOUT: 15000,     // ms a stream may load without a frame before it counts as failed
     DVR_MIN_WINDOW: 10,         // live DVR: a seekable window must exceed this (s) to offer timeshift

@@ -1,5 +1,6 @@
 import type { AudioOption, ManifestAudio, ManifestClosedCaption, ManifestSubtitle, SubtitleOption } from '../types';
 import { CONFIG } from '../config';
+import { StorageService } from '../services/storage-service';
 import { getCachedStreamMime, setCachedStreamMime } from '../services/idb-cache';
 import { parseMpd, type MpdManifest } from '../parsers/mpd-manifest';
 import {
@@ -10,11 +11,16 @@ import {
 } from '../services/drm-config';
 import { PlayReadyDrm } from '../services/playready-drm';
 import { loadShaka, type ShakaNamespaceLike } from '../services/shaka-loader';
+import { loadPlayerLibraries } from '../services/player-libs-loader';
 import { parseAudioRenditions } from '../utils/audio-tracks';
 import { FetchTextError, fetchLimitedText } from '../utils/fetch-helper';
 import { getLenientLoaders } from '../utils/hls-stable-loader';
 import { createLogger } from '../utils/logger';
 import { isWebOS } from '../utils/platform';
+import { playbackErrorDetail } from '../utils/playback-error';
+import { matchingQuality, type QualityOption, type QualityState } from '../utils/playback-quality';
+import { nativeHlsQualities, type NativeHlsQuality } from '../utils/native-hls-quality';
+import { PlaybackBuffer } from '../utils/playback-buffer';
 import { parseClosedCaptions, parseSubtitleRenditions } from '../utils/subtitle-tracks';
 import { parseVariants, type StreamVariant } from '../utils/stream-info';
 import { mediaOptionSourceType } from '../utils/webos-media-option';
@@ -35,12 +41,13 @@ import {
 const log = createLogger('Player');
 
 
-// Desktop HLS/MPEG-TS libraries are globals from preview-libs.js. Shaka is also
-// a global, but webOS loads its separate bundle only for Widevine/ClearKey.
+// Preview loads HLS/MPEG-TS eagerly; the TV loads them for manual switching.
+// Shaka has its own lazy bundle.
 const win = window as unknown as Record<string, unknown>;
 
 type HlsType = typeof import('hls.js').default;
 type MpegtsType = typeof import('mpegts.js').default;
+export type PlaybackMode = 'native' | 'hls' | 'mpegts' | 'shaka';
 
 interface ShakaError {
   category?: number;
@@ -69,6 +76,17 @@ function shakaErrorDetail(error: unknown): string {
   const detail = error as ShakaError;
   return `category=${typeof detail.category === 'number' ? detail.category : 'unknown'}`
     + ` code=${typeof detail.code === 'number' ? detail.code : 'unknown'}`;
+}
+
+function shakaPlaybackDetail(error: unknown): string {
+  const detail = error as ShakaError | null;
+  const nested = detail?.data?.[0] as ShakaError | undefined;
+  return playbackErrorDetail('Shaka', {
+    code: detail?.code,
+    category: detail?.category,
+    httpStatus: nested?.data?.[1] ?? detail?.data?.[1],
+    message: error instanceof Error ? error : undefined,
+  });
 }
 
 interface ShakaNamespace extends ShakaNamespaceLike {
@@ -125,10 +143,14 @@ export interface PlayerPipelineOptions {
   playbackLabel: (loadToken: number) => string;
   mediaState: (video: HTMLVideoElement) => string;
   isCatchup: () => boolean;
-  onError: (reason?: 'unsupported') => void;
+  onError: (reason?: 'unsupported', detail?: string) => void;
+  onRecovering?: (detail: string) => void;
   onAudioTracksUpdated: () => void;
   onSubtitleTracksUpdated: () => void;
   onManifest: (manifest: PipelineManifest) => void;
+  onEngineChanged?: (name: string) => void;
+  onQualityChanged?: () => void;
+  onBufferHolding?: (holding: boolean) => void;
 }
 
 export class PlayerPipeline {
@@ -142,14 +164,156 @@ export class PlayerPipeline {
   private hlsRecoveries = 0;
   private manifestSeq = 0;
   private manifestController: AbortController | null = null;
+  private classificationController: AbortController | null = null;
   private videoLoadLabels = new WeakMap<HTMLVideoElement, string>();
   private playReadyDrm = new PlayReadyDrm();
   private activeDrm = '';
+  private selectedMode: PlaybackMode | null = null;
+  private activeMode: PlaybackMode = isWebOS() ? 'native' : 'hls';
+  private detectedMime = '';
+  private hlsUrl = '';
+  private qualityChoice: QualityOption | null = null;
+  private nativeQualities: NativeHlsQuality[] = [];
+  private nativeMasterUrl = '';
+  private nativeQualityLoading = false;
+  private readonly buffer: PlaybackBuffer;
+  private prebufferingEnabled = true;
 
-  constructor(private callbacks: PlayerPipelineOptions) {}
+  constructor(private callbacks: PlayerPipelineOptions) {
+    this.buffer = new PlaybackBuffer({
+      startupSeconds: CONFIG.PLAYER.START_BUFFER_SECONDS,
+      recoverySeconds: CONFIG.PLAYER.REBUFFER_SECONDS,
+      maxWaitMs: CONFIG.PLAYER.BUFFER_WAIT_MS,
+      pollMs: CONFIG.PLAYER.BUFFER_POLL_MS,
+      nativeGraceMs: CONFIG.PLAYER.NATIVE_BUFFER_GRACE_MS,
+      onHolding: holding => this.callbacks.onBufferHolding?.(holding),
+      onError: error => this.reportPlayRejection(error, this.loadToken),
+    });
+  }
+
+  isPrebuffering(): boolean { return this.buffer.holding; }
+  cancelPrebuffering(): void { this.buffer.cancelWait(); }
+  resumePrebuffering(): void { this.buffer.release(); }
+  confirmPlaying(): void { this.buffer.confirmPlaying(); }
+  recoverBuffer(): boolean { return this.buffer.recover(); }
+
+  private startBufferedPlayback(video: HTMLVideoElement, token: number, play = () => video.play()): void {
+    if (token !== this.loadToken || video !== this.videoEl) return;
+    if (this.prebufferingEnabled) {
+      this.buffer.start(video, play, this.activeMode === 'native');
+      return;
+    }
+    try {
+      const playing = play();
+      if (playing) void playing.catch(error => this.reportPlayRejection(error, token));
+    } catch (error) { this.reportPlayRejection(error, token); }
+  }
+
+  resetMode(): void {
+    this.selectedMode = null;
+    this.detectedMime = '';
+    this.hlsUrl = '';
+    this.qualityChoice = null;
+    this.nativeQualities = [];
+    this.nativeMasterUrl = '';
+    this.nativeQualityLoading = false;
+    this.activeMode = isWebOS() ? 'native' : 'hls';
+  }
+
+  get engineName(): string {
+    const mode = this.activeMode;
+    return mode === 'native' ? (isWebOS() ? 'webOS' : 'HTML5')
+      : mode === 'hls' ? 'hls.js' : mode === 'mpegts' ? 'mpegts.js' : 'Shaka';
+  }
+
+  isManualAlternative(): boolean {
+    return this.selectedMode !== null && this.selectedMode !== 'native';
+  }
+
+  cycleMode(url: string, extras: Record<string, string> | null, alternativeHlsUrl = ''): void {
+    const mime = streamUrlMime(url) || streamMime(this.detectedMime);
+    const drm = parseDrmConfig(extras);
+    const modes: PlaybackMode[] = drm?.type === 'playready' || drm?.type === 'unsupported'
+      ? ['native']
+      : isShakaDrmConfig(drm) ? ['shaka']
+      : mime === 'application/dash+xml' ? ['native', 'shaka']
+      : mime === 'application/vnd.apple.mpegurl' ? ['native', 'hls']
+      : mime === 'video/mp2t' || mime === 'video/x-flv'
+        ? (alternativeHlsUrl ? ['native', 'mpegts', 'hls'] : ['native', 'mpegts'])
+      : mime && !mime.includes('octet-stream') ? ['native']
+      : ['native', 'hls', 'mpegts'];
+    const index = modes.indexOf(this.selectedMode ?? this.activeMode);
+    this.selectedMode = modes[(index + 1) % modes.length];
+    this.activeMode = this.selectedMode;
+    this.hlsUrl = this.selectedMode === 'hls' ? alternativeHlsUrl : '';
+    this.qualityChoice = null;
+  }
+
+  getQualityState(): QualityState {
+    let options: QualityOption[] = this.hls ? (this.hls.levels ?? []).map((level, index) => ({
+      index, width: level.width || 0, height: level.height || 0,
+      bitrate: level.averageBitrate || level.bitrate || 0, frameRate: level.frameRate || 0,
+    })) : this.engine?.qualityOptions?.() ?? [];
+    if (this.activeMode === 'native') {
+      options = this.nativeQualities.map(({ index, width, height, bitrate, frameRate, available }) => ({
+        index, width, height, bitrate, frameRate, available,
+      }));
+    }
+    if (!options.length && !this.msePending && (this.videoEl?.videoHeight ?? 0) > 0) {
+      options = [{
+        index: 0, width: this.videoEl!.videoWidth, height: this.videoEl!.videoHeight,
+        bitrate: 0, frameRate: 0, available: false,
+      }];
+    }
+    return {
+      options,
+      player: this.engineName,
+      selected: matchingQuality(options, this.qualityChoice),
+      loading: this.nativeQualityLoading || this.msePending || ((this.selectedMode === 'hls' || this.hls !== null)
+        && this.hls !== null && !options.length),
+    };
+  }
+
+  isNativeQualityControl(): boolean {
+    return this.activeMode === 'native' && this.nativeQualities.some(option => option.available !== false);
+  }
+
+  selectQuality(index: number): boolean {
+    if (!Number.isInteger(index) || index < -1) return false;
+    const option = this.getQualityState().options.find(item => item.index === index);
+    if (index !== -1 && (!option || option.available === false)) return false;
+    try {
+      if (this.hls) this.hls.nextLevel = index;
+      else if (this.engine) {
+        if (!this.engine.selectQuality?.(index)) return false;
+      } else if (!this.isNativeQualityControl()) return false;
+    } catch (error) {
+      this.callbacks.onError(undefined, playbackErrorDetail(this.engineName, { message: error }));
+      return false;
+    }
+    this.qualityChoice = option ?? null;
+    this.callbacks.onQualityChanged?.();
+    return true;
+  }
+
+  private setActiveMode(mode: PlaybackMode): void {
+    this.activeMode = mode;
+    this.callbacks.onEngineChanged?.(this.engineName);
+  }
+
+  private reportPlayRejection(error: unknown, token: number): void {
+    if (token !== this.loadToken || !this.videoEl) return;
+    const name = error && typeof error === 'object' ? (error as { name?: string }).name : '';
+    if (name === 'AbortError') return;
+    this.callbacks.onError(name === 'NotSupportedError' ? 'unsupported' : undefined,
+      playbackErrorDetail(this.engineName, { type: name, message: error }));
+  }
 
   setVideoElement(videoEl: HTMLVideoElement): void {
-    if (this.videoEl !== videoEl) this.engineTeardown = null;
+    if (this.videoEl !== videoEl) {
+      this.buffer.stop();
+      this.engineTeardown = null;
+    }
     this.videoEl = videoEl;
   }
 
@@ -163,7 +327,7 @@ export class PlayerPipeline {
 
   // "An MSE library owns the tracks" — hls.js in preview or Shaka on either path.
   isMseActive(): boolean {
-    return this.engine !== null || this.msePending;
+    return this.engine !== null || this.mpegtsPlayer !== null || this.msePending;
   }
 
   mseAudioOptions(): AudioOption[] {
@@ -197,6 +361,9 @@ export class PlayerPipeline {
     const label = this.callbacks.playbackLabel(token);
     this.cancelManifest();
     this.destroyLoaders();
+    this.prebufferingEnabled = StorageService.getPrebuffering();
+    videoEl.autoplay = false;
+    videoEl.preload = 'auto';
     this.videoLoadLabels.set(videoEl, label);
     this.playReadyDrm.release();
     this.activeDrm = '';
@@ -231,7 +398,7 @@ export class PlayerPipeline {
         log.warn('Playback blocked by failed MSE teardown',
           'event=playback.mse.teardown.blocked', label, `owner=(${teardown.label})`,
           `elapsedMs=${Date.now() - queuedAt}`, shakaErrorDetail(error));
-        this.callbacks.onError();
+        this.callbacks.onError(undefined, playbackErrorDetail(this.engineName, { message: error }));
       });
     } else {
       start();
@@ -246,6 +413,7 @@ export class PlayerPipeline {
   ): void {
     const videoEl = this.videoEl;
     if (!videoEl) return;
+    if (this.selectedMode === 'hls' && this.hlsUrl) url = this.hlsUrl;
     const safeUrl = diagnosticStreamUrl(url);
     const urlMime = streamUrlMime(url);
     const isTsUrl = urlMime === 'video/mp2t';
@@ -253,10 +421,43 @@ export class PlayerPipeline {
     const isHlsUrl = urlMime === 'application/vnd.apple.mpegurl';
     const isDashUrl = urlMime === 'application/dash+xml';
 
+    if (this.selectedMode && this.selectedMode !== 'native') {
+      const mode = this.selectedMode;
+      this.setActiveMode(mode);
+      if (mode === 'shaka') {
+        const drm = parseDrmConfig(extras);
+        this.loadWithShaka(url, token, isShakaDrmConfig(drm) ? drm : null);
+        return;
+      }
+      this.msePending = true;
+      void loadPlayerLibraries().then(() => {
+        if (token !== this.loadToken || !this.videoEl) return;
+        this.msePending = false;
+        if (mode === 'hls') this.loadWithHls(url, extras, token);
+        else this.loadWithMpegts(url, isFlvUrl, token);
+      }).catch(error => {
+        if (token !== this.loadToken || !this.videoEl) return;
+        this.msePending = false;
+        this.callbacks.onError('unsupported', playbackErrorDetail(this.engineName, { message: error }));
+      });
+      return;
+    }
+
     // webOS: the TV's hardware HLS/TS decoders beat MSE libraries, so play
     // natively. Explicit extensions and previously verified routes avoid a
     // probe; only a cold ambiguous route pays the bounded classification cost.
-    if (isWebOS()) {
+    if (isWebOS() || this.selectedMode === 'native') {
+      if (this.qualityChoice && this.nativeMasterUrl === url && this.isNativeQualityControl()) {
+        void this.loadManifest(url, this.manifestSeq, token).then(() => {
+          if (token !== this.loadToken || !this.videoEl) return;
+          const index = matchingQuality(this.nativeQualities, this.qualityChoice);
+          const variant = this.nativeQualities.find(option => option.index === index && option.available !== false);
+          if (!variant) this.qualityChoice = null;
+          this.playNativeMime(variant?.url ?? url, 'application/vnd.apple.mpegurl');
+          this.callbacks.onQualityChanged?.();
+        });
+        return;
+      }
       if (opts?.direct) {
         const mime = containerMime(url);
         log.info('Selected webOS native playback', 'event=playback.path.native',
@@ -336,9 +537,7 @@ export class PlayerPipeline {
         this.callbacks.playbackLabel(token),
         'reason=direct', 'url=', safeUrl, '| desktop direct VOD');
       videoEl.src = url;
-      videoEl.play().catch(e => log.warn('Direct play() rejected',
-        'event=playback.play.rejected',
-        this.callbacks.playbackLabel(token), 'path=direct', e));
+      this.startBufferedPlayback(videoEl, token);
       return;
     }
     void this.detectContentType(url, token).then(ct => {
@@ -365,7 +564,7 @@ export class PlayerPipeline {
         if (configured?.type === 'unsupported') {
           log.warn('Unsupported DASH DRM', 'event=playback.dash.drm.unsupported',
             this.callbacks.playbackLabel(token), `type=${configured.value}`);
-          this.callbacks.onError('unsupported');
+          this.callbacks.onError('unsupported', playbackErrorDetail('DRM', { details: configured.value }));
           return;
         }
         this.loadWithShaka(
@@ -378,9 +577,7 @@ export class PlayerPipeline {
           this.callbacks.playbackLabel(token),
           'reason=probe');
         this.videoEl.src = url;
-        this.videoEl.play().catch(e => log.warn('Direct play() rejected',
-          'event=playback.play.rejected',
-          this.callbacks.playbackLabel(token), 'path=direct', e));
+        this.startBufferedPlayback(this.videoEl, token);
       } else {
         log.info('Selected hls.js playback', 'event=playback.path.hls',
           this.callbacks.playbackLabel(token),
@@ -402,6 +599,7 @@ export class PlayerPipeline {
   }
 
   private destroyLoaders(): void {
+    this.buffer.stop();
     this.msePending = false;
     // The engine owns its library instance, hls.js included.
     if (this.engine) {
@@ -447,11 +645,14 @@ export class PlayerPipeline {
   // CORS/network failure, leaving the caller on its URL heuristic (default HLS).
   private async detectContentType(url: string, loadToken: number): Promise<string> {
     const controller = new AbortController();
+    this.classificationController?.abort();
+    this.classificationController = controller;
     const timer = setTimeout(() => controller.abort(), CONFIG.PLAYER.MANIFEST_TIMEOUT);
     let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
     try {
       const res = await fetch(url, { signal: controller.signal });
       const ct = (res.headers.get('content-type') || '').toLowerCase();
+      if (loadToken === this.loadToken) this.detectedMime = ct.split(';')[0].trim();
       const baseType = ct.split(';')[0].trim();
       const sniffBody = baseType === 'application/octet-stream'
         || baseType === 'application/xml'
@@ -468,8 +669,10 @@ export class PlayerPipeline {
         const { done, value } = await reader.read();
         if (done) break;
         if (!value?.length) continue;
-        chunks.push(value);
-        length += value.length;
+        const kept = new Uint8Array(Math.min(value.length, 4096 - length));
+        kept.set(value.subarray(0, kept.length));
+        chunks.push(kept);
+        length += kept.length;
       }
       const prefix = new Uint8Array(length);
       let offset = 0;
@@ -477,14 +680,19 @@ export class PlayerPipeline {
         prefix.set(chunk, offset);
         offset += chunk.length;
       }
-      return sniffStreamContentType(ct, prefix);
+      const detected = sniffStreamContentType(ct, prefix);
+      if (loadToken === this.loadToken) this.detectedMime = detected.split(';')[0].trim();
+      return detected;
     } catch (error) {
+      if (loadToken !== this.loadToken || !this.videoEl) return '';
       log.warn('Content-type classification failed', 'event=playback.classify.failed',
         this.callbacks.playbackLabel(loadToken),
         error instanceof Error ? error.name : 'Error');
       return '';
     } finally {
       if (reader) void reader.cancel().catch(() => {});
+      controller.abort();
+      if (this.classificationController === controller) this.classificationController = null;
       clearTimeout(timer);
     }
   }
@@ -492,6 +700,7 @@ export class PlayerPipeline {
   // DASH keeps application/dash+xml for classification and uses mediaOption on
   // the source element to select the native MPEG-DASH transport.
   private playNativeMime(url: string, mime: string): void {
+    this.detectedMime = mime;
     if (mime === 'application/dash+xml') {
       this.playNativeDash(url);
       return;
@@ -521,6 +730,7 @@ export class PlayerPipeline {
     extras: Record<string, string> | null,
     loadToken: number,
   ): void {
+    this.detectedMime = 'application/dash+xml';
     const seq = this.manifestSeq;
     const configured = parseDrmConfig(extras);
     void this.loadManifest(url, seq, loadToken, 'dash', parsed => {
@@ -535,7 +745,7 @@ export class PlayerPipeline {
         const value = configured?.type === 'unsupported' ? configured.value : detected?.scheme;
         log.warn('Unsupported native DASH DRM', 'event=playback.dash.drm.unsupported',
           this.callbacks.playbackLabel(loadToken), `type=${value || 'unknown'}`);
-        this.callbacks.onError('unsupported');
+        this.callbacks.onError('unsupported', playbackErrorDetail('DRM', { details: value }));
         return;
       }
       if (isShakaDrmConfig(configured)
@@ -572,7 +782,7 @@ export class PlayerPipeline {
         log.warn('PlayReady rights error', 'event=playback.dash.drm.rights',
           this.callbacks.playbackLabel(loadToken),
           `state=${String(response.errorState ?? '')}`);
-        this.callbacks.onError('unsupported');
+        this.callbacks.onError('unsupported', playbackErrorDetail('PlayReady', { details: String(response.errorState ?? '') }));
       }).then(clientId => {
         if (!clientId || loadToken !== this.loadToken || !this.videoEl) return;
         log.info('PlayReady DRM ready', 'event=playback.dash.drm.ready',
@@ -583,7 +793,7 @@ export class PlayerPipeline {
         if (loadToken !== this.loadToken) return;
         log.warn('PlayReady setup failed', 'event=playback.dash.drm.failed',
           this.callbacks.playbackLabel(loadToken), error);
-        this.callbacks.onError('unsupported');
+        this.callbacks.onError('unsupported', playbackErrorDetail('PlayReady', { message: error }));
       });
     });
   }
@@ -591,18 +801,18 @@ export class PlayerPipeline {
   private playNative(url: string, mime: string): void {
     const videoEl = this.videoEl;
     if (!videoEl) return;
+    this.setActiveMode('native');
     // A <source> with an explicit MIME tells the player the format even when the
     // URL has no file extension.
     videoEl.removeAttribute('src');
-    videoEl.innerHTML = '';
+    while (videoEl.firstChild) videoEl.removeChild(videoEl.firstChild);
     const source = document.createElement('source');
     source.src = url;
     if (mime) source.type = mime;
     videoEl.appendChild(source);
     videoEl.load();
-    videoEl.play().catch(e => log.warn('Native play() rejected',
-      'event=playback.play.rejected',
-      this.videoLabel(videoEl), 'path=native', this.callbacks.mediaState(videoEl), e));
+    const token = this.loadToken;
+    this.startBufferedPlayback(videoEl, token);
   }
 
   private loadWithHls(
@@ -614,16 +824,26 @@ export class PlayerPipeline {
     const Hls = win.__Hls as HlsType | undefined;
     try {
       if (!Hls?.isSupported()) {
+        if (this.selectedMode === 'hls') { this.callbacks.onError('unsupported'); return; }
         log.warn('hls.js unsupported; using direct playback',
             'event=playback.path.direct', this.callbacks.playbackLabel(loadToken),
             'reason=hls-unsupported');
         this.videoEl.src = url;
-        this.videoEl.play().catch(() => {});
+        this.startBufferedPlayback(this.videoEl, loadToken);
         return;
       }
       const hlsConfig: Record<string, unknown> = {
         maxBufferLength: CONFIG.PLAYER.BUFFER_LENGTH,
-        enableWorker: false,
+        maxMaxBufferLength: CONFIG.PLAYER.BUFFER_LENGTH,
+        maxBufferSize: CONFIG.PLAYER.BUFFER_BYTES,
+        backBufferLength: CONFIG.PLAYER.BACK_BUFFER_SECONDS,
+        ...(this.prebufferingEnabled ? {
+          lowLatencyMode: false,
+          liveSyncDurationCount: 4,
+          maxLiveSyncPlaybackRate: 1,
+          abrEwmaDefaultEstimate: CONFIG.PLAYER.START_BANDWIDTH,
+        } : {}),
+        enableWorker: typeof Worker === 'function',
       };
 
       // Stable-URI loaders so a rotating-URL live window doesn't trip hls.js.
@@ -636,6 +856,7 @@ export class PlayerPipeline {
         };
       }
       this.hlsRecoveries = 0;
+      this.setActiveMode('hls');
       const hls = new Hls(hlsConfig);
       this.hls = hls;
       this.engine = createHlsEngine(hls);
@@ -644,50 +865,76 @@ export class PlayerPipeline {
       // The audio/subtitle track lists aren't ready at MANIFEST_PARSED — hls.js
       // fills them and fires their *_TRACKS_UPDATED events separately, so apply
       // the saved picks there.
-      hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, this.callbacks.onAudioTracksUpdated);
-      hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, this.callbacks.onSubtitleTracksUpdated);
+      hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, () => {
+        if (loadToken === this.loadToken) this.callbacks.onAudioTracksUpdated();
+      });
+      hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, () => {
+        if (loadToken === this.loadToken) this.callbacks.onSubtitleTracksUpdated();
+      });
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (loadToken !== this.loadToken) return;
+        const index = this.getQualityState().selected;
+        if (index < 0) this.qualityChoice = null;
+        hls.loadLevel = index;
+        this.callbacks.onQualityChanged?.();
         log.info('hls.js manifest parsed; starting playback',
           'event=playback.manifest.parsed', this.callbacks.playbackLabel(loadToken),
           'path=hls');
-        this.videoEl?.play().catch(e => log.warn('hls play() rejected:', e));
+        if (this.videoEl) this.startBufferedPlayback(this.videoEl, loadToken);
+      });
+      hls.on(Hls.Events.LEVELS_UPDATED, () => {
+        if (loadToken !== this.loadToken) return;
+        const index = this.getQualityState().selected;
+        if (index < 0) this.qualityChoice = null;
+        hls.nextLevel = index;
+        this.callbacks.onQualityChanged?.();
       });
       // A good fragment played: the stream recovered, so refill the retry budget.
       hls.on(Hls.Events.FRAG_BUFFERED, () => { this.hlsRecoveries = 0; });
       // Bounded recovery: retry transient network/media errors (and rotating-URL
       // re-fetches) a few times, but give up on a genuinely dead stream so it
-      // zaps to the next channel instead of retrying forever.
+      // surfaces an error instead of retrying forever.
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (loadToken !== this.loadToken) return;
         log.warn('hls.js error', 'event=playback.hls.error',
           this.callbacks.playbackLabel(loadToken),
           { type: data.type, details: data.details, fatal: data.fatal });
         if (!data.fatal) return;
+        const detail = playbackErrorDetail('hls.js', {
+          type: data.type, details: data.details,
+          httpStatus: data.response?.code, message: data.error,
+        });
         if (this.hlsRecoveries >= CONFIG.PLAYER.HLS_MAX_RECOVERIES) {
-          this.callbacks.onError();
+          this.callbacks.onError(undefined, detail);
           return;
         }
         this.hlsRecoveries++;
         const n = `${this.hlsRecoveries}/${CONFIG.PLAYER.HLS_MAX_RECOVERIES}`;
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          this.callbacks.onRecovering?.(`${detail} | ${n}`);
           log.info('Restarting hls.js after a fatal network error',
             'event=playback.hls.recover.network',
             this.callbacks.playbackLabel(loadToken), n);
           this.hls?.startLoad();
         } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          this.callbacks.onRecovering?.(`${detail} | ${n}`);
           log.info('Recovering hls.js after a fatal media error',
             'event=playback.hls.recover.media',
             this.callbacks.playbackLabel(loadToken), n);
           this.hls?.recoverMediaError();
         } else {
-          this.callbacks.onError();
+          this.callbacks.onError(undefined, detail);
         }
       });
     } catch (error) {
+      if (this.selectedMode === 'hls') {
+        this.callbacks.onError('unsupported', playbackErrorDetail('hls.js', { message: error }));
+        return;
+      }
       log.warn('hls.js initialization failed; using direct playback',
         'event=playback.hls.init.failed', this.callbacks.playbackLabel(loadToken), error);
       this.videoEl.src = url;
-      this.videoEl.play().catch(() => {});
+      this.startBufferedPlayback(this.videoEl, loadToken);
     }
   }
 
@@ -697,6 +944,7 @@ export class PlayerPipeline {
     drm: ShakaDrmConfig | null = null,
   ): void {
     if (!this.videoEl) return;
+    this.setActiveMode('shaka');
     this.msePending = true;
     const label = this.callbacks.playbackLabel(loadToken);
     const startedAt = Date.now();
@@ -711,7 +959,16 @@ export class PlayerPipeline {
       this.engine = engine;
       this.msePending = false;
       const config: Record<string, unknown> = {
-        streaming: { bufferingGoal: CONFIG.PLAYER.BUFFER_LENGTH },
+        streaming: {
+          bufferingGoal: CONFIG.PLAYER.BUFFER_LENGTH,
+          bufferBehind: CONFIG.PLAYER.BACK_BUFFER_SECONDS,
+          ...(this.prebufferingEnabled ? {
+            rebufferingGoal: CONFIG.PLAYER.REBUFFER_SECONDS,
+            lowLatencyMode: false,
+            stopFetchingOnPause: false,
+          } : {}),
+        },
+        ...(this.prebufferingEnabled ? { abr: { defaultBandwidthEstimate: CONFIG.PLAYER.START_BANDWIDTH } } : {}),
       };
       if (drm) {
         const keySystem = drm.type === 'clearkey' ? 'org.w3.clearkey' : 'com.widevine.alpha';
@@ -763,6 +1020,7 @@ export class PlayerPipeline {
             `audioAtmos=${info?.audioAtmos === true}`,
             this.callbacks.mediaState(videoEl));
           this.callbacks.onAudioTracksUpdated();
+          this.callbacks.onQualityChanged?.();
         }
       };
       player.addEventListener('adaptation', notifyAudioTracks);
@@ -782,17 +1040,20 @@ export class PlayerPipeline {
         log.warn('Shaka critical error', 'event=playback.dash.error',
           this.callbacks.playbackLabel(loadToken), shakaErrorDetail(error));
         if (isPermanentShakaLicenseError(error, shaka)) {
-          this.callbacks.onError('unsupported');
+          this.callbacks.onError('unsupported', shakaPlaybackDetail(error));
         } else {
-          this.callbacks.onError();
+          this.callbacks.onError(undefined, shakaPlaybackDetail(error));
         }
       };
       player.addEventListener('error', event => {
+        if (loadToken !== this.loadToken || this.engine !== engine) return;
         const error = (event as CustomEvent<ShakaError>).detail;
         log.warn('Shaka error', 'event=playback.dash.error',
           this.callbacks.playbackLabel(loadToken), shakaErrorDetail(error));
         if (error?.severity === shaka.util.Error.Severity.CRITICAL) {
           reportCriticalError(error);
+        } else {
+          this.callbacks.onRecovering?.(shakaPlaybackDetail(error));
         }
       });
 
@@ -818,9 +1079,11 @@ export class PlayerPipeline {
         }
         this.callbacks.onAudioTracksUpdated();
         this.callbacks.onSubtitleTracksUpdated();
-        videoEl.play().catch(error => log.warn('Shaka play() rejected',
-          'event=playback.play.rejected',
-          this.callbacks.playbackLabel(loadToken), 'path=dash', shakaErrorDetail(error)));
+        const quality = matchingQuality(engine.qualityOptions?.() ?? [], this.qualityChoice);
+        if (quality < 0) this.qualityChoice = null;
+        engine.selectQuality?.(quality);
+        this.callbacks.onQualityChanged?.();
+        this.startBufferedPlayback(videoEl, loadToken);
       }).catch(error => {
         if (loadToken !== this.loadToken || this.engine !== engine) return;
         this.destroyLoaders();
@@ -832,7 +1095,7 @@ export class PlayerPipeline {
       this.destroyLoaders();
       log.warn('Shaka initialization failed',
         'event=playback.dash.init.failed', this.callbacks.playbackLabel(loadToken), shakaErrorDetail(error));
-      this.callbacks.onError();
+      this.callbacks.onError(undefined, shakaPlaybackDetail(error));
     });
   }
 
@@ -841,33 +1104,56 @@ export class PlayerPipeline {
     const mpegts = win.__mpegts as MpegtsType | undefined;
     try {
       if (!mpegts?.isSupported()) {
+        if (this.selectedMode === 'mpegts') { this.callbacks.onError('unsupported'); return; }
       log.warn('mpegts.js unsupported; using direct playback',
         'event=playback.path.direct', this.callbacks.playbackLabel(loadToken),
         'reason=mpegts-unsupported');
       this.videoEl.src = url;
-        this.videoEl.play().catch(() => {});
+        this.startBufferedPlayback(this.videoEl, loadToken);
         return;
       }
+      this.setActiveMode('mpegts');
       const player = mpegts.createPlayer({
         type: isFlv ? 'flv' : 'mpegts',
-        isLive: true,
+        isLive: !this.callbacks.isCatchup(),
         url,
+      }, {
+        enableWorker: typeof Worker === 'function',
+        enableStashBuffer: this.prebufferingEnabled,
+        ...(this.prebufferingEnabled ? {
+          stashInitialSize: 256 * 1024,
+          liveBufferLatencyChasing: false,
+          liveSync: false,
+          lazyLoad: true,
+          lazyLoadMaxDuration: CONFIG.PLAYER.BUFFER_LENGTH,
+          lazyLoadRecoverDuration: CONFIG.PLAYER.REBUFFER_SECONDS + 4,
+        } : {}),
+        autoCleanupSourceBuffer: true,
+        autoCleanupMaxBackwardDuration: CONFIG.PLAYER.BACK_BUFFER_SECONDS * 2,
+        autoCleanupMinBackwardDuration: CONFIG.PLAYER.BACK_BUFFER_SECONDS,
       });
       this.mpegtsPlayer = player;
-      player.attachMediaElement(this.videoEl);
-      player.load();
-      player.play();
-      player.on(mpegts.Events.ERROR, () => {
+      player.on(mpegts.Events.ERROR, (type: string, details: string, info?: { code?: number; msg?: string }) => {
         if (loadToken !== this.loadToken) return;
         log.error('mpegts.js playback error', 'event=playback.mpegts.error',
           this.callbacks.playbackLabel(loadToken));
-        this.callbacks.onError();
+        this.callbacks.onError(undefined, playbackErrorDetail('mpegts.js', {
+          type, details, code: info?.code, message: info?.msg,
+          httpStatus: details === mpegts.ErrorDetails.NETWORK_STATUS_CODE_INVALID ? info?.code : undefined,
+        }));
       });
+      player.attachMediaElement(this.videoEl);
+      player.load();
+      this.startBufferedPlayback(this.videoEl, loadToken, () => player.play() ?? Promise.resolve());
     } catch (error) {
+      if (this.selectedMode === 'mpegts') {
+        this.callbacks.onError('unsupported', playbackErrorDetail('mpegts.js', { message: error }));
+        return;
+      }
       log.warn('mpegts.js initialization failed; using direct playback',
         'event=playback.mpegts.init.failed', this.callbacks.playbackLabel(loadToken), error);
       this.videoEl.src = url;
-      this.videoEl.play().catch(() => {});
+      this.startBufferedPlayback(this.videoEl, loadToken);
     }
   }
 
@@ -883,15 +1169,18 @@ export class PlayerPipeline {
     const dash = format === 'dash';
     const controller = new AbortController();
     const started = Date.now();
+    this.nativeQualityLoading = true;
     this.manifestController?.abort();
     this.manifestController = controller;
     try {
+      let responseUrl = url;
       const text = await fetchLimitedText(
         url,
         dash ? CONFIG.PLAYER.MPD_MAX_BYTES : CONFIG.PLAYER.MANIFEST_MAX_BYTES,
         CONFIG.PLAYER.MANIFEST_TIMEOUT,
         controller.signal,
         dash ? mpdOpeningVerdict : '#EXTM3U',
+        resolved => { responseUrl = resolved; },
       );
       if (seq !== this.manifestSeq) return null;
       if (dash && !isMpdText(text)) {
@@ -900,12 +1189,17 @@ export class PlayerPipeline {
       log.debug('Manifest fetched', 'event=playback.manifest.fetched',
         this.callbacks.playbackLabel(loadToken),
         `format=${format} bytes=${String(text.length)} elapsed=${String(Date.now() - started)}ms`);
-      const parsed = dash ? parseMpd(text, url) : null;
+      const parsed = dash ? parseMpd(text, responseUrl) : null;
       beforeNotify?.(parsed);
       const audio = parsed ? parsed.audio : parseAudioRenditions(text);
       const subtitles = parsed ? parsed.subtitles : parseSubtitleRenditions(text);
       const closedCaptions = parsed ? parsed.closedCaptions : parseClosedCaptions(text);
       const variants = parsed ? parsed.variants : parseVariants(text);
+      this.nativeMasterUrl = url;
+      this.nativeQualities = parsed ? variants.map((variant, index) => ({
+        index, width: variant.width, height: variant.height, bitrate: 0,
+        frameRate: variant.frameRate, available: false, url: '',
+      })) : nativeHlsQualities(text, responseUrl);
       if (audio.length >= 2) {
         log.info('manifest audio:', audio.map(r => r.name || r.lang || '?').join(', '));
       }
@@ -922,7 +1216,7 @@ export class PlayerPipeline {
         subtitles,
         closedCaptions,
         variants,
-        masterUrl: subtitles.length ? url : '',
+        masterUrl: subtitles.length ? responseUrl : '',
       });
       return parsed;
     } catch (e) {
@@ -933,10 +1227,17 @@ export class PlayerPipeline {
       return null;
     } finally {
       if (this.manifestController === controller) this.manifestController = null;
+      if (seq === this.manifestSeq && loadToken === this.loadToken) {
+        this.nativeQualityLoading = false;
+        this.callbacks.onQualityChanged?.();
+      }
     }
   }
 
   private cancelManifest(): void {
+    this.nativeQualityLoading = false;
+    this.classificationController?.abort();
+    this.classificationController = null;
     this.manifestSeq++;
     this.manifestController?.abort();
     this.manifestController = null;

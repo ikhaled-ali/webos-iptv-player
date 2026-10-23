@@ -1,6 +1,7 @@
+import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import { mkdirRecursive, stringEndsWith } from '../compat';
+import { bufferFrom, mkdirRecursive, stringEndsWith } from '../compat';
 
 export interface UploadMeta {
   id: string;
@@ -63,7 +64,77 @@ function countChannels(content: string): number {
 }
 
 export class UploadStore {
-  constructor(private readonly dataDir: string) {}
+  private encryptionKey: Buffer | null = null;
+  constructor(private readonly dataDir: string, private readonly encryptionRequired = false) {}
+
+  unlock(encodedKey: string): void {
+    if (!/^[A-Za-z0-9+/]{43}=$/.test(encodedKey)) throw new Error('Invalid storage key');
+    const key = bufferFrom(encodedKey, 'base64');
+    if (key.length !== 32) throw new Error('Invalid storage key');
+    const previous = this.encryptionKey;
+    this.encryptionKey = key;
+    try {
+      const pending: Array<{ file: string; value: string }> = [];
+      const entries = fs.readdirSync(this.dataDir);
+      for (const entry of entries) {
+        if (!/^[a-z0-9._-]+\.(m3u|json)$/.test(entry)) continue;
+        const file = path.join(this.dataDir, entry);
+        const raw = fs.readFileSync(file, 'utf-8');
+        const decoded = this.decode(raw, entry);
+        if (raw.indexOf('IPTV-URL1:') >= 0 && raw.indexOf('IPTV-SEAL1:') !== 0) continue;
+        const encoded = this.encode(decoded, entry);
+        if (encoded !== raw) pending.push({ file: file, value: encoded });
+      }
+      for (const item of pending) this.atomicWrite(item.file, item.value);
+    } catch (error) { this.encryptionKey = previous; throw error; }
+  }
+
+  private atomicWrite(file: string, value: string): void {
+    const temporary = file + '.sealed-tmp';
+    fs.writeFileSync(temporary, value, { encoding: 'utf-8', mode: 384 });
+    fs.chmodSync(temporary, 384);
+    fs.renameSync(temporary, file);
+  }
+
+  private encrypt(value: string, context: string): string {
+    if (!this.encryptionKey) throw new Error('Upload storage locked');
+    const iv = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', this.encryptionKey, iv);
+    cipher.setAAD(bufferFrom(context, 'utf8'));
+    const data = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
+    return JSON.stringify({ iv: iv.toString('base64'),
+      data: data.toString('base64'), tag: cipher.getAuthTag().toString('base64') });
+  }
+
+  private decrypt(value: string, context: string): string {
+    if (!this.encryptionKey) throw new Error('Upload storage locked');
+    const sealed = JSON.parse(value) as { iv: string; data: string; tag: string };
+    const decipher = createDecipheriv('aes-256-gcm', this.encryptionKey, bufferFrom(sealed.iv, 'base64'));
+    decipher.setAAD(bufferFrom(context, 'utf8'));
+    decipher.setAuthTag(bufferFrom(sealed.tag, 'base64'));
+    return Buffer.concat([decipher.update(bufferFrom(sealed.data, 'base64')), decipher.final()]).toString('utf8');
+  }
+
+  private encode(value: string, context: string): string {
+    if (!this.encryptionKey) {
+      if (this.encryptionRequired) throw new Error('Upload storage locked');
+      return value;
+    }
+    if (stringEndsWith(context, '.json')) return value;
+    return value.replace(/(?:https?|rtsp):\/\/[^\s<>"']+/gi, (url: string, offset: number) => {
+      const line = value.slice(value.lastIndexOf('\n', offset) + 1, offset).trim();
+      const credentialUrl = /[?&](?:user(?:name)?|pass(?:word)?|token|key|api[_-]?key|signature|sig)=|:\/\/[^/]+@|\/(?:live|movie|series|timeshift)\/[^/]+\/[^/]+\//i.test(url);
+      if (line.charAt(0) === '#' && !credentialUrl) return url;
+      return 'IPTV-URL1:' + bufferFrom(this.encrypt(url, context), 'utf8').toString('base64');
+    });
+  }
+
+  private decode(value: string, context: string): string {
+    if (this.encryptionRequired && !this.encryptionKey) throw new Error('Upload storage locked');
+    if (value.indexOf('IPTV-SEAL1:') === 0) return this.decrypt(value.slice(11), context);
+    return value.replace(/IPTV-URL1:([A-Za-z0-9+/]+=*)/g, (_match: string, encoded: string) =>
+      this.decrypt(bufferFrom(encoded, 'base64').toString('utf8'), context));
+  }
 
   private storagePath(id: string, extension: '.json' | '.m3u'): string {
     if (!isValidUploadId(id)) throw new Error('Invalid upload id');
@@ -93,7 +164,7 @@ export class UploadStore {
       if (!stringEndsWith(file, '.json')) continue;
       try {
         const meta = JSON.parse(
-          fs.readFileSync(path.join(this.dataDir, file), 'utf-8'),
+          this.decode(fs.readFileSync(path.join(this.dataDir, file), 'utf-8'), file),
         ) as UploadMeta;
         if (fs.existsSync(this.filePath(meta.id))) out.push(meta);
       } catch {
@@ -118,8 +189,8 @@ export class UploadStore {
     };
     const m3uPath = this.filePath(id);
     const jsonPath = this.metaPath(id);
-    fs.writeFileSync(m3uPath, content, 'utf-8');
-    fs.writeFileSync(jsonPath, JSON.stringify(meta), 'utf-8');
+    this.atomicWrite(m3uPath, this.encode(content, id + '.m3u'));
+    this.atomicWrite(jsonPath, this.encode(JSON.stringify(meta), id + '.json'));
     console.log('[upload] wrote ' + m3uPath + ' (' + content.length + ' bytes)');
     console.log('[upload] wrote ' + jsonPath);
     return meta;
@@ -138,6 +209,6 @@ export class UploadStore {
   }
 
   read(id: string): string {
-    return fs.readFileSync(this.filePath(id), 'utf-8');
+    return this.decode(fs.readFileSync(this.filePath(id), 'utf-8'), id + '.m3u');
   }
 }

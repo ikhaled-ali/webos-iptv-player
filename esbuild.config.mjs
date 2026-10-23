@@ -101,9 +101,17 @@ const workerBuild = {
 const shippedBuilds = [
   { name: 'app', config: appBuild },
   { name: 'worker', config: workerBuild },
+  { name: 'optional players', config: {
+    entryPoints: ['src/preview-libs.ts'],
+    bundle: true,
+    outfile: isPreview ? 'dist/js/preview-libs.js' : 'dist/js/player-libs.js',
+    format: 'iife',
+    target: TARGET,
+    banner: { js: LEGACY_JS_BANNER },
+  } },
 ];
 
-// Shipped bundles (minified, both go into the IPK).
+// Shipped bundles (minified, all go into the IPK).
 const bundled = await Promise.all(shippedBuilds.map(({ config }) =>
   esbuild.build({ ...config, minify: true, metafile: true })));
 
@@ -122,21 +130,13 @@ for (const { name, config } of shippedBuilds) {
     throw new Error(`${name} bundle:\n${formatViolations(violations)}`);
   }
 }
-console.log('Compat gate: app, worker and Shaka bundles are Chromium-53 clean.');
+console.log('Compat gate: app, worker, optional players and Shaka bundles are Chromium-53 clean.');
 
-// Desktop-only HLS and MPEG-TS libraries. Shaka stays in its separate lazy
-// bundle on both desktop and webOS.
-if (isPreview) {
-  await esbuild.build({
-    entryPoints: ['src/preview-libs.ts'],
-    bundle: true,
-    outfile: 'dist/js/preview-libs.js',
-    format: 'iife',
-    target: TARGET,
-    minify: true,
-  });
-} else {
+// Preview loads its player libraries eagerly; production loads them on demand.
+if (!isPreview) {
   rmSync('dist/js/preview-libs.js', { force: true });
+} else {
+  rmSync('dist/js/player-libs.js', { force: true });
 }
 
 writeThirdPartyNotices({

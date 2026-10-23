@@ -52,7 +52,7 @@ async function installStartupHarness(
     win.__startupProbe__ = probe;
     win.__releaseServiceStart__ = () => {
       for (const callback of pendingStarts.splice(0)) {
-        callback({ running: true, port: 9999 });
+        callback({ running: true, port: 9999, localToken: '1'.repeat(64) });
       }
     };
     win.__showApp__ = () => {
@@ -75,6 +75,7 @@ async function installStartupHarness(
       }
 
       call(uri: string, payload: string): void {
+        if ((window as any).__keymanagerMock(uri, payload, response => this.onservicecallback?.(response))) return;
         const method = uri.slice(uri.lastIndexOf('/') + 1);
         const parameters = JSON.parse(payload) as LunaParameters;
         this.subscription = method === 'serviceEvents';
@@ -260,7 +261,7 @@ test('an expired playlist cache boots at once and refreshes in the background', 
   // Seed once: re-seeding on reload would assign a new source id and change
   // the cache's source signature, turning the reload into a cache miss.
   await page.addInitScript((url) => {
-    if (!localStorage.getItem('iptv_playlists')) {
+    if (!localStorage.getItem('iptv_playlists') && !localStorage.getItem('iptv_sealed_local_v1')) {
       localStorage.setItem('iptv_playlists', JSON.stringify([{ name: 'Test', url }]));
     }
   }, PLAYLIST_URL);
@@ -285,15 +286,13 @@ test('an expired playlist cache boots at once and refreshes in the background', 
       open.onerror = () => reject(open.error);
       open.onsuccess = () => {
         const db = open.result;
-        const tx = db.transaction('playlist-cache', 'readwrite');
+        const tx = db.transaction('playlist-cache', 'readonly');
         const store = tx.objectStore('playlist-cache');
         let aged = false;
         const cursor = store.openCursor();
         cursor.onsuccess = () => {
           const entry = cursor.result;
           if (!entry) return;
-          const value = entry.value as { timestamp: number };
-          entry.update({ ...value, timestamp: value.timestamp - 7 * 24 * 60 * 60 * 1000 });
           aged = true;
           entry.continue();
         };
@@ -304,6 +303,8 @@ test('an expired playlist cache boots at once and refreshes in the background', 
         tx.onerror = () => reject(tx.error);
       };
     }))).toBe(true);
+
+    await page.clock.setSystemTime(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
 
     await page.reload();
     await expect(names).toHaveText(['Channel One', 'Channel Two']);

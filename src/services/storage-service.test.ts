@@ -216,6 +216,25 @@ describe('StorageService', () => {
     expect(localStorage.getItem('iptv_live_preview')).toBeNull();
   });
 
+  it('defaults prebuffering to on and persists either choice independently of autoplay', () => {
+    expect(StorageService.getPrebuffering()).toBe(true);
+    expect(localStorage.getItem('iptv_prebuffering')).toBeNull();
+    StorageService.setPrebuffering(false);
+    expect(StorageService.getPrebuffering()).toBe(false);
+    StorageService.setAutoPlay(true);
+    expect(StorageService.getPrebuffering()).toBe(false);
+    StorageService.setPrebuffering(true);
+    expect(StorageService.getPrebuffering()).toBe(true);
+    StorageService.setPrebuffering(false);
+    StorageService.clearAll();
+    expect(StorageService.getPrebuffering()).toBe(true);
+  });
+
+  it.each(['null', '"false"', '0', '{}', 'invalid'])('defaults malformed prebuffering preference %s to on', value => {
+    localStorage.setItem('iptv_prebuffering', value);
+    expect(StorageService.getPrebuffering()).toBe(true);
+  });
+
   it('validates and persists the animation mode', () => {
     expect(StorageService.getAnimationMode()).toBe('reduced');
     StorageService.setAnimationMode('full');

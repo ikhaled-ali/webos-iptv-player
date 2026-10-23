@@ -31,16 +31,34 @@ var tempRoot = path.join(
 var dataDir = path.join(tempRoot, 'nested', 'uploads');
 require(path.join(buildDir, 'compat')).mkdirRecursive(dataDir);
 
+var UploadStore = require(path.join(buildDir, 'upload', 'store')).UploadStore;
+var crypto = require('crypto');
+var protectedStore = new UploadStore(dataDir, true);
+var storageKey = crypto.randomBytes(32).toString('base64');
+protectedStore.unlock(storageKey);
+var protectedPlaylist = '#EXTM3U\n#EXTINF:-1,ch1\nhttp://host/synthetic-secret/1';
+protectedStore.save('probe', protectedPlaylist);
+if (fs.readFileSync(path.join(dataDir, 'probe.m3u'), 'utf8').indexOf('synthetic-secret') >= 0) {
+  throw new Error('Upload credentials persisted as plaintext');
+}
+var reopenedStore = new UploadStore(dataDir, true);
+reopenedStore.unlock(storageKey);
+if (reopenedStore.read('probe') !== protectedPlaylist) throw new Error('Encrypted upload readback failed');
+reopenedStore.delete('probe');
+
 var server = null;
+var localToken = '';
 var timeout = setTimeout(function () {
   finish(new Error('Service runtime smoke timed out'));
 }, 15000);
 
-function request(port, method, route, body) {
+function request(port, method, route, body, privateAccess) {
   return new Promise(function (resolve, reject) {
     var headers = body
       ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
       : {};
+    headers.Origin = 'null';
+    if (privateAccess !== false) headers['X-IPTV-Local-Token'] = localToken;
     var req = http.request({
       host: '127.0.0.1',
       port: port,
@@ -136,15 +154,24 @@ var state = {
 delete process.env.IPTV_ALLOW_INSECURE_LAN_SETUP;
 startServer(0, dataDir).then(function (bound) {
   server = bound.server;
+  localToken = bound.localToken;
   if (server.address().address !== '127.0.0.1') {
     throw new Error('Default service must bind only to loopback');
   }
-  return request(bound.port, 'GET', '/info').then(function (response) {
+  return request(bound.port, 'GET', '/info', undefined, false).then(function (response) {
+    expectStatus(response, 403, 'anonymous /info');
+    return request(bound.port, 'OPTIONS', '/setup-actions', undefined, false);
+  }).then(function (response) {
+    if (response.status !== 204 || response.headers['access-control-allow-origin'] !== 'null') {
+      throw new Error('Packaged-app preflight failed');
+    }
+    return request(bound.port, 'GET', '/info');
+  }).then(function (response) {
     var info = expectStatus(response, 200, '/info');
     if (info.setupUrl !== '' || info.manualUrl !== '' || info.pairingCode !== '') {
       throw new Error('Default service must not advertise phone setup');
     }
-    if (response.headers['access-control-allow-origin'] !== '*' ||
+    if (response.headers['access-control-allow-origin'] !== 'null' ||
         response.headers['cache-control'] !== 'no-store' ||
         response.headers['referrer-policy'] !== 'no-referrer' ||
         response.headers['x-content-type-options'] !== 'nosniff' ||
@@ -160,6 +187,7 @@ startServer(0, dataDir).then(function (bound) {
   return startServer(0, dataDir);
 }).then(function (bound) {
   server = bound.server;
+  localToken = bound.localToken;
   return request(bound.port, 'GET', '/info').then(function (response) {
     var info = expectStatus(response, 200, '/info');
     return request(
@@ -227,7 +255,8 @@ startServer(0, dataDir).then(function (bound) {
             if (uploads.length !== 1 || uploads[0].id !== 'alpha') {
               throw new Error('Upload listing failed');
             }
-            return request(bound.port, 'GET', '/uploads/alpha.m3u');
+            var route = '/uploads/' + uploads[0].url.split('/uploads/')[1];
+            return request(bound.port, 'GET', route, undefined, false);
           }).then(function (readResponse) {
             if (readResponse.status !== 200 || readResponse.body !== playlist) {
               throw new Error('Upload readback failed');

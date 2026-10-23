@@ -1,3 +1,6 @@
+import { protectCredentialFields, revealCredentialFields } from './credential-fields';
+import { unseal, privateKey, vaultReady, type SealedValue } from './credential-vault';
+import { localValue, removeLocalValue } from './secure-local';
 import { CONFIG } from '../config';
 import type { Channel, EpgSource, ParsedEpg } from '../types';
 import { createLogger } from '../utils/logger';
@@ -249,6 +252,7 @@ export interface CacheRecordRef {
 const recordRefs = new WeakMap<object, CacheRecordRef>();
 
 export function cacheRecordRef(value: object): CacheRecordRef | null {
+  if (vaultReady()) return null;
   return recordRefs.get(value) ?? null;
 }
 
@@ -513,6 +517,28 @@ function normalizeRecord(
   return normalized;
 }
 
+async function diskKey(store: CacheStore, key: IDBValidKey): Promise<IDBValidKey> {
+  return vaultReady() ? privateKey('cache:' + store, key) : key;
+}
+const CREDENTIAL_KEY = '__iptv_cache_key_v2';
+async function decodeRecord(store: CacheStore, raw: Record<string, unknown>): Promise<StoredRecord> {
+  if (!vaultReady()) return raw as StoredRecord;
+  if (raw.sealed) {
+    return unseal(raw.sealed as SealedValue, 'cache:' + store + ':' + String(raw[cacheKeyPath(store)]));
+  }
+  const decoded = await revealCredentialFields(raw);
+  if (Object.prototype.hasOwnProperty.call(decoded, CREDENTIAL_KEY)) {
+    decoded[cacheKeyPath(store)] = decoded[CREDENTIAL_KEY];
+    delete decoded[CREDENTIAL_KEY];
+  }
+  return decoded as StoredRecord;
+}
+async function encodeRecord(store: CacheStore, record: StoredRecord): Promise<StoredRecord> {
+  if (!vaultReady()) return record;
+  const key = await diskKey(store, record[cacheKeyPath(store)] as IDBValidKey);
+  const protectedRecord = await protectCredentialFields(record);
+  return { ...protectedRecord, [CREDENTIAL_KEY]: protectedRecord[cacheKeyPath(store)], [cacheKeyPath(store)]: key };
+}
 async function readRaw(store: CacheStore, key: IDBValidKey): Promise<StoredRecord | null> {
   const db = await openDb();
   if (!db) {
@@ -526,10 +552,12 @@ async function readRaw(store: CacheStore, key: IDBValidKey): Promise<StoredRecor
     return null;
   }
   try {
+    const lookup = await diskKey(store, key);
     const tx = db.transaction(store, 'readonly');
-    const raw = await requestResult(tx.objectStore(store).get(key)) as
+    let raw = await requestResult(tx.objectStore(store).get(lookup)) as
       Record<string, unknown> | undefined;
     if (!raw) return null;
+    raw = await decodeRecord(store, raw);
     const normalized = isNormalizedRecord(store, raw) ? raw : normalizeRecord(store, raw);
     if (!isNormalizedRecord(store, raw)) {
       void persistNormalizedRecord(store, normalized);
@@ -560,7 +588,7 @@ async function readRaw(store: CacheStore, key: IDBValidKey): Promise<StoredRecor
 }
 
 async function touchRecord(store: CacheStore, record: StoredRecord): Promise<void> {
-  const key = record[cacheKeyPath(store)] as IDBValidKey;
+  const key = await diskKey(store, record[cacheKeyPath(store)] as IDBValidKey);
   const id = entryMetaId(store, key);
   const now = Date.now();
   const lastTouch = accessTouches.get(id);
@@ -734,9 +762,10 @@ async function readEntryMeta(
 ): Promise<CacheEntryMeta | null> {
   const db = await openDb();
   if (!db) return null;
+  const lookup = await diskKey(store, key);
   const tx = db.transaction(META_STORE, 'readonly');
   const raw = await requestResult(
-    tx.objectStore(META_STORE).get(entryMetaId(store, key)),
+    tx.objectStore(META_STORE).get(entryMetaId(store, lookup)),
   );
   return isCacheEntryMeta(raw) ? raw : null;
 }
@@ -866,7 +895,7 @@ async function removeExpiredRecord(store: CacheStore, key: IDBValidKey): Promise
     if (!current || current.expiresAt === null || current.expiresAt > Date.now()) return;
     await deleteCandidates([{
       store,
-      key,
+      key: await diskKey(store, key),
       category: categoryForStore(store),
       byteSize: current.byteSize,
       expiresAt: current.expiresAt,
@@ -946,9 +975,10 @@ async function commitRecord(
   const deltaEntries = previous ? 0 : 1;
   const categoryUsage = metadata.categories[category];
   const now = Date.now();
+  const encoded = await encodeRecord(store, record);
   const tx = db.transaction([store, META_STORE], 'readwrite');
-  tx.objectStore(store).put(record);
-  const key = record[cacheKeyPath(store)] as IDBValidKey;
+  tx.objectStore(store).put(encoded);
+  const key = encoded[cacheKeyPath(store)] as IDBValidKey;
   tx.objectStore(META_STORE).put(entryMeta(store, key, record));
   tx.objectStore(META_STORE).put({
     category,
@@ -1073,10 +1103,12 @@ async function readRawWithoutTouch(
 ): Promise<StoredRecord | null> {
   const db = await openDb();
   if (!db) return null;
+  const lookup = await diskKey(store, key);
   const tx = db.transaction(store, 'readonly');
-  const raw = await requestResult(tx.objectStore(store).get(key)) as
+  let raw = await requestResult(tx.objectStore(store).get(lookup)) as
     Record<string, unknown> | undefined;
   if (!raw) return null;
+  raw = await decodeRecord(store, raw);
   return isNormalizedRecord(store, raw) ? raw : normalizeRecord(store, raw);
 }
 
@@ -1167,7 +1199,7 @@ function clearStore(store: CacheStore): Promise<void> {
 function playlistSourceSignature(): string {
   let source = '[]';
   try {
-    source = localStorage.getItem(CONFIG.STORAGE_PREFIX + 'playlists') ?? '[]';
+    source = localValue(CONFIG.STORAGE_PREFIX + 'playlists') ?? '[]';
   } catch {
     // An unavailable localStorage produces a stable empty-source signature.
   }
@@ -1310,9 +1342,10 @@ export function setCachedCatalogState(
     if (!db) return false;
     try {
       const now = Date.now();
+      const lookup = await diskKey(CATALOG_STORE, key);
       const tx = db.transaction(META_STORE, 'readwrite');
       const metadata = tx.objectStore(META_STORE);
-      const request = metadata.get(entryMetaId(CATALOG_STORE, key));
+      const request = metadata.get(entryMetaId(CATALOG_STORE, lookup));
       let accepted = false;
       request.onsuccess = () => {
         const source: unknown = request.result;
@@ -1396,7 +1429,7 @@ export function clearCachedStreamMimes(): Promise<void> {
 export async function migrateLegacyStreamMimeCache(): Promise<void> {
   const legacyKey = CONFIG.STORAGE_PREFIX + 'stream_mimes';
   try {
-    const raw = localStorage.getItem(legacyKey);
+    const raw = localValue(legacyKey);
     if (!raw) return;
     const parsed = JSON.parse(raw) as Record<string, Partial<StreamMimeEntry>>;
     const now = Date.now();
@@ -1424,7 +1457,7 @@ export async function migrateLegacyStreamMimeCache(): Promise<void> {
       if (!stored) return;
       migrated++;
     }
-    localStorage.removeItem(legacyKey);
+    removeLocalValue(legacyKey);
     log.info(
       'Legacy stream MIME cache migration completed',
       'event=persistence.cache.migration.completed',
@@ -1472,7 +1505,8 @@ export async function getCachedChannelHealth<T>(): Promise<Record<string, T>> {
       tx.objectStore(CHANNEL_HEALTH_STORE).getAll(),
     ) as Record<string, unknown>[];
     const records: Record<string, T> = {};
-    for (const item of raw) {
+    for (const stored of raw) {
+      const item = await decodeRecord(CHANNEL_HEALTH_STORE, stored);
       const key = item.key;
       if (typeof key === 'string' && item.data !== undefined) records[key] = item.data as T;
     }
@@ -1585,7 +1619,7 @@ export async function clearCachedPlaylist(): Promise<void> {
     throw err;
   }
   try {
-    localStorage.removeItem(CONFIG.STORAGE_PREFIX + 'cached_playlist');
+    removeLocalValue(CONFIG.STORAGE_PREFIX + 'cached_playlist');
   } catch {
     // IndexedDB remains authoritative when Web Storage is unavailable.
   }
@@ -1598,7 +1632,7 @@ export async function clearAllCachedData(): Promise<void> {
   clearGeneration++;
   return enqueueMutation(async () => {
     try {
-      localStorage.removeItem(CONFIG.STORAGE_PREFIX + 'cached_playlist');
+      removeLocalValue(CONFIG.STORAGE_PREFIX + 'cached_playlist');
     } catch {
       // Continue clearing IndexedDB when Web Storage is unavailable.
     }
@@ -1645,6 +1679,7 @@ export interface SearchIndexReservation {
 export function reserveSearchIndex(
   candidate: SearchIndexCandidate,
 ): Promise<SearchIndexReservation | null> {
+  if (vaultReady()) return Promise.resolve(null);
   const generation = clearGeneration;
   return enqueueMutation(async () => {
     if (generation !== clearGeneration || !candidate.prefix

@@ -34,6 +34,12 @@ describe('ScopedSearchIndex', () => {
     })).toBeNull();
   });
 
+  it.each(['names', 'fields'] as const)('matches contained parts in %s list searches', mode => {
+    const index = new ScopedSearchIndex();
+    index.indexList({ owner: 'catalog', sessionId: 1, mode, documents: [['Alpha—Bravo'], ['Charlie']] });
+    expect(index.queryList({ owner: 'catalog', sessionId: 1, query: 'rav pha' })?.indices).toEqual([0]);
+  });
+
   it('releases only the matching list session', () => {
     const index = new ScopedSearchIndex();
     index.indexList({

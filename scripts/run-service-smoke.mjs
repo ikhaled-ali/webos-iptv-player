@@ -23,6 +23,10 @@ const RELEASES = {
     'darwin-arm64': '168f787f457bf645f3fc41e7419b62071db7d42519ce461b1d7ebfc0acbdbfb1',
     'linux-x64': 'ca63da538e02de15b7e974f7a17ce4732cc0d63023942301d30044c472ed9ddd',
   },
+  'v16.20.2': {
+    'darwin-arm64': '6a5c4108475871362d742b988566f3fe307f6a67ce14634eb3fbceb4f9eea88c',
+    'linux-x64': 'c9193e6c414891694759febe846f4f023bf48410a6924a8b1520c46565859665',
+  },
   'v20.12.2': {
     'darwin-arm64': '98eb624b52efec2530079e1d11296ec0ac20771b94b087d21649250339cf5332',
     'linux-x64': 'f8f9b6877778ed2d5f920a5bd853f0f8a8be1c42f6d448c763a95625cbbb4b0d',
@@ -30,7 +34,11 @@ const RELEASES = {
 };
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const versions = process.argv.includes('--matrix')
+const selectedVersion = process.argv.find(arg => arg.startsWith('--version='))?.slice('--version='.length);
+if (selectedVersion && !Object.hasOwn(RELEASES, selectedVersion)) {
+  throw new Error('Unsupported service runtime version');
+}
+const versions = selectedVersion ? [selectedVersion] : process.argv.includes('--matrix')
   ? Object.keys(RELEASES)
   : ['v0.12.2'];
 

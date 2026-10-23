@@ -734,6 +734,7 @@ export class Settings {
     const epgSources = this.epgSources(manualEpgSources, allPlaylists);
     const autoPlay = StorageService.getAutoPlay();
     const livePreview = StorageService.getLivePreview();
+    const prebuffering = StorageService.getPrebuffering();
     const channelCycleMode = StorageService.getChannelCycleMode();
     const showHidden = StorageService.getShowHiddenChannels();
     const feedTime = StorageService.getTzMode() === 'feed';
@@ -982,6 +983,11 @@ export class Settings {
                   <div class="settings-item-title">${t('settings.livePreview')}</div>
                   ${toggleGroup('live-preview-setting', [{ value: 'on', label: t('settings.on') }, { value: 'off', label: t('settings.off') }], livePreview ? 'on' : 'off')}
                   <div class="settings-item-hint">${t('settings.livePreviewHint')}</div>
+                </div>
+                <div class="settings-item">
+                  <div class="settings-item-title">${t('settings.prebuffering')}</div>
+                  ${toggleGroup('prebuffering-setting', [{ value: 'on', label: t('settings.on') }, { value: 'off', label: t('settings.off') }], prebuffering ? 'on' : 'off')}
+                  <div class="settings-item-hint">${t('settings.prebufferingHint')}</div>
                 </div>
                 <div class="settings-item">
                   <div class="settings-item-title">${t('settings.channelCycleMode')}</div>
@@ -2845,6 +2851,9 @@ export class Settings {
 
     const livePreviewBtn = $('#live-preview-setting .toggle-option.active', this.container);
     if (livePreviewBtn) StorageService.setLivePreview(livePreviewBtn.dataset.value === 'on');
+
+    const prebufferingBtn = $('#prebuffering-setting .toggle-option.active', this.container);
+    if (prebufferingBtn) StorageService.setPrebuffering(prebufferingBtn.dataset.value === 'on');
 
     const channelCycleBtn = $('#channel-cycle-mode .toggle-option.active', this.container);
     if (channelCycleBtn?.dataset.value) {

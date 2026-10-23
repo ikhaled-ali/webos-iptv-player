@@ -86,6 +86,7 @@ export async function fetchLimitedText(
   timeout: number,
   signal?: AbortSignal,
   requiredPrefix?: string | readonly string[] | FetchPrefixValidator,
+  onResponseUrl?: (url: string) => void,
 ): Promise<string> {
   const controller = new AbortController();
   let timedOut = false;
@@ -126,6 +127,7 @@ export async function fetchLimitedText(
     if (!response.ok) {
       throw new FetchTextError('http', `HTTP ${response.status}: ${response.statusText}`);
     }
+    onResponseUrl?.(response.url || url);
     const declaredLength = Number(response.headers?.get('content-length') || 0);
     if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
       throw new FetchTextError('too_large', `Response exceeds ${maxBytes} bytes`);

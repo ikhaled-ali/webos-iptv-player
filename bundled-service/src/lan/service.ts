@@ -21,6 +21,8 @@ interface LunaService {
 }
 
 type LunaMsg = {
+  sender?: string;
+  payload?: { encryptionKey?: unknown };
   respond: (r: unknown) => void;
   isSubscription?: boolean;
   // Per webos-service: msg is an EventEmitter; clients dropping their end
@@ -38,15 +40,23 @@ export function startLanStandalone(dataDir: string): void {
 }
 
 // Wire the shared LAN feature onto the Luna service.
-export function registerLanService(service: LunaService, dataDir: string): void {
+export function registerLanService(service: LunaService, dataDir: string, appId: string): void {
   let server: http.Server | null = null;
   let actualPort: number | null = null;
+  let localToken: string | null = null;
+  let unlockUploads: ((key: string) => void) | null = null;
+
+  function authorized(msg: LunaMsg): boolean {
+    if (msg.sender === appId) return true;
+    msg.respond({ returnValue: false, errorText: 'Local access only' });
+    return false;
+  }
   // Buffer for `start` messages that arrive before the HTTP server has finished
   // binding. We respond synchronously once the bind resolves to avoid using
   // `await` inside the Luna handler — async handlers break the message/activity
   // scoping in webos-service and cause the service process to exit after the
   // first respond().
-  const pendingStarts: Array<{ respond: (r: unknown) => void }> = [];
+  const pendingStarts: LunaMsg[] = [];
   // Subscribers to the `serviceEvents` push channel. Each entry is a Luna msg
   // retained from a subscribe request; the service calls msg.respond() to push.
   const subscribers: LunaMsg[] = [];
@@ -78,17 +88,19 @@ export function registerLanService(service: LunaService, dataDir: string): void 
     if (server || bindInProgress) return;
     bindInProgress = true;
     console.log('[lan] (re)binding HTTP server');
-    startServer(0, dataDir, broadcastChange, setupActions, setupState).then((r) => {
+    startServer(0, dataDir, broadcastChange, setupActions, setupState, true).then((r) => {
       bindInProgress = false;
       server = r.server;
       actualPort = r.port;
+      localToken = r.localToken;
+      unlockUploads = r.unlockUploads;
       console.log('[lan] HTTP server ready on port ' + actualPort);
       if (!keepAliveCreated) {
         service.activityManager.create('keepAlive', () => { /* keep service alive */ });
         keepAliveCreated = true;
       }
       // Drain any `start` calls that arrived before this bind finished.
-      for (const m of pendingStarts) m.respond({ running: true, port: actualPort });
+      for (const m of pendingStarts) respondStarted(m);
       pendingStarts.length = 0;
     }).catch((err) => {
       bindInProgress = false;
@@ -103,10 +115,22 @@ export function registerLanService(service: LunaService, dataDir: string): void 
   // `start` call (most common case).
   ensureServer();
 
+  function respondStarted(msg: LunaMsg): void {
+    try {
+      const key = msg.payload && msg.payload.encryptionKey;
+      if (typeof key !== 'string' || !unlockUploads) throw new Error('Upload storage locked');
+      unlockUploads(key);
+      msg.respond({ running: true, port: actualPort, localToken });
+    } catch {
+      msg.respond({ returnValue: false, running: false, errorText: 'Protected upload storage unavailable' });
+    }
+  }
+
   service.register('start', (msg) => {
+    if (!authorized(msg)) return;
     console.log('[lan] start method invoked');
     if (actualPort !== null) {
-      msg.respond({ running: true, port: actualPort });
+      respondStarted(msg);
     } else {
       // Server still binding (or was torn down by stop and needs a fresh
       // bind) — queue this msg and kick a bind if one isn't already in
@@ -117,6 +141,7 @@ export function registerLanService(service: LunaService, dataDir: string): void 
   });
 
   service.register('heartbeat', (msg) => {
+    if (!authorized(msg)) return;
     msg.respond({ running: !!server, port: actualPort });
   });
 
@@ -126,6 +151,7 @@ export function registerLanService(service: LunaService, dataDir: string): void 
   // a subsequent `start` rebinds via ensureServer() — Luna does NOT need
   // to respawn us.
   service.register('stop', (msg) => {
+    if (!authorized(msg)) return;
     console.log('[lan] stop method invoked');
     // Drop all push subscribers — their connections are scoped to this
     // service lifetime and would be stale after a restart anyway.
@@ -144,6 +170,7 @@ export function registerLanService(service: LunaService, dataDir: string): void 
       const s = server;
       server = null;
       actualPort = null;
+      localToken = null;
       s.close((err) => {
         if (err) console.warn('[lan] server.close error:', err);
         else console.log('[lan] HTTP server closed');
@@ -155,6 +182,7 @@ export function registerLanService(service: LunaService, dataDir: string): void 
   // Push channel: clients subscribe once and the service calls
   // msg.respond({event}) whenever uploads mutate or a setup action is queued.
   service.register('serviceEvents', (msg) => {
+    if (!authorized(msg)) return;
     if (msg.isSubscription) {
       if (subscribers.indexOf(msg) < 0) subscribers.push(msg);
       console.log('[lan] serviceEvents subscriber added, total=' + subscribers.length);

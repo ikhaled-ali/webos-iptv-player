@@ -33,7 +33,7 @@ if (Service) {
   try {
     const service = new Service(SERVICE_ID);
     console.log('[service] registered with Luna as ' + SERVICE_ID);
-    registerLanService(service, DATA_DIR);
+    registerLanService(service, DATA_DIR, SERVICE_ID.replace(/\.service$/, ''));
     registerReminderService(service);
   } catch (e) {
     console.error('[service] failed to register Luna service:', e);

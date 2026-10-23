@@ -3,7 +3,7 @@
  * Deliberately hide entire URLs: Xtream credentials can occur in arbitrary
  * path segments, queries, URL userinfo, and provider-defined formats.
  */
-const URL_IN_TEXT = /\b(?:https?|rtsp):\/\/[^\s<>"'`]+/gi;
+const URL_IN_TEXT = /\b(?:https?|rtsp):\/\/[^\s<>"`]+/gi;
 const CREDENTIAL_ASSIGNMENT = /\b(password|passwd|username|token|api[_-]?key|authorization|secret)["']?\s*[:=]\s*(?:(?:Bearer|Basic)\s+[^\s,;}]+|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)/gi;
 const SECRET_PROPERTY = /password|passwd|username|token|api[_-]?key|authorization|secret|\burl\b|uri|headers/i;
 

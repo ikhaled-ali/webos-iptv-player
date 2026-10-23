@@ -202,6 +202,68 @@ function hover(el: HTMLElement): void {
 }
 
 describe('ChannelList.render', () => {
+  it('reloads once while busy and keeps the reload button focused', async () => {
+    let finish!: () => void;
+    const reload = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));
+    list = new ChannelList(container, { onChannelSelect: onSelect, onReloadPlaylists: reload });
+    list.render();
+    const button = container.querySelector<HTMLElement>('[data-reload-playlists]')!;
+    expect(button.textContent).toBe('Reload playlists');
+    hover(button);
+    list.handleAction('select');
+    list.handleAction('select');
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(button.textContent).toBe('Loading…');
+    expect(button.getAttribute('aria-busy')).toBe('true');
+    expect(ringed(button)).toBe(true);
+    finish();
+    await Promise.resolve();
+    expect(button.getAttribute('aria-busy')).toBe('false');
+    expect(button.textContent).toBe('Reload playlists');
+    expect(ringed(button)).toBe(true);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('reaches reload above groups and playlist tabs (tabs=%s)', (tabs) => {
+    if (tabs) playlistMock.playlistTabs = [{ id: 'p1', name: 'List 1' }, { id: 'p2', name: 'List 2' }];
+    list = new ChannelList(container, {
+      onChannelSelect: onSelect,
+      onReloadPlaylists: vi.fn().mockResolvedValue(undefined),
+    });
+    list.render();
+    hover(container.querySelector<HTMLElement>('[data-group-position="0"]')!);
+    list.handleAction('up');
+    if (tabs) {
+      expect(ringed(container.querySelector('.playlist-tab.active'))).toBe(true);
+      list.handleAction('up');
+    }
+    expect(ringed(container.querySelector('[data-reload-playlists]'))).toBe(true);
+    list.handleAction('down');
+    expect(ringed(container.querySelector(tabs ? '.playlist-tab.active' : '[data-group-position="0"]')))
+      .toBe(true);
+  });
+
+  it('clears the busy state after a failed pointer reload so it can be retried', async () => {
+    const reload = vi.fn().mockRejectedValue(new Error('unavailable'));
+    list = new ChannelList(container, { onChannelSelect: onSelect, onReloadPlaylists: reload });
+    list.render();
+    const button = container.querySelector<HTMLElement>('[data-reload-playlists]')!;
+    const original = document.elementFromPoint;
+    document.elementFromPoint = () => button;
+    try {
+      container.dispatchEvent(new MouseEvent('click', { clientX: 10, clientY: 10, bubbles: true }));
+    } finally {
+      document.elementFromPoint = original;
+    }
+    await Promise.resolve();
+    expect(reload).toHaveBeenCalledOnce();
+    expect(button.getAttribute('aria-busy')).toBe('false');
+    expect(toastMock.showToast).toHaveBeenCalledWith('Unable to load the playlist. Check the URL and try again.');
+    list.handleAction('select');
+    expect(reload).toHaveBeenCalledTimes(2);
+    await Promise.resolve();
+  });
+
   it('omits the live-preview toolbar when the setting is off', () => {
     list = new ChannelList(container, {
       onChannelSelect: onSelect,

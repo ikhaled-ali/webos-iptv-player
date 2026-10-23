@@ -76,6 +76,16 @@ describe('fetchText / fetchWithTimeout', () => {
 });
 
 describe('fetchLimitedText', () => {
+  it('reports the final response URL so relative variants resolve after a redirect', async () => {
+    const response = new Response('#EXTM3U\n', { status: 200 });
+    Object.defineProperty(response, 'url', { value: 'http://host/cdn/master.m3u8' });
+    vi.stubGlobal('fetch', vi.fn(async () => response));
+    const onUrl = vi.fn();
+    await expect(fetchLimitedText('http://host/a', 1024, 5000, undefined, '#EXTM3U', onUrl))
+      .resolves.toBe('#EXTM3U\n');
+    expect(onUrl).toHaveBeenCalledWith('http://host/cdn/master.m3u8');
+  });
+
   it('cancels an endless response after reaching the byte limit', async () => {
     const cancel = vi.fn(async () => {});
     const read = vi.fn()

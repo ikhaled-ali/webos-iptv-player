@@ -6,7 +6,7 @@ import {
   normalizeXtreamBaseUrl,
   normalizeXtreamLiveOutputPreference,
 } from '../utils/xtream-url';
-import { serviceBase } from './service-http';
+import { serviceBase, serviceHeaders } from './service-http';
 import { StorageService } from './storage-service';
 import { uploadIdFromUrl } from './upload-client';
 import { ReminderService } from './reminder-service';
@@ -75,7 +75,7 @@ class SetupClientImpl {
       return null;
     }
     try {
-      const res = await fetchWithTimeout(`${base}/info`, {}, TIMEOUT);
+      const res = await fetchWithTimeout(`${base}/info`, { headers: serviceHeaders() }, TIMEOUT);
       if (!res.ok) {
         log.warn('getInfo: HTTP', res.status);
         return null;
@@ -93,7 +93,7 @@ class SetupClientImpl {
     try {
       const res = await fetchWithTimeout(
         `${base}/setup-actions/${encodeURIComponent(String(id))}`,
-        { method: 'DELETE' },
+        { method: 'DELETE', headers: serviceHeaders() },
         TIMEOUT,
       );
       if (!res.ok) log.warn('Action acknowledgement failed: HTTP', res.status);
@@ -153,7 +153,7 @@ class SetupClientImpl {
         `${base}/setup-state`,
         {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { ...serviceHeaders(), 'Content-Type': 'application/json' },
           body: JSON.stringify(state),
         },
         TIMEOUT,
@@ -179,7 +179,7 @@ class SetupClientImpl {
 
     let actions: SetupAction[];
     try {
-      const res = await fetchWithTimeout(`${base}/setup-actions`, {}, TIMEOUT);
+      const res = await fetchWithTimeout(`${base}/setup-actions`, { headers: serviceHeaders() }, TIMEOUT);
       if (!res.ok) {
         log.warn('Action sync: HTTP', res.status);
         return false;

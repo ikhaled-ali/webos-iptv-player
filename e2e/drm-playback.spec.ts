@@ -431,6 +431,7 @@ async function installPlayReadyLuna(
       }
 
       call(uri: string, payload: string): void {
+        if ((window as any).__keymanagerMock(uri, payload, (response: string) => this.onservicecallback?.(response))) return;
         if (uri.indexOf('luna://com.webos.service.drm/') !== 0) {
           this.respond({ returnValue: false, errorCode: -1, errorText: 'Unmocked non-DRM service' });
           return;

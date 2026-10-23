@@ -109,26 +109,60 @@ export function startServer(
   onChange?: (event: ServiceChangeEvent) => void,
   setupActions = new SetupActionStore(),
   setupState = new SetupStateStore(),
-): Promise<{ server: http.Server; port: number }> {
+  encryptionRequired = false,
+): Promise<{ server: http.Server; port: number; localToken: string; unlockUploads: (key: string) => void }> {
   let boundPort = port;
   // TV-local by default. Remote HTTP setup explicitly opts into LAN exposure.
   const allowInsecureLanSetup = process.env.IPTV_ALLOW_INSECURE_LAN_SETUP === '1';
   const setupToken = randomBytes(6).toString('hex');
+  const localToken = randomBytes(32).toString('hex');
   const pairingCode = padStart(String(secureRandomInt(10000)), 4, '0');
   const pairingAttempts = Object.create(null) as {
     [client: string]: { failures: number; blockedUntil: number } | undefined;
   };
-  const uploads = new UploadStore(dataDir);
+  const uploads = new UploadStore(dataDir, encryptionRequired);
 
   async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const urlObj = parseUrl(req.url || '/', 'http://' + (req.headers.host || 'localhost'));
     const pathname = urlObj.pathname;
     const query = urlObj.query;
     const host = req.headers.host || ('localhost:' + boundPort);
+    const local = isLoopback(req) && req.headers['x-iptv-local-token'] === localToken;
+    const localUpload = isLoopback(req) && req.method === 'GET' &&
+      pathname.indexOf('/uploads/') === 0 && query('localToken') === localToken;
 
     try {
+      const validHost = host === '127.0.0.1:' + boundPort || host === 'localhost:' + boundPort ||
+        host === '[::1]:' + boundPort ||
+        (allowInsecureLanSetup && host === getLanIp() + ':' + boundPort);
+      const origin = req.headers.origin;
+      const validOrigin = !origin || origin === 'http://' + host ||
+        (isLoopback(req) && (origin === 'null' || origin === 'file://'));
+      if (!validHost || !validOrigin) {
+        sendJson(res, 403, { error: 'Local access only' });
+        return;
+      }
+      if (req.method === 'OPTIONS') {
+        if (isLoopback(req) && (origin === 'null' || origin === 'file://')) {
+          res.setHeader('Access-Control-Allow-Origin', origin);
+          res.setHeader('Vary', 'Origin');
+          res.setHeader('Access-Control-Allow-Methods', 'GET, PUT, DELETE, POST');
+          res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-IPTV-Local-Token');
+          send(res, 204, 'text/plain', '');
+        } else sendJson(res, 403, { error: 'Local access only' });
+        return;
+      }
+      if ((!allowInsecureLanSetup && !local && !localUpload) ||
+          (!allowInsecureLanSetup && pathname === '/pair')) {
+        sendJson(res, 403, { error: 'Local access only' });
+        return;
+      }
+      if ((local || localUpload) && origin) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Vary', 'Origin');
+      }
       if (pathname === '/info') {
-        if (!isLoopback(req)) {
+        if (!local) {
           sendJson(res, 403, { error: 'Local access only' });
           return;
         }
@@ -147,6 +181,15 @@ export function startServer(
         send(res, 200, 'text/html; charset=utf-8', setupPageHtml());
       } else if (pathname === '/pair' && req.method === 'POST') {
         const client = req.socket.remoteAddress || 'unknown';
+        let submitted = '';
+        try {
+          const body = JSON.parse(await readBody(req, 1024)) as { code?: unknown };
+          submitted = typeof body.code === 'string' ? body.code : '';
+        } catch {
+          sendJson(res, 400, { error: 'Invalid pairing request' });
+          return;
+        }
+        // Re-read after the await so concurrent requests cannot share stale failures.
         const now = Date.now();
         let current = pairingAttempts[client];
         if (current && current.blockedUntil > now) {
@@ -159,14 +202,6 @@ export function startServer(
         if (current && current.blockedUntil > 0) {
           delete pairingAttempts[client];
           current = undefined;
-        }
-        let submitted = '';
-        try {
-          const body = JSON.parse(await readBody(req, 1024)) as { code?: unknown };
-          submitted = typeof body.code === 'string' ? body.code : '';
-        } catch {
-          sendJson(res, 400, { error: 'Invalid pairing request' });
-          return;
         }
         if (submitted !== pairingCode) {
           const failures = (current?.failures || 0) + 1;
@@ -181,7 +216,7 @@ export function startServer(
         delete pairingAttempts[client];
         sendJson(res, 200, { token: setupToken });
       } else if (pathname === '/setup-state' && req.method === 'PUT') {
-        if (!isLoopback(req)) {
+        if (!local) {
           sendJson(res, 403, { error: 'Local access only' });
           return;
         }
@@ -212,7 +247,7 @@ export function startServer(
           sendJson(res, 400, { error: e instanceof Error ? e.message : String(e) });
         }
       } else if (pathname === '/setup-actions' && req.method === 'GET') {
-        if (!isLoopback(req)) {
+        if (!local) {
           sendJson(res, 403, { error: 'Local access only' });
           return;
         }
@@ -227,7 +262,7 @@ export function startServer(
           setupActions.list().some(action => action.id === id);
         sendJson(res, 200, { id, pending });
       } else if (pathname.indexOf('/setup-actions/') === 0 && req.method === 'DELETE') {
-        if (!isLoopback(req)) {
+        if (!local) {
           sendJson(res, 403, { error: 'Local access only' });
           return;
         }
@@ -249,14 +284,15 @@ export function startServer(
           sendJson(res, 400, { error: e instanceof Error ? e.message : String(e) });
         }
       } else if (pathname === '/uploads' && req.method === 'GET') {
-        if (!isLoopback(req) && query('token') !== setupToken) {
+        if (!local && query('token') !== setupToken) {
           sendJson(res, 403, { error: 'Invalid setup token' });
           return;
         }
-        const base = 'http://' + host;
+        const base = 'http://127.0.0.1:' + boundPort;
         const items = uploads.list().map((m) => ({
           ...m,
-          url: base + '/uploads/' + encodeURIComponent(m.id) + '.m3u',
+          url: base + '/uploads/' + encodeURIComponent(m.id) + '.m3u' +
+            (local ? '?localToken=' + localToken : ''),
         }));
         sendJson(res, 200, items);
       } else if (pathname.indexOf('/uploads/') === 0) {
@@ -272,7 +308,7 @@ export function startServer(
           return;
         }
         if (req.method === 'DELETE') {
-          if (!isLoopback(req) && query('token') !== setupToken) {
+          if (!local && query('token') !== setupToken) {
             sendJson(res, 403, { error: 'Invalid setup token' });
             return;
           }
@@ -283,7 +319,7 @@ export function startServer(
           // Raw M3U files may contain live provider usernames/passwords.
           // Do not expose contents over the unencrypted LAN, even to a
           // paired client holding the setup token.
-          if (!isLoopback(req)) {
+          if (!local && !localUpload) {
             sendJson(res, 403, { error: 'TV-local access only' });
             return;
           }
@@ -308,8 +344,6 @@ export function startServer(
 
   return new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
-      // Node 0.12 has no res.req; decide CORS while the request is available.
-      if (isLoopback(req)) res.setHeader('Access-Control-Allow-Origin', '*');
       handleRequest(req, res).catch(() => {
         try { res.writeHead(500); res.end('Internal Server Error'); } catch { /* ignore */ }
       });
@@ -330,7 +364,7 @@ export function startServer(
       }
       // Permanent error handler so post-listen errors don't crash the process.
       server.on('error', (e) => console.error('[lan] server error:', e));
-      resolve({ server, port: actualPort });
+      resolve({ server, port: actualPort, localToken, unlockUploads: key => uploads.unlock(key) });
     };
     server.once('error', onError);
     server.once('listening', onListening);

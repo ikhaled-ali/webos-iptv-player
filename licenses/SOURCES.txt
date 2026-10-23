@@ -8,6 +8,14 @@ verbatim, rather than reconstructing their embedded notices.
 
 The files maintained in this directory have the following sources:
 
+hls-embedded.txt
+  Copyright and license comment blocks retained verbatim from hls.js 1.7.3
+  dist/hls.mjs for utf.js, vtt.js, and the DASH Industry Forum CEA-608 parser.
+  Package versions requiring these embedded notices are pinned by the build.
+  mpegts.js 1.8.2's embedded es6-promise notice is copied from its published
+  dist/mpegts.js.LICENSE.txt; the es6-promise and events MIT licenses are
+  copied from the installed packages.
+
 ass-compiler.txt
   ass-compiler 0.1.15:
   https://raw.githubusercontent.com/weizhenye/ass-compiler/242018274f8838e740081745d23f2c5e308175e9/LICENSE
@@ -37,5 +45,4 @@ twemoji.txt
   television -> 1f4fa, three_oclock -> 1f552, world_map -> 1f5fa,
   pencil -> 270f.
 
-This inventory covers the production IPK, not local-only development tools or
-desktop preview playback libraries.
+This inventory covers the production IPK, including the optional players.

@@ -23,6 +23,7 @@ vi.mock('../services/playlist-service', () => ({
 import { PlayerMenu } from './player-menu';
 import { Focus } from '../navigation/focus-scope';
 import type { PlaybackRateState } from '../services/playback-rate';
+import type { QualityState } from '../utils/playback-quality';
 
 // Number of colour actions before the "Audio Track" row in the main menu.
 const MENU_ACTIONS = 4;
@@ -44,6 +45,8 @@ let selectPlaybackRate: ReturnType<typeof vi.fn>;
 let subtitleSearchAvailable: ReturnType<typeof vi.fn>;
 let openSubtitleSearch: ReturnType<typeof vi.fn>;
 let menu: PlayerMenu;
+let qualityState: QualityState;
+let selectQuality: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -68,6 +71,8 @@ beforeEach(() => {
   selectPlaybackRate = vi.fn().mockResolvedValue(true);
   subtitleSearchAvailable = vi.fn(() => false);
   openSubtitleSearch = vi.fn();
+  qualityState = { options: [], selected: -1, loading: false };
+  selectQuality = vi.fn((index: number) => { qualityState.selected = index; });
   menu = new PlayerMenu(
     container, getCurrentChannel, onAction,
     getAudioTracks, selectAudioTrack,
@@ -75,6 +80,7 @@ beforeEach(() => {
     getSubtitleOffsetState, openSubtitleOffset,
     getPlaybackRateState, selectPlaybackRate,
     subtitleSearchAvailable, openSubtitleSearch,
+    () => qualityState, selectQuality,
   );
 });
 
@@ -89,6 +95,54 @@ function items(): HTMLElement[] {
 }
 
 describe('PlayerMenu', () => {
+  it('shows the available qualities and Auto, and applies both pointer and remote choices', () => {
+    qualityState.options = [
+      { index: 0, width: 854, height: 480, bitrate: 1000000, frameRate: 30 },
+      { index: 1, width: 1920, height: 1080, bitrate: 5000000, frameRate: 60 },
+    ];
+    menu.showQuality();
+    expect(el.querySelector('h2')?.textContent).toBe('Quality');
+    expect(el.textContent).toContain('Auto');
+    expect(el.textContent).toContain('480p');
+    expect(el.textContent).toContain('1080p');
+    expect(el.querySelector('.focused')?.getAttribute('data-quality-index')).toBe('-1');
+    menu.handleAction('down');
+    menu.handleAction('select');
+    expect(selectQuality).toHaveBeenCalledWith(1);
+    expect(el.querySelector('[data-quality-index="1"] .menu-check')?.textContent).toBe('✓');
+    menu.refresh();
+    expect(el.querySelector('.focused')?.getAttribute('data-quality-index')).toBe('1');
+    el.querySelector<HTMLElement>('[data-quality-index="-1"]')!.click();
+    expect(selectQuality).toHaveBeenLastCalledWith(-1);
+  });
+
+  it('shows loading, then explains a stream with one quality without inventing resolutions', () => {
+    qualityState.loading = true;
+    menu.showQuality();
+    expect(el.textContent).toContain('Loading');
+    qualityState.loading = false;
+    qualityState.options = [{ index: 0, width: 0, height: 0, bitrate: 0, frameRate: 0 }];
+    menu.refresh();
+    expect(el.textContent).toContain('Original');
+    expect(el.textContent).toContain('only one quality');
+    expect(el.textContent).not.toContain('1080p');
+    expect(menu.handleBack()).toBe(true);
+    expect(el.querySelector('h2')?.textContent).toBe('Menu');
+  });
+
+  it('identifies the current player and does not select its read-only quality entries', () => {
+    qualityState.player = 'Player 1';
+    qualityState.options = [
+      { index: 0, width: 854, height: 480, bitrate: 0, frameRate: 0, available: false },
+      { index: 1, width: 1920, height: 1080, bitrate: 0, frameRate: 0, available: false },
+    ];
+    menu.showQuality();
+    expect(el.querySelector('.menu-subtitle')?.textContent).toBe('Player 1');
+    expect(el.textContent).toContain('Manual quality selection is unavailable in this player');
+    el.querySelector<HTMLElement>('[data-quality-index="1"]')!.click();
+    expect(selectQuality).not.toHaveBeenCalled();
+  });
+
   it('renders the action items and the playing channel name on show', () => {
     menu.show();
     expect(menu.visible).toBe(true);
@@ -641,7 +695,7 @@ describe('PlayerMenu', () => {
   describe('VOD mode (no channel)', () => {
     beforeEach(() => getCurrentChannel.mockReturnValue(null));
 
-    it('keeps only the Info and Settings color rows, dropping Program Guide / Toggle Favorite', () => {
+    it('keeps the Quality and Settings color rows in VOD mode', () => {
       audioTracks = [
         { index: 0, label: 'Track 1', active: true, available: true },
         { index: 1, label: 'Track 2', active: false, available: true },
@@ -651,10 +705,9 @@ describe('PlayerMenu', () => {
       const actions = items().map(i => i.dataset.menuAction);
       expect(actions).not.toContain('red');   // Program Guide — no EPG for VOD
       expect(actions).not.toContain('green');  // Toggle Favorite — channels only
-      expect(actions).toContain('yellow');     // Title Info
+      expect(actions).toContain('yellow');
       expect(actions).toContain('blue');       // Settings
-      expect(el.textContent).toContain('Title Info');
-      expect(el.textContent).not.toContain('Channel Info'); // relabeled for VOD
+      expect(el.textContent).toContain('Quality');
       expect(el.textContent).toContain('Settings');
       expect(el.textContent).toContain('Audio Track');
       expect(el.textContent).toContain('Subtitles');

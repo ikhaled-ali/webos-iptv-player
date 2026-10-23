@@ -7,6 +7,22 @@ The following notices and the referenced licenses directory accompany the
 application distribution. Installed npm package versions are appended at build
 time from the packages actually used to produce that distribution.
 
+Optional HLS and MPEG-TS players
+-------------------------------
+hls.js: https://github.com/video-dev/hls.js
+Copyright (c) 2017 Dailymotion; Apache-2.0.
+  licenses/hls.js.txt
+Embedded UTF conversion, vtt.js, and DASH Industry Forum notices:
+  licenses/hls-embedded.txt
+mpegts.js: https://github.com/xqq/mpegts.js
+Apache-2.0; full terms:
+  licenses/mpegts.js.txt
+Embedded es6-promise notice and MIT license:
+  licenses/mpegts-embedded.txt
+  licenses/es6-promise.txt
+Embedded events implementation, MIT:
+  licenses/events.txt
+
 Shaka Player
 ------------
 https://github.com/shaka-project/shaka-player

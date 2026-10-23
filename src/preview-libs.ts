@@ -1,5 +1,4 @@
-// The desktop preview exposes its MSE engines through globals.
-// This file is NOT loaded on webOS
+// Preview loads these eagerly; the TV loads them only for a manual player switch.
 import Hls from 'hls.js';
 import mpegts from 'mpegts.js';
 

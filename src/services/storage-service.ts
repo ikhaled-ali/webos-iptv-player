@@ -1,3 +1,4 @@
+import { localValue, writeLocalValue, removeLocalValue, clearLocalValues, flushSecureLocal, setSecureWriteFailureHandler } from './secure-local';
 import { CONFIG } from '../config';
 import { DEFAULT_THEME, DEFAULT_OVERLAY, DEFAULT_TEXT_SIZE, isValidTextSize, type OverlayStyle, type TextSize } from '../config/themes';
 import type { AudioPref, CatchupProgressEntry, Channel, ChannelCustomization, ChannelCycleMode, ManualEpgSource, ParentalControlConfig, ParentalPinThrottle, PlaylistEntry, RecentlyWatchedLiveEntry, Reminder, ResumeEntry, ResumeKind, SubtitlePref, TzMode, WatchlistEntry, WatchlistKind, XtreamLiveCategorySnapshot } from '../types';
@@ -494,7 +495,7 @@ async function initUserData(): Promise<void> {
   const migratedKeys = await loadMigrationMarkers();
   for (let index = 0; index < migrations.length; index++) {
     const [key, defaultValue] = migrations[index];
-    const legacyExists = localStorage.getItem(PREFIX + key) !== null;
+    const legacyExists = localValue(PREFIX + key) !== null;
     const migrated = migratedKeys.has(key);
     if (migrated && !legacyExists) continue;
     const destination = legacyRecords(key, get<unknown>(key, defaultValue));
@@ -508,7 +509,7 @@ async function initUserData(): Promise<void> {
     });
   }
   // A config saved while IndexedDB was unavailable is newer than the stored one.
-  const fallbackParental = localStorage.getItem(PREFIX + 'parental_control') !== null
+  const fallbackParental = localValue(PREFIX + 'parental_control') !== null
     ? get<ParentalControlConfig | null>('parental_control', null)
     : null;
   if (fallbackParental) {
@@ -531,7 +532,7 @@ async function initUserData(): Promise<void> {
 
 function get<T>(key: string, defaultValue: T): T {
   try {
-    const raw = localStorage.getItem(PREFIX + key);
+    const raw = localValue(PREFIX + key);
     if (raw === null) return defaultValue;
     return JSON.parse(raw) as T;
   } catch {
@@ -541,7 +542,7 @@ function get<T>(key: string, defaultValue: T): T {
 
 function set(key: string, value: unknown): boolean {
   try {
-    localStorage.setItem(PREFIX + key, JSON.stringify(value));
+    writeLocalValue(PREFIX + key, JSON.stringify(value));
     return true;
   } catch {
     log.warn(
@@ -552,7 +553,7 @@ function set(key: string, value: unknown): boolean {
     );
     evictCache();
     try {
-      localStorage.setItem(PREFIX + key, JSON.stringify(value));
+      writeLocalValue(PREFIX + key, JSON.stringify(value));
       return true;
     } catch {
       log.error(
@@ -567,7 +568,7 @@ function set(key: string, value: unknown): boolean {
 }
 
 function remove(key: string): void {
-  localStorage.removeItem(PREFIX + key);
+  removeLocalValue(PREFIX + key);
 }
 
 // Derived caches, dropped together: both are re-derivable from the playlist
@@ -605,6 +606,7 @@ export const StorageService = {
    *  trace. Fires on the first failed user-data write in a streak. */
   setWriteFailureHandler(handler: () => void): void {
     onWriteFailure = handler;
+    setSecureWriteFailureHandler(handler);
   },
 
   // Sees every source change, from Settings, phone setup, or a LAN upload.
@@ -636,7 +638,7 @@ export const StorageService = {
   },
 
   clearAll(): void {
-    localStorage.clear();
+    clearLocalValues();
   },
 
   async clearUserData(): Promise<void> {
@@ -646,6 +648,7 @@ export const StorageService = {
   },
 
   async flush(): Promise<void> {
+    await flushSecureLocal();
     try {
       await flushUserDataWrites();
     } catch (initialError) {
@@ -1053,6 +1056,13 @@ export const StorageService = {
   },
   setLivePreview(val: boolean): void {
     set('live_preview', val);
+  },
+
+  getPrebuffering(): boolean {
+    return get<unknown>('prebuffering', true) !== false;
+  },
+  setPrebuffering(val: boolean): void {
+    set('prebuffering', val);
   },
 
   getAnimationMode(): AnimationMode {

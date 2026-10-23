@@ -6,6 +6,8 @@ const { pipeline, tracks, osd, playlist, health } = vi.hoisted(() => ({
   pipeline: {
     load: vi.fn(), destroy: vi.fn(), setVideoElement: vi.fn(),
     currentLoadToken: vi.fn(() => 1), videoLabel: vi.fn(() => 'video'),
+    isPrebuffering: vi.fn(() => false), cancelPrebuffering: vi.fn(),
+    resumePrebuffering: vi.fn(), confirmPlaying: vi.fn(), recoverBuffer: vi.fn(() => false),
   },
   tracks: {
     resetForLoad: vi.fn(), suspend: vi.fn(), stop: vi.fn(), attachVod: vi.fn(),
@@ -342,6 +344,31 @@ describe('Player live preview', () => {
     player.play(1);
     expect(video.muted).toBe(true);
     expect(video.volume).toBe(0.2);
+  });
+
+  it('suspends a paused prebuffer hold and reloads the live stream only when resumed', () => {
+    player.play(0);
+    pipeline.isPrebuffering.mockReturnValueOnce(true);
+    player.suspend();
+    expect(pipeline.destroy).toHaveBeenCalledOnce();
+    expect(currentVideo()).not.toBe(video);
+    player.resume();
+    expect(pipeline.load).toHaveBeenCalledTimes(2);
+  });
+
+  it('cancels a VOD prebuffer hold while hidden and preserves its pending resume point', () => {
+    player.playVod({ ...vod, resumeSecs: 42 });
+    pipeline.isPrebuffering.mockReturnValue(true);
+    try {
+      player.suspend();
+      expect(pipeline.destroy).toHaveBeenCalledOnce();
+      expect(currentVideo()).not.toBe(video);
+    } finally { pipeline.isPrebuffering.mockReturnValue(false); }
+    player.resume();
+    expect(pipeline.load).toHaveBeenCalledTimes(2);
+    Object.defineProperty(currentVideo(), 'duration', { configurable: true, value: 120 });
+    emit('loadedmetadata');
+    expect(currentVideo().currentTime).toBe(42);
   });
 
   it('preserves audio and intended preview presentation across video recreation and resume', () => {

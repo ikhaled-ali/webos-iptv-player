@@ -1,5 +1,7 @@
 import './polyfills';
 import './engine-quirks';
+import { initSecurePersistence } from './services/secure-persistence';
+import { uploadEncryptionKey } from './services/credential-vault';
 import { CONFIG } from './config';
 import { KeyHandler } from './navigation/key-handler';
 import { PlaylistService } from './services/playlist-service';
@@ -16,7 +18,7 @@ import { SetupClient } from './services/setup-client';
 import { SearchIndexPrewarmer } from './services/search-index-store';
 import { CATALOG_STORE, EPG_STORE } from './services/idb-schema';
 import type { SearchPrewarmSource } from './workers/tasks';
-import { setServicePort } from './services/service-http';
+import { serviceBase, setServicePort } from './services/service-http';
 import { isLunaAvailable, lunaRequest, type LunaRequestHandle } from './services/luna';
 import { ChannelList } from './components/channel-list';
 import { Player } from './components/player';
@@ -112,6 +114,7 @@ class App {
   async init(): Promise<void> {
     const done = log.time('init');
     log.info('Initializing app');
+    await initSecurePersistence();
     await StorageService.init();
     ParentalControlService.reload();
     StorageService.setPlaylistsReplacedHandler((previous, next) =>
@@ -146,6 +149,12 @@ class App {
         onChannelsChanged: () => {
           this.player.syncCurrentIndex();
           this.scheduleEpgReload();
+        },
+        onReloadPlaylists: async () => {
+          await this.queuePlaylistRefresh();
+          if (PlaylistService.hasFailedSource(StorageService.getPlaylists().map(source => source.id))) {
+            showToast(t('app.loadFailed'));
+          }
         },
         onEpgMappingChanged: () => this.scheduleEpgReload(),
         onEpgOffsetChanged: () => {
@@ -270,6 +279,8 @@ class App {
       (rate) => this.player.setPlaybackRate(rate),
       () => this.player.subtitleSearchAvailable(),
       () => this.player.openSubtitleSearch(),
+      () => this.player.getQualityState(),
+      index => this.player.selectQuality(index),
     );
 
     this.movies = new Movies(this.views.movies, {
@@ -544,7 +555,7 @@ class App {
       try {
         lunaRequest(`luna://${CONFIG.SERVICE_ID}`, {
           method: 'start',
-          parameters: {},
+          parameters: { encryptionKey: uploadEncryptionKey() },
           onSuccess: (resp: unknown) => {
             clearTimeout(timer);
             const lateSuccess = settled;
@@ -554,11 +565,16 @@ class App {
               finish(false, 'stopped after app hidden');
               return;
             }
+            setServicePort(null);
             if (resp && typeof resp === 'object' && 'port' in resp) {
-              const p = (resp as { port?: unknown }).port;
-              if (typeof p === 'number') setServicePort(p);
+              const { port, localToken } = resp as { port?: unknown; localToken?: unknown };
+              if (typeof port === 'number') setServicePort(port, localToken);
             }
-            log.info('Bundled service start onSuccess:', JSON.stringify(resp));
+            if (!serviceBase()) {
+              finish(false, 'missing service access');
+              return;
+            }
+            log.info('Bundled service start onSuccess');
             finish(true, 'onSuccess');
             if (lateSuccess) {
               void this.finishBundledServiceInit()
@@ -1587,6 +1603,21 @@ class App {
     }
     if (action === 'number') hideNumberEntry();
 
+    const playbackKeys = !owner || owner.id === 'view.player'
+      || owner.id === 'player.menu' || owner.id === 'player.sidebar';
+    if (currentView === 'player' && playbackKeys
+        && (action === 'red' || action === 'green' || action === 'yellow')) {
+      this.sidebar.hide();
+      if (action === 'yellow') {
+        this.player.hideOSD();
+        this.menu.showQuality();
+        return;
+      }
+      this.menu.hide();
+      this.player.handleAction(action);
+      return;
+    }
+
     // The scope that owns the keys (by tier, then latest push) takes them first.
     if (owner?.handle(action, event)) return;
 
@@ -1608,7 +1639,7 @@ class App {
     // Global shortcuts
     // While the channel list is in edit mode the color keys belong to the editor.
     const editingChannels = currentView === 'channels' && this.channelList.isEditing;
-    if (action === 'red' && currentView !== 'epg' && !editingChannels) {
+    if (action === 'red' && currentView !== 'epg' && currentView !== 'player' && !editingChannels) {
       this.sidebar.hide();
       this.menu.hide();
       this.player.stop();
@@ -1624,15 +1655,6 @@ class App {
       this.showView('settings');
       return;
     }
-    if (action === 'green' && currentView === 'player' && (this.sidebar.visible || this.menu.visible)) {
-      this.togglePlayingFavorite();
-      return;
-    }
-    if (action === 'yellow' && currentView === 'player') {
-      this.player.showOSD();
-      return;
-    }
-
     // Back handling
     if (action === 'back') {
       if (currentView === 'player') {
@@ -1821,19 +1843,7 @@ class App {
   }
 
   private onMenuAction(action: Action): void {
-    if (action === 'green') {
-      this.togglePlayingFavorite();
-    } else if (action === 'yellow') {
-      this.player.showOSD();
-    } else {
-      this.handleKey(action);
-    }
-  }
-
-  private togglePlayingFavorite(): void {
-    const ch = this.player.getCurrentChannel();
-    if (!ch) return;
-    this.toggleChannelFavorite(ch);
+    this.handleKey(action);
   }
 
   private toggleChannelFavorite(ch: Channel): void {
@@ -1859,6 +1869,7 @@ class App {
       await clearAllCachedData();
       await StorageService.clearUserData();
       StorageService.clearAll();
+      await StorageService.flush();
       log.info(
         'App reset completed',
         'event=persistence.reset.completed',
@@ -1903,5 +1914,9 @@ document.addEventListener('DOMContentLoaded', () => {
   installGlobalErrorHandlers();
   logEnvironment(CONFIG.VERSION);
   const app = new App();
-  app.init().catch(err => log.error('App init failed:', err));
+  app.init().catch(err => {
+    log.error('App init failed:', err);
+    const loadingText = $('#loading-text');
+    if (loadingText) loadingText.textContent = t('app.saveFailed');
+  });
 });

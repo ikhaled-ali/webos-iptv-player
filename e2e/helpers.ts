@@ -1,3 +1,4 @@
+import { installKeymanagerMock, readProtected } from './protected-storage';
 import { appendFileSync } from 'node:fs';
 import { test as base, expect, type Page } from '@playwright/test';
 import { postTargetApis, removeApis } from '../scripts/chromium-53-simulation.mjs';
@@ -60,18 +61,7 @@ export async function readUserDataStore<T>(
   page: Page,
   storeName: string,
 ): Promise<{ key: string; value: T }[]> {
-  return page.evaluate((store) => new Promise((resolve, reject) => {
-    const open = indexedDB.open('iptv');
-    open.onerror = () => reject(open.error);
-    open.onsuccess = () => {
-      const db = open.result;
-      const tx = db.transaction(store, 'readonly');
-      const request = tx.objectStore(store).getAll();
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => resolve(request.result);
-      tx.oncomplete = () => db.close();
-    };
-  }), storeName) as Promise<{ key: string; value: T }[]>;
+  return readProtected(page, storeName, 'user');
 }
 
 /**
@@ -159,6 +149,7 @@ export const test = base.extend({
     if (testInfo.project.name === 'chromium-53-simulation') {
       await page.addInitScript(removeApis, POST_TARGET_APIS);
     }
+    await installKeymanagerMock(page);
     await stubUploadService(page);
     const ringFailures = await auditRings(page, process.env.RING_AUDIT,
       `${testInfo.project.name} › ${testInfo.titlePath.slice(1).join(' › ')}`);

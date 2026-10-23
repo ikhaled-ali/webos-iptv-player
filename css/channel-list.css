@@ -27,6 +27,18 @@
   color: var(--text-muted);
 }
 
+.playlist-reload {
+  flex-shrink: 0;
+  margin: 16px 24px;
+  min-height: 54px;
+  white-space: normal;
+}
+
+.playlist-reload[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .channel-edit-btn {
   width: 42px;
   height: 42px;

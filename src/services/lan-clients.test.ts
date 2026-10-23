@@ -105,10 +105,14 @@ beforeEach(() => {
   // Simulate the Luna `start` response that the app applies before any
   // LAN client call. Without this, serviceBase() returns null and all methods
   // no-op (which is the no-port path covered by its own describe block).
-  setServicePort(8890);
+  setServicePort(8890, '1'.repeat(64));
 });
 
 describe('uploadIdFromUrl', () => {
+  it('preserves upload identity when a private read capability changes', () => {
+    expect(uploadIdFromUrl('http://127.0.0.1:8890/uploads/a.m3u?localToken=t1')).toBe('a');
+    expect(uploadIdFromUrl('http://127.0.0.1:8890/uploads/a.m3u?localToken=t2')).toBe('a');
+  });
   it('extracts the id from a standard upload URL', () => {
     expect(uploadIdFromUrl('http://127.0.0.1:8890/uploads/my-list.m3u')).toBe('my-list');
   });
@@ -153,6 +157,22 @@ describe('LAN clients when the service port is not yet known', () => {
     expect(fetchWithTimeoutMock).not.toHaveBeenCalled();
     expect(storageMock.setPlaylists).not.toHaveBeenCalled();
     expect(storageMock.remove).not.toHaveBeenCalled();
+  });
+});
+
+describe('private service request headers', () => {
+  it('authenticates setup metadata and upload listing requests', async () => {
+    fetchWithTimeoutMock.mockResolvedValueOnce(jsonResponse({ port: 8890 }));
+    await SetupClient.getInfo();
+    fetchWithTimeoutMock.mockResolvedValueOnce(jsonResponse([]));
+    await UploadClient.list();
+    for (const endpoint of ['info', 'uploads']) {
+      expect(fetchWithTimeoutMock).toHaveBeenCalledWith(
+        `http://127.0.0.1:8890/${endpoint}`,
+        { headers: { 'X-IPTV-Local-Token': '1'.repeat(64) } },
+        4000,
+      );
+    }
   });
 });
 
@@ -289,7 +309,7 @@ describe('UploadClient.reconcile', () => {
     await UploadClient.reconcile();
 
     expect(storageMock.setPlaylists).toHaveBeenCalledWith([
-      { id: expect.any(String), name: 'No URL', url: 'http://127.0.0.1:8890/uploads/no%20url.m3u', source: 'upload', count: 1, revision: 1 },
+      { id: expect.any(String), name: 'No URL', url: `http://127.0.0.1:8890/uploads/no%20url.m3u?localToken=${'1'.repeat(64)}`, source: 'upload', count: 1, revision: 1 },
     ]);
   });
 });
@@ -421,12 +441,12 @@ describe('SetupClient.applyPendingActions', () => {
     ]);
     expect(fetchWithTimeoutMock).toHaveBeenCalledWith(
       'http://127.0.0.1:8890/setup-actions/1',
-      { method: 'DELETE' },
+      { method: 'DELETE', headers: { 'X-IPTV-Local-Token': '1'.repeat(64) } },
       4000,
     );
     expect(fetchWithTimeoutMock).toHaveBeenCalledWith(
       'http://127.0.0.1:8890/setup-actions/3',
-      { method: 'DELETE' },
+      { method: 'DELETE', headers: { 'X-IPTV-Local-Token': '1'.repeat(64) } },
       4000,
     );
   });
@@ -521,7 +541,7 @@ describe('SetupClient.applyPendingActions', () => {
     ]);
     expect(fetchWithTimeoutMock).toHaveBeenCalledWith(
       'http://127.0.0.1:8890/setup-actions/8',
-      { method: 'DELETE' },
+      { method: 'DELETE', headers: { 'X-IPTV-Local-Token': '1'.repeat(64) } },
       4000,
     );
   });
@@ -659,7 +679,7 @@ describe('SetupClient.applyPendingActions', () => {
     expect(JSON.stringify(published)).not.toContain('old-password');
     expect(fetchWithTimeoutMock).toHaveBeenCalledWith(
       'http://127.0.0.1:8890/setup-actions/10',
-      { method: 'DELETE' },
+      { method: 'DELETE', headers: { 'X-IPTV-Local-Token': '1'.repeat(64) } },
       4000,
     );
   });
@@ -679,7 +699,7 @@ describe('SetupClient.applyPendingActions', () => {
 
     expect(fetchWithTimeoutMock).not.toHaveBeenCalledWith(
       'http://127.0.0.1:8890/setup-actions/11',
-      { method: 'DELETE' },
+      { method: 'DELETE', headers: { 'X-IPTV-Local-Token': '1'.repeat(64) } },
       4000,
     );
   });
@@ -701,12 +721,12 @@ describe('SetupClient.applyPendingActions', () => {
 
     expect(fetchWithTimeoutMock).not.toHaveBeenCalledWith(
       'http://127.0.0.1:8890/setup-actions/6',
-      { method: 'DELETE' },
+      { method: 'DELETE', headers: { 'X-IPTV-Local-Token': '1'.repeat(64) } },
       4000,
     );
     expect(fetchWithTimeoutMock).toHaveBeenCalledWith(
       'http://127.0.0.1:8890/setup-actions/7',
-      { method: 'DELETE' },
+      { method: 'DELETE', headers: { 'X-IPTV-Local-Token': '1'.repeat(64) } },
       4000,
     );
   });
@@ -723,7 +743,7 @@ describe('SetupClient.applyPendingActions', () => {
     expect(storageMock.setPlaylists).toHaveBeenCalled();
     expect(fetchWithTimeoutMock).not.toHaveBeenCalledWith(
       'http://127.0.0.1:8890/setup-actions/9',
-      { method: 'DELETE' },
+      { method: 'DELETE', headers: { 'X-IPTV-Local-Token': '1'.repeat(64) } },
       4000,
     );
   });

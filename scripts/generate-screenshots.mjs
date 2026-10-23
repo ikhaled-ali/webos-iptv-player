@@ -1,3 +1,4 @@
+import { protectedKeymanagerMock } from './protected-keymanager-mock.mjs';
 // Generates the README screenshots — one per major view of the app.
 //
 //   node scripts/generate-screenshots.mjs
@@ -715,14 +716,16 @@ async function setupPage(page, {
 
   // Fake the Luna service bus so the LAN service "runs" (settings QR).
   if (upload) {
+    await page.addInitScript(protectedKeymanagerMock);
     await page.addInitScript((port) => {
       window.PalmServiceBridge = class {
         onservicecallback = null;
 
-        call(uri) {
+        call(uri, payload) {
+          if (window.__keymanagerMock(uri, payload, response => this.onservicecallback?.(response))) return;
           const method = uri.slice(uri.lastIndexOf('/') + 1);
           const response = method === 'start'
-            ? { running: true, port }
+            ? { running: true, port, localToken: '1'.repeat(64) }
             : method === 'serviceEvents'
               ? { subscribed: true }
               : method === 'stop'

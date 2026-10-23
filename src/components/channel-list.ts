@@ -55,6 +55,7 @@ export interface ChannelListOptions {
     mode?: ChannelSelectionMode,
   ) => void;
   onChannelsChanged?: () => void;
+  onReloadPlaylists?: () => Promise<void>;
   onEpgMappingChanged?: () => void;
   onEpgOffsetChanged?: () => void;
   onEnterPreview?: () => boolean;
@@ -73,6 +74,8 @@ export class ChannelList {
     mode?: ChannelSelectionMode,
   ) => void;
   private onChannelsChanged: () => void;
+  private onReloadPlaylists?: () => Promise<void>;
+  private reloadingPlaylists = false;
   private onEnterPreview: () => boolean;
   private onListFocus: () => void;
   private getPreviewHintState: () => PreviewHintState;
@@ -127,6 +130,7 @@ export class ChannelList {
     const {
       onChannelSelect,
       onChannelsChanged = () => {},
+      onReloadPlaylists,
       onEpgMappingChanged = () => {},
       onEpgOffsetChanged = () => {},
       onEnterPreview = () => false,
@@ -139,6 +143,7 @@ export class ChannelList {
     this.container = container;
     this.onChannelSelect = onChannelSelect;
     this.onChannelsChanged = onChannelsChanged;
+    this.onReloadPlaylists = onReloadPlaylists;
     this.onEnterPreview = onEnterPreview;
     this.onListFocus = onListFocus;
     this.getPreviewHintState = getPreviewHintState;
@@ -361,6 +366,13 @@ export class ChannelList {
                         title="${t('settings.editChannelList')}"><img src="assets/icons/pencil.svg" alt=""></button>
               `}
           </div>
+          ${!editing && this.onReloadPlaylists ? html`
+            <button class="btn btn-secondary playlist-reload"
+                    data-key="reload-playlists" data-focusable data-reload-playlists
+                    aria-disabled="${String(this.reloadingPlaylists)}"
+                    aria-busy="${String(this.reloadingPlaylists)}">${
+                      t(this.reloadingPlaylists ? 'common.loading' : 'channel.reloadPlaylists')}</button>
+          ` : ''}
           ${showTabs ? html`
             <div class="playlist-tabs" data-edge-scroll>
               <div class="playlist-tab ${!this.currentPlaylist ? 'active' : ''}"
@@ -657,7 +669,9 @@ export class ChannelList {
         // A row a re-render removed is no longer what the list shows.
         if (!focused || !this.container.contains(focused)) break;
 
-        if (focused.dataset.editChannels !== undefined) {
+        if (focused.dataset.reloadPlaylists !== undefined) {
+          void this.reloadPlaylists();
+        } else if (focused.dataset.editChannels !== undefined) {
           this.enterEditMode();
         } else if (focused.dataset.favoriteManage !== undefined) {
           this.editor.enterFavoriteManagement();
@@ -718,6 +732,12 @@ export class ChannelList {
     const focused = this.nav.focused;
     if (!focused) return false;
 
+    if (focused.dataset.reloadPlaylists !== undefined) {
+      if (action === 'down') return this.focusActivePlaylist() || this.focusActiveGroup();
+      if (action === 'right') return this.focusFirstChannel();
+      if (action === 'left') return true;
+    }
+
     if (focused.dataset.playlist !== undefined) {
       const tabs = Array.from(
         this.container.querySelectorAll<HTMLElement>('.playlist-tab[data-playlist]'),
@@ -729,6 +749,7 @@ export class ChannelList {
         return true;
       }
       if (action === 'up') {
+        if (this.focusReloadPlaylists()) return true;
         const edit = this.container.querySelector<HTMLElement>('[data-edit-channels]');
         if (edit) this.nav.focus(edit);
         return !!edit;
@@ -738,7 +759,7 @@ export class ChannelList {
     }
 
     if (action === 'down' && focused.dataset.editChannels !== undefined) {
-      return this.focusActivePlaylist() || this.focusFirstChannel();
+      return this.focusReloadPlaylists() || this.focusActivePlaylist() || this.focusFirstChannel();
     }
 
     if (action === 'left' && focused.closest('.channel-main')) {
@@ -749,15 +770,32 @@ export class ChannelList {
       return this.nav.focusContainerEntry('.channel-main');
     }
 
-    if (action !== 'up' || !this.hasPlaylistTabs()) return false;
+    if (action !== 'up') return false;
     if (focused.dataset.groupPosition === '0') {
-      return this.focusActivePlaylist();
+      return this.focusActivePlaylist() || this.focusReloadPlaylists();
     }
     return false;
   }
 
-  private hasPlaylistTabs(): boolean {
-    return this.container.querySelector('.playlist-tabs') !== null;
+  private focusReloadPlaylists(): boolean {
+    const button = this.container.querySelector<HTMLElement>('[data-reload-playlists]');
+    if (!button) return false;
+    this.nav.focus(button);
+    return true;
+  }
+
+  private async reloadPlaylists(): Promise<void> {
+    if (this.reloadingPlaylists || !this.onReloadPlaylists) return;
+    this.reloadingPlaylists = true;
+    this.render(false);
+    try {
+      await this.onReloadPlaylists();
+    } catch {
+      showToast(t('app.loadFailed'));
+    } finally {
+      this.reloadingPlaylists = false;
+      this.render(false);
+    }
   }
 
   private focusActivePlaylist(): boolean {

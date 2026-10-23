@@ -2,7 +2,7 @@ import type { PlaylistEntry } from '../types';
 import { fetchWithTimeout } from '../utils/fetch-helper';
 import { createLogger } from '../utils/logger';
 import { genPlaylistId } from '../utils/playlist';
-import { serviceBase } from './service-http';
+import { serviceBase, serviceHeaders } from './service-http';
 import { StorageService } from './storage-service';
 
 const log = createLogger('Upload');
@@ -19,7 +19,7 @@ export interface UploadMeta {
 
 /** Derive the stored upload id from its /uploads/<id>.m3u serve URL. */
 export function uploadIdFromUrl(url: string): string {
-  const m = url.match(/\/uploads\/([^/]+?)(?:\.m3u)?$/i);
+  const m = url.split(/[?#]/)[0].match(/\/uploads\/([^/]+?)(?:\.m3u)?$/i);
   return m ? decodeURIComponent(m[1]) : '';
 }
 
@@ -32,7 +32,7 @@ class UploadClientImpl {
       return null;
     }
     try {
-      const res = await fetchWithTimeout(`${b}/uploads`, {}, TIMEOUT);
+      const res = await fetchWithTimeout(`${b}/uploads`, { headers: serviceHeaders() }, TIMEOUT);
       if (!res.ok) {
         log.warn('list: HTTP', res.status);
         return null;
@@ -40,7 +40,7 @@ class UploadClientImpl {
       const items = (await res.json()) as UploadMeta[];
       return items.map((it) => ({
         ...it,
-        url: it.url || `${b}/uploads/${encodeURIComponent(it.id)}.m3u`,
+        url: it.url || `${b}/uploads/${encodeURIComponent(it.id)}.m3u?localToken=${serviceHeaders()['X-IPTV-Local-Token']}`,
       }));
     } catch (e) {
       log.debug('list failed (service likely not running):', e);
@@ -56,7 +56,9 @@ class UploadClientImpl {
       return false;
     }
     try {
-      const res = await fetchWithTimeout(`${b}/uploads/${encodeURIComponent(id)}`, { method: 'DELETE' }, TIMEOUT);
+      const res = await fetchWithTimeout(`${b}/uploads/${encodeURIComponent(id)}`, {
+        method: 'DELETE', headers: serviceHeaders(),
+      }, TIMEOUT);
       if (!res.ok) {
         log.warn('remove: HTTP', res.status, 'for id', id);
         return false;

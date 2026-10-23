@@ -52,6 +52,22 @@ describe('SearchWorkerIndex', () => {
     });
   });
 
+  it.each(['PHA', 'pha rav', 'rav   pha'])('finds contained partial text in every collection for %s', query => {
+    const index = new SearchWorkerIndex();
+    post(index, 1, {
+      channels: [['Alpha Bravo'], ['Charlie']],
+      programmes: [['Alpha Bravo Report'], ['Charlie Report']],
+      movies: ['Alpha—Bravo Movie', 'Charlie Movie'],
+      series: ['Alpha Bravo Series', 'Charlie Series'],
+    });
+    expect(index.query({ sessionId: 1, query, limit: 10, includeCatalog: true })).toEqual({
+      channels: { indices: [0], hasMore: false },
+      programmes: { indices: [0], hasMore: false },
+      movies: { indices: [0], hasMore: false },
+      series: { indices: [0], hasMore: false },
+    });
+  });
+
   it('rejects stale index updates and queries', () => {
     const index = new SearchWorkerIndex();
     post(index, 2, { channels: [['Alpha']] });

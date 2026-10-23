@@ -1,3 +1,4 @@
+import { readProtectedLocal, writeProtectedLocal } from './protected-storage';
 import {
   test, expect, type Page, routePlaylist, routeLiveManifest, seedPlaylist, PLAYLIST_URL, enterTab, readUserDataStore,
 } from './helpers';
@@ -348,9 +349,7 @@ test.describe('Settings navigation', () => {
       ['reduced', 'auto'],
       ['full', 'smooth'],
     ] as const) {
-      await page.evaluate((value) => {
-        localStorage.setItem('iptv_animation_mode', JSON.stringify(value));
-      }, mode);
+      await writeProtectedLocal(page, 'iptv_animation_mode', JSON.stringify(mode));
       await page.reload();
       await expect(page.locator('html')).toHaveAttribute('data-animation', mode);
       const policy = await page.locator('.settings-scroll').evaluate((element) => ({
@@ -366,9 +365,7 @@ test.describe('Settings navigation', () => {
     await page.goto('/');
 
     for (const locale of locales) {
-      await page.evaluate((value) => {
-        localStorage.setItem('iptv_locale', JSON.stringify(value));
-      }, locale);
+      await writeProtectedLocal(page, 'iptv_locale', JSON.stringify(locale));
       await page.reload();
       await page.locator('[data-settings-target="advanced"]').click();
 
@@ -612,9 +609,7 @@ test.describe('Settings navigation', () => {
     await page.goto('/');
 
     for (const locale of locales) {
-      await page.evaluate((value) => {
-        localStorage.setItem('iptv_locale', JSON.stringify(value));
-      }, locale);
+      await writeProtectedLocal(page, 'iptv_locale', JSON.stringify(locale));
       await page.reload();
       await expect(page.locator('html')).toHaveAttribute('lang', locale);
 
@@ -643,9 +638,7 @@ test.describe('Settings navigation', () => {
     await page.goto('/');
 
     for (const locale of locales) {
-      await page.evaluate((value) => {
-        localStorage.setItem('iptv_locale', JSON.stringify(value));
-      }, locale);
+      await writeProtectedLocal(page, 'iptv_locale', JSON.stringify(locale));
       await page.reload();
       await page.locator('[data-settings-target="guide"]').click();
 
@@ -736,7 +729,7 @@ test.describe('Settings navigation', () => {
     });
     const scaled = await metrics();
     // Same measurements at the default size, from a clean load.
-    await page.evaluate(() => localStorage.removeItem('iptv_text_size'));
+    await writeProtectedLocal(page, 'iptv_text_size', null);
     await page.reload();
     await expect(page.locator('#view-channels')).toBeVisible();
     const unscaled = await metrics();
@@ -1292,9 +1285,7 @@ test.describe('Settings Xtream live output', () => {
 
     await page.goto('/');
     for (const locale of ['en', 'de', 'es', 'fr', 'it', 'pt-BR', 'ru', 'uk', 'zh-CN']) {
-      await page.evaluate((value) => {
-        localStorage.setItem('iptv_locale', JSON.stringify(value));
-      }, locale);
+      await writeProtectedLocal(page, 'iptv_locale', JSON.stringify(locale));
       await page.reload();
       await enterTab(page, 'settings');
       await page.locator('[data-settings-target="sources"]').click();
@@ -1369,10 +1360,7 @@ test.describe('Settings Xtream live output', () => {
 
     await expect(page.locator('#view-channels')).toBeVisible();
     await expect(page.locator('.channel-main .channel-item')).toContainText('HLS Channel');
-    await expect.poll(() => page.evaluate(() => {
-      const playlists = JSON.parse(localStorage.getItem('iptv_playlists') || '[]');
-      return playlists[0]?.xtream?.liveOutput;
-    })).toBe('m3u8');
+    await expect.poll(async () => (await readProtectedLocal<any[]>(page, 'iptv_playlists'))[0]?.xtream?.liveOutput).toBe('m3u8');
   });
 });
 
@@ -1409,7 +1397,7 @@ test.describe('Settings Xtream live categories', () => {
 
   function seedAccount(page: Page, liveCategories?: unknown): Promise<void> {
     return page.addInitScript((filter) => {
-      if (localStorage.getItem('iptv_playlists')) return;
+      if (localStorage.getItem('iptv_playlists') || localStorage.getItem('iptv_sealed_local_v1')) return;
       localStorage.setItem('iptv_playlists', JSON.stringify([{
         id: 'x1',
         name: 'Account 1',
@@ -1448,8 +1436,7 @@ test.describe('Settings Xtream live categories', () => {
     await expect(page.locator('#view-channels')).toBeVisible();
     await expect(channels(page)).toHaveCount(2);
     await expect(channels(page)).not.toContainText(['Bravo']);
-    expect(await page.evaluate(() =>
-      JSON.parse(localStorage.getItem('iptv_playlists') || '[]')[0].xtream.liveCategories))
+    expect((await readProtectedLocal<any[]>(page, 'iptv_playlists'))[0].xtream.liveCategories)
       .toEqual({ mode: 'include', ids: ['c1', 'c3'] });
   });
 
@@ -1483,7 +1470,7 @@ test.describe('Settings Xtream live categories', () => {
   test('the picker switches accounts after applying the current one', async ({ page }) => {
     await routeAccount(page, () => 3);
     await page.addInitScript(() => {
-      if (localStorage.getItem('iptv_playlists')) return;
+      if (localStorage.getItem('iptv_playlists') || localStorage.getItem('iptv_sealed_local_v1')) return;
       localStorage.setItem('iptv_playlists', JSON.stringify(['1', '2'].map(n => ({
         id: `x${n}`,
         name: `Account ${n}`,
@@ -1525,7 +1512,7 @@ test.describe('Settings Xtream live categories', () => {
   test('the pointer on the picker account menu keeps one ring, and Back returns to the avatar', async ({ page }) => {
     await routeAccount(page, () => 3);
     await page.addInitScript(() => {
-      if (localStorage.getItem('iptv_playlists')) return;
+      if (localStorage.getItem('iptv_playlists') || localStorage.getItem('iptv_sealed_local_v1')) return;
       localStorage.setItem('iptv_playlists', JSON.stringify(['1', '2'].map(n => ({
         id: `x${n}`,
         name: `Account ${n}`,
@@ -1681,12 +1668,13 @@ test.describe('Settings upload', () => {
           setTimeout(() => this.onservicecallback?.(JSON.stringify(response)), 0);
         }
 
-        call(uri: string): void {
+        call(uri: string, payload: string): void {
+          if ((window as any).__keymanagerMock(uri, payload, (response: string) => this.onservicecallback?.(response))) return;
           const method = uri.slice(uri.lastIndexOf('/') + 1);
           if (method === 'start') {
             // The real service returns the bound port; the in-app client
             // (UploadClient) uses this for all subsequent fetches.
-            this.respond({ running: true, port: 9999 });
+            this.respond({ running: true, port: 9999, localToken: '1'.repeat(64) });
           } else if (method === 'serviceEvents') {
             // Initial subscription ack (matches the real service's first
             // respond({subscribed:true}) inside the serviceEvents handler).
@@ -1736,7 +1724,7 @@ test.describe('Settings upload', () => {
     await expect(page.locator('#upload-entries .empty-hint')).toHaveCount(0);
 
     // Storage was updated too: source: 'upload' entry is persisted.
-    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('iptv_playlists') || '[]'))).toEqual(
+    expect(await readProtectedLocal(page, 'iptv_playlists')).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: 'Channel One', source: 'upload' }),
       ]),
@@ -1763,10 +1751,11 @@ test.describe('Settings phone setup card', () => {
       class FakePalmServiceBridge {
         onservicecallback: ((message: string) => void) | null = null;
 
-        call(uri: string): void {
+        call(uri: string, payload: string): void {
+          if ((window as any).__keymanagerMock(uri, payload, (response: string) => this.onservicecallback?.(response))) return;
           const method = uri.slice(uri.lastIndexOf('/') + 1);
           const response = method === 'start'
-            ? { returnValue: true, port: 8890 }
+            ? { returnValue: true, port: 8890, localToken: '1'.repeat(64) }
             : { returnValue: true };
           this.onservicecallback?.(JSON.stringify(response));
         }

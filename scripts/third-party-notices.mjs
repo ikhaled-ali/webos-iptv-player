@@ -7,6 +7,10 @@ const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const PACKAGES = [
   ['assjs', 'MIT', 'LICENSE'],
   ['fflate', 'MIT', 'LICENSE'],
+  ['hls.js', 'Apache-2.0', 'LICENSE'],
+  ['mpegts.js', 'Apache-2.0', 'LICENSE'],
+  ['es6-promise', 'MIT', 'LICENSE'],
+  ['events', 'MIT', 'LICENSE'],
   ['iso-639-1', 'MIT', 'LICENSE'],
   ['iso-639-2', 'MIT', 'license'],
   ['qrcode-generator', 'MIT', null],
@@ -20,6 +24,8 @@ const VENDORED_FILES = [
   ['licenses/ass-compiler.txt', 'licenses/ass-compiler.txt'],
   ['licenses/qrcode-generator.txt', 'licenses/qrcode-generator.txt'],
   ['licenses/twemoji.txt', 'licenses/twemoji.txt'],
+  ['licenses/hls-embedded.txt', 'licenses/hls-embedded.txt'],
+  ['licenses/mpegts-embedded.txt', 'node_modules/mpegts.js/dist/mpegts.js.LICENSE.txt'],
   ['licenses/shaka-cml-cmcd.txt', 'node_modules/shaka-player/third_party/cml-cmcd/LICENSE'],
   ['licenses/shaka-cml-cmcd-NOTICE.txt', 'node_modules/shaka-player/third_party/cml-cmcd/NOTICE'],
 ];
@@ -72,6 +78,8 @@ export function writeThirdPartyNotices({
     // These upstream bundles embed code whose notices are maintained here.
     const reviewedVersion = {
       assjs: '0.1.10',
+      'hls.js': '1.7.3',
+      'mpegts.js': '1.8.2',
       'qrcode-generator': '2.0.4',
     }[name];
     if (reviewedVersion && installed.version !== reviewedVersion) {

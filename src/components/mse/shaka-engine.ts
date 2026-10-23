@@ -1,5 +1,6 @@
 import type { AudioOption, SubtitleOption } from '../../types';
 import type { MseEngine, PipelineStreamInfo } from './engine';
+import type { QualityOption } from '../../utils/playback-quality';
 
 interface ShakaAudioTrack {
   active: boolean;
@@ -19,6 +20,12 @@ interface ShakaTextTrack {
 }
 
 interface ShakaVariantTrack {
+  id?: number;
+  width?: number | null;
+  height?: number | null;
+  bandwidth?: number;
+  audioId?: number | null;
+  language?: string;
   active: boolean;
   audioCodec: string | null;
   channelsCount: number | null;
@@ -34,11 +41,37 @@ export interface ShakaPlayerLike {
   getVariantTracks(): ShakaVariantTrack[];
   selectAudioTrack(track: ShakaAudioTrack): void;
   selectTextTrack(track?: ShakaTextTrack | null): void;
+  selectVariantTrack?(track: ShakaVariantTrack, clearBuffer?: boolean, safeMargin?: number): void;
+  configure?(config: Record<string, unknown>): boolean | void;
   destroy(): void | Promise<void>;
 }
 
 export function createShakaEngine(player: ShakaPlayerLike): MseEngine {
+  const qualityTracks = () => {
+    if (!player.selectVariantTrack || !player.configure) return [];
+    const tracks = player.getVariantTracks();
+    const active = tracks.find(track => track.active);
+    return tracks.filter(track => (track.height ?? 0) > 0 && (!active
+      || (active.audioId != null ? track.audioId === active.audioId
+        : track.language === active.language && track.audioCodec === active.audioCodec)));
+  };
   return {
+    qualityOptions(): QualityOption[] {
+      return qualityTracks().map(track => ({
+        index: track.id ?? player.getVariantTracks().indexOf(track),
+        width: track.width || 0, height: track.height || 0,
+        bitrate: track.bandwidth || 0, frameRate: track.frameRate || 0,
+      }));
+    },
+    selectQuality(index: number): boolean {
+      if (!player.configure || !player.selectVariantTrack) return false;
+      const tracks = player.getVariantTracks();
+      const track = qualityTracks().find(item => (item.id ?? tracks.indexOf(item)) === index);
+      if (index !== -1 && !track) return false;
+      if (player.configure({ abr: { enabled: index === -1 } }) === false) return false;
+      if (track) player.selectVariantTrack(track, true, 0);
+      return true;
+    },
     audioOptions(): AudioOption[] {
       return player.getAudioTracks().map((track, index) => ({
         index,

@@ -7,7 +7,7 @@ import * as path from 'path';
 import type * as http from 'http';
 import { startServer } from '../../bundled-service/src/lan/server';
 import { StorageService } from './storage-service';
-import { setServicePort } from './service-http';
+import { serviceHeaders, setServicePort } from './service-http';
 import { SetupClient } from './setup-client';
 
 let server: http.Server;
@@ -24,8 +24,8 @@ beforeAll(async () => {
   const result = await startServer(0, dataDir);
   server = result.server;
   baseUrl = `http://127.0.0.1:${result.port}`;
-  setServicePort(result.port);
-  const info = (await (await fetch(`${baseUrl}/info`)).json()) as { setupUrl: string };
+  setServicePort(result.port, result.localToken);
+  const info = (await (await fetch(`${baseUrl}/info`, { headers: serviceHeaders() })).json()) as { setupUrl: string };
   setupToken = new URL(info.setupUrl).search;
 });
 
@@ -39,9 +39,9 @@ afterAll(async () => {
 
 beforeEach(async () => {
   localStorage.clear();
-  const actions = (await (await fetch(`${baseUrl}/setup-actions`)).json()) as Array<{ id: number }>;
+  const actions = (await (await fetch(`${baseUrl}/setup-actions`, { headers: serviceHeaders() })).json()) as Array<{ id: number }>;
   for (const action of actions) {
-    await fetch(`${baseUrl}/setup-actions/${action.id}`, { method: 'DELETE' });
+    await fetch(`${baseUrl}/setup-actions/${action.id}`, { method: 'DELETE', headers: serviceHeaders() });
   }
 });
 
@@ -114,7 +114,7 @@ describe('phone setup synchronization', () => {
         tokenTs: 0,
       },
     });
-    expect(await (await fetch(`${baseUrl}/setup-actions`)).json()).toEqual([]);
+    expect(await (await fetch(`${baseUrl}/setup-actions`, { headers: serviceHeaders() })).json()).toEqual([]);
 
     const state = await (await fetch(`${baseUrl}/setup-state${setupToken}`)).json();
     expect(state).toEqual({

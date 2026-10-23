@@ -185,7 +185,7 @@ export class Search {
   // Shared by a reopen, so closing Search does not restart the load.
   private catalogLoad: { accountId: string; promise: Promise<CatalogSources> } | null = null;
   private catalogLoading = false;
-  // Until every source is indexed, queries wait and the results show a hint.
+  // Completed sources can answer while the remaining sources prepare.
   private pendingIndex: PendingIndex | null = null;
   private active = false;
   private programIndexGeneration = 0;
@@ -410,7 +410,7 @@ export class Search {
     this.indexedProgrammes = null;
     if (!this.active) return;
     const sessionId = this.workerSession;
-    // While sources are pending, the last one to settle runs the query.
+    // Each pending source refreshes the query when its index settles.
     const wasPending = !!this.pendingIndex;
     try {
       this.programIndexDone(sessionId, await this.buildProgramIndex(true, sessionId));
@@ -678,10 +678,11 @@ export class Search {
     const pending = this.pendingIndex;
     if (!pending || sessionId !== this.workerSession) return;
     for (const source of sources) pending[source] = false;
-    if (pending.channels || pending.programmes || pending.catalog) return;
-    this.pendingIndex = null;
-    this.logIndexReady(this.indexMode());
-    if (!this.workerIndexLost) this.markWorkerIndexReady(this.account);
+    if (!pending.channels && !pending.programmes && !pending.catalog) {
+      this.pendingIndex = null;
+      this.logIndexReady(this.indexMode());
+      if (!this.workerIndexLost) this.markWorkerIndexReady(this.account);
+    }
     if (!this.active) return;
     if (this.query.trim()) void this.startQuery(++this.queryGeneration);
     else this.render();
@@ -1117,8 +1118,11 @@ export class Search {
     const query = this.query;
     const sessionId = this.workerSession;
     if (!query.trim()) return;
-    if (this.pendingIndex) {
-      // The ready index runs this query; until then the hint stands in.
+    const pending = this.pendingIndex;
+    if (pending && (this.workerIndexLost
+      || (pending.channels && pending.programmes && (!this.account || pending.catalog)))) {
+      // An intact source can answer now; a damaged index waits for its rebuild.
+      this.clearResults();
       if (!this.indexStats.hintAt) this.indexStats.hintAt = Date.now();
       this.render();
       this.applyPendingFocus();
@@ -1580,7 +1584,7 @@ export class Search {
     // EPG programs use compact rows so their metadata remains readable.
     const resultsBody = !q
       ? html``
-      : this.pendingIndex
+      : this.pendingIndex && !hasResults
         ? html`<p class="catalog-hint search-empty">${t('search.preparing')}</p>`
       : this.queryPending
         ? html``
@@ -1628,7 +1632,11 @@ export class Search {
         hasMixedLists ? 'search-lists-mixed' : ''
       }" data-nav-container data-search-query="${q}"
            data-search-pending="${this.queryPending ? 'true' : 'false'}">
-        <div class="search-results">${resultsBody}</div>
+        <div class="search-results">
+          ${resultsBody}
+          ${q && this.pendingIndex && hasResults && !this.queryPending
+            ? html`<p class="catalog-hint">${t('search.preparing')}</p>` : ''}
+        </div>
       </div>
     `);
     this.restoreVirtualOffsets();

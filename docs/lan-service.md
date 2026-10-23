@@ -16,6 +16,15 @@ are disabled, and `/info` returns empty setup URLs and pairing code. Setting
 described below. That mode uses plain HTTP and can expose credentials to
 network interception. Raw playlist downloads remain local even when paired.
 
+In the packaged application, upload storage remains locked until the owning
+app provides its unwrapped data key through Luna. Stream URLs and credential-bearing URL attributes in M3U files use AES-256-GCM
+on disk. Channel tags and upload metadata stay unencrypted; the service never
+writes the key to disk. Previous whole-file ciphertext is migrated to this
+selective format through atomic replacements before `start` succeeds. Wrong keys or damaged files fail without overwriting them.
+Standalone development servers must configure upload encryption separately;
+the direct server/test API retains an explicit plaintext compatibility mode.
+See [storage protection](storage-and-data.md#encryption-at-rest).
+
 ## Architecture
 
 ```
@@ -40,7 +49,7 @@ Luna (called by the app's LAN/reminder clients and by Activity Manager):
 
 | Method | Subscribe? | Purpose |
 |---|---|---|
-| `start` | no | Bind the HTTP server; returns the bound port. Idempotent. |
+| `start` | no | Accept `{encryptionKey}` (base64, 32 bytes) from the owning app over Luna, unlock/migrate uploaded files, and return the bound port and private local token. Idempotent. |
 | `stop` | no | Close the HTTP server and release the keepAlive activity. |
 | `heartbeat` | no | Liveness probe; returns `{running, port}`. |
 | `serviceEvents` | **yes** | Push channel for `uploads-changed` and `setup-changed` events. |
@@ -51,7 +60,7 @@ HTTP (called by phones, and by the app for reconcile):
 
 | Route | Method | Purpose |
 |---|---|---|
-| `/info` | GET | Loopback-only metadata, including setup URLs and the pairing code. |
+| `/info` | GET | Authenticated loopback metadata, including setup URLs and the pairing code. |
 | `/` or `/setup` | GET | Public setup page; asks for the TV pairing code. |
 | `/setup?token=…` | GET | QR entry that opens the same page already authorized. |
 | `/pair` | POST | Rate-limited exchange of the four-digit code for the setup token. |
@@ -64,7 +73,7 @@ HTTP (called by phones, and by the app for reconcile):
 | `/uploads` | GET | List uploads; remote callers require the setup token. |
 | `/uploads?name=foo.m3u&token=…` | POST | Save a playlist; fires `serviceEvents`. |
 | `/uploads/:id[.m3u]` | GET | Serve a stored playlist over loopback only. |
-| `/uploads/:id?token=…` | DELETE | Remove an upload; loopback callers do not need the token. |
+| `/uploads/:id?token=…` | DELETE | Remove an upload; the TV uses its private local token. |
 
 ## Event-driven updates
 
@@ -103,20 +112,40 @@ bundled-service initialization consumes the queue after reconnecting.
 
 ## Setup authorization
 
-Every HTTP bind generates a random 12-character token. `/info` is available
-only over loopback, so only the TV app can obtain the tokenized setup URL for
-the QR code. It also returns a random four-digit code for computers that open
-the short root URL manually. The public page exchanges that code for the full
-token; five failures from one client lock pairing for one minute.
+Every HTTP bind generates an independent 256-bit local token. Luna delivers
+it through `start` only to the owning application's bus identity; payload
+fields cannot select that identity. The lifecycle and event methods reject
+other callers. The app keeps this token in memory and supplies it in the
+`X-IPTV-Local-Token` header for metadata, state publication, action consumption,
+upload listing, and deletion. Loopback alone grants no privileged access.
+
+Raw playlist URLs returned to authenticated TV clients include a `localToken`
+query capability so playlist loaders can read them. That query capability
+works only for raw playlist GET requests over loopback. It is omitted from
+phone-facing upload listings. Both capabilities rotate when the server binds
+again; reconciliation preserves upload identity across token changes.
+
+The server validates the Host against its loopback endpoints or advertised
+LAN address and port. Cross-origin HTTP requests from other web origins are
+rejected. File and opaque origins receive an explicit CORS origin, never a
+wildcard, and must still supply the private token. Preflight responses grant
+permission to send the header without exposing data. An opaque origin is
+not treated as proof of application identity.
+
+In legacy LAN mode a separate random 12-character pairing token authorizes
+the phone endpoints. Authenticated `/info` returns its QR URL and a random
+four-digit pairing code. Five failures from one client lock pairing for one
+minute. The failure state is checked after reading each request body, so
+concurrent requests cannot bypass the lockout. Pairing is disabled entirely
+when insecure LAN setup is off.
 
 Setup URLs and pairing codes are advertised only in the explicit legacy
 mode. Responses disable caching, referrers, framing, and content sniffing.
-Only loopback requests receive the cross-origin read header needed by the
-packaged app. These controls do not encrypt the legacy HTTP connection.
+These controls do not encrypt the legacy HTTP connection.
 
 The token is required to submit source changes, query their status, upload M3U
 files, list uploads remotely, read the sanitized setup state, or remotely delete uploads. Publishing
-state and reading or acknowledging queued actions is loopback-only, which
+state and reading or acknowledging queued actions requires private local access, which
 prevents another LAN client from injecting state or reading Xtream
 credentials. Upload identifiers are validated before file access so requests
 cannot escape the upload directory. A new foreground bind creates a new token,

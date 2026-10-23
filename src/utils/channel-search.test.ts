@@ -80,9 +80,23 @@ describe('rankByName', () => {
     expect(rankByName(cs, 'alpha').map(c => c.id)).toEqual(['a', 'b', 'c']);
   });
 
-  it('treats the query as one whole substring', () => {
-    const cs = [ch('X a b Y'), ch('b a')];
-    expect(names(rankByName(cs, 'a b'))).toEqual(['X a b Y']);
+  it('prefers the whole substring before matching every query part in any order', () => {
+    const cs = [ch('X a b Y'), ch('b a'), ch('a c')];
+    expect(names(rankByName(cs, 'a b'))).toEqual(['X a b Y', 'b a']);
+  });
+
+  it('finds partial words anywhere in names across punctuation and extra spaces', () => {
+    const cs = [ch('Alpha—Bravo'), ch('Bravo Alpha'), ch('Alpha Charlie')];
+    expect(names(rankByName(cs, 'PHA   RAV'))).toEqual(['Alpha—Bravo', 'Bravo Alpha']);
+    expect(names(rankByName(cs, 'rav pha'))).toEqual(['Bravo Alpha', 'Alpha—Bravo']);
+    expect(names(rankByName(cs, 'Alpha Bravo'))).toEqual(['Alpha—Bravo', 'Bravo Alpha']);
+  });
+
+  it('keeps all literal title words required and ignores case and combining accents', () => {
+    const cs = [ch('The Álpha Watch'), ch('The Alpha Report')];
+    expect(names(rankByName(cs, 'watch pha'))).toEqual(['The Álpha Watch']);
+    expect(names(rankByName(cs, 'PHA'))).toEqual(['The Álpha Watch', 'The Alpha Report']);
+    expect(names(rankByName(cs, 'zzzz'))).toEqual([]);
   });
 
   it('ranks any object with a name field (generic over the item type)', () => {
@@ -113,6 +127,14 @@ describe('rankChannels', () => {
   it('tolerates a one-character typo and adjacent transposition', () => {
     expect(names(rankChannels([ch('Alpha'), ch('Bravo')], 'alhpa'))).toEqual(['Alpha']);
     expect(names(rankChannels([ch('Alpha'), ch('Bravo')], 'brvo'))).toEqual(['Bravo']);
+  });
+
+  it('matches every partial query word inside a field token', () => {
+    const channels = [ch('Alpha Bravo'), ch('Alpha Charlie')];
+    expect(names(rankChannels(channels, 'pha rav'))).toEqual(['Alpha Bravo']);
+    expect(names(rankChannels(channels, 'rav pha'))).toEqual(['Alpha Bravo']);
+    channels[1].group = 'Bravo';
+    expect(names(rankChannels(channels, 'pha rav'))).toEqual(['Alpha Bravo', 'Alpha Charlie']);
   });
 
   it('matches multiple query words without requiring an exact phrase', () => {

@@ -195,7 +195,7 @@ test('default Off retains full-screen playback and stop-on-Back', async ({ page 
   expect((await snapshot(page)).pauses).toBeGreaterThan(0);
 });
 
-test('Settings saves On across reload and Cancel discards Off', async ({ page }) => {
+test('Settings saves On across reload and keeps Off after Close', async ({ page }) => {
   await setup(page);
   await enterTab(page, 'settings');
   const toggle = '#view-settings #live-preview-setting';
@@ -203,8 +203,8 @@ test('Settings saves On across reload and Cancel discards Off', async ({ page })
   await expect(page.locator('#live-preview')).toHaveCount(1);
   await expect(page.locator(`${toggle} .active`)).toHaveAttribute('data-value', 'off');
   await page.locator(`${toggle} [data-value="on"]`).click();
-  expect(await page.evaluate(() => localStorage.getItem('iptv_live_preview'))).toBeNull();
-  await page.locator('#save-settings').click();
+  expect(await page.evaluate(() => localStorage.getItem('iptv_live_preview'))).toBe('true');
+  await page.locator('#cancel-settings').click();
   expect(await page.evaluate(() => localStorage.getItem('iptv_live_preview'))).toBe('true');
   await page.reload();
   await expect(page.locator(ROW)).toHaveCount(2);
@@ -213,8 +213,9 @@ test('Settings saves On across reload and Cancel discards Off', async ({ page })
   await page.locator('[data-settings-target="playback"]').click();
   await page.locator(`${toggle} [data-value="off"]`).click();
   await page.locator('#cancel-settings').click();
-  expect(await page.evaluate(() => localStorage.getItem('iptv_live_preview'))).toBe('true');
-  await selectFirst(page);
+  expect(await page.evaluate(() => localStorage.getItem('iptv_live_preview'))).toBe('false');
+  await page.locator(ROW).first().click();
+  await expect(page.locator('#view-player')).toBeVisible();
 });
 
 test('row clicks tune preview and retain mute across channel changes', async ({ page }) => {
@@ -903,7 +904,7 @@ test('disabling the playing source in Settings leaves no preview or stale contro
   await selectFirst(page);
   await enterTab(page, 'settings');
   await page.locator('#playlist-entries .source-toggle').click();
-  await page.locator('#save-settings').click();
+  await page.locator('#load-playlists').click();
   await expect(page.locator('#view-channels')).toBeVisible();
   await expect(page.locator(PANEL)).toBeHidden();
   await expect(page.locator(ROW)).toHaveCount(0);
@@ -926,7 +927,7 @@ test.describe('display timezone', () => {
 
     await enterTab(page, 'settings');
     await page.locator('#tz-mode [data-value="feed"]').click();
-    await page.locator('#save-settings').click();
+    await page.locator('#cancel-settings').click();
     await selectFirst(page);
     await expect(page.locator(`${PANEL} .live-preview-program time`).first())
       .toHaveText('13:00–14:00');

@@ -1016,10 +1016,17 @@
 
 .xtream-card-foot {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 16px;
   margin-top: 16px;
 }
+
+.load-xtream[aria-disabled="true"] {
+  opacity: 0.5;
+}
+
+.xtream-status:empty { display: none; }
 
 .xtream-card-foot .source-toggle {
   min-width: auto;

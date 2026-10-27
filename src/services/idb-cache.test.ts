@@ -245,6 +245,14 @@ describe('idb-cache', () => {
     expect(localStorage.getItem('iptv_cached_playlist')).toBeNull();
   });
 
+  it('remembers loaded sources even when the account has no live channels', async () => {
+    scheduleCachedPlaylist([], [], Date.now(), null, playlistCacheToken(), ['x1']);
+    await flushCacheWrites();
+    expect(await getCachedPlaylist(null)).toEqual({
+      channels: [], epgSources: [], timestamp: expect.any(Number), loadedSourceIds: ['x1'],
+    });
+  });
+
   it('remembers which record a cached playlist or catalog came from', async () => {
     const channels = [channel('ch1')];
     expect(cacheRecordRef(channels)).toBeNull();
@@ -516,6 +524,28 @@ describe('idb-cache', () => {
       epgSources: [],
       timestamp,
     });
+  });
+
+  it('keeps the expired startup playlist when cheaper cached data can make room', async () => {
+    const channels = [channel('ch1')];
+    const timestamp = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    await setCachedPlaylist(channels, [], timestamp);
+    await setCachedCatalog('x1|vod_all', ['x'.repeat(8 * 1024 * 1024)]);
+    const used = (await getCacheUsage()).total.bytes;
+    const storageDescriptor = Object.getOwnPropertyDescriptor(navigator, 'storage');
+    Object.defineProperty(navigator, 'storage', {
+      configurable: true,
+      value: { estimate: async () => ({ usage: 0, quota: 2 * (used - 1024 * 1024) }) },
+    });
+    try {
+      await setCachedSubtitle('subdl:1', 'WEBVTT\n\nhi');
+
+      expect(await getCachedCatalog('x1|vod_all')).toBeNull();
+      expect(await getCachedPlaylist(null)).toEqual({ channels, epgSources: [], timestamp });
+    } finally {
+      if (storageDescriptor) Object.defineProperty(navigator, 'storage', storageDescriptor);
+      else delete (navigator as Navigator & { storage?: StorageManager }).storage;
+    }
   });
 
   it('defers playlist persistence until after worker idle termination', async () => {

@@ -22,7 +22,7 @@ export class PlayerStatus {
     this.root.classList.add('player-status', 'hidden');
     this.root.setAttribute('role', 'status');
     this.root.setAttribute('aria-live', 'polite');
-    if (!this.root.parentNode) container.appendChild(this.root);
+    container.insertBefore(this.root, container.firstChild);
   }
 
   get state(): PlayerStatusState | null { return this.current; }

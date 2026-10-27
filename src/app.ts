@@ -5,6 +5,7 @@ import { uploadEncryptionKey } from './services/credential-vault';
 import { CONFIG } from './config';
 import { KeyHandler } from './navigation/key-handler';
 import { PlaylistService } from './services/playlist-service';
+import { refreshAccountCatalog } from './services/xtream-catalog';
 import { EpgService } from './services/epg-service';
 import { ChannelHealthService } from './services/channel-health';
 import { StorageService } from './services/storage-service';
@@ -106,6 +107,7 @@ class App {
   private playlistRefreshPromise: Promise<void> | null = null;
   // The load confirmation toast owns the screen until loadData() settles.
   private loadingData = false;
+  private dataLoadRevision = 0;
   private epgRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   private epgRefreshIntervalMs: number | null | undefined;
   private epgChannelReloadTimer: ReturnType<typeof setTimeout> | null = null;
@@ -221,6 +223,7 @@ class App {
       () => this.openParentalControls(),
       (name, proceed) => this.authorizeLiveEditing(name, proceed),
       (id, proceed, turnOff) => this.authorizeSourceRemoval(id, proceed, turnOff),
+      id => this.loadXtreamAccount(id),
     );
     this.parentalControls = new ParentalControls(
       this.views['parental-controls'],
@@ -402,7 +405,7 @@ class App {
     });
     KeyHandler.setChannelCount(() => PlaylistService.channels.length);
 
-    this.initSidebarTrigger();
+    this.initPlayerPointer();
 
     done();
     this.enterChannelsAfterUploadSync = StorageService.getPlaylists().length === 0;
@@ -851,20 +854,68 @@ class App {
   private queuePlaylistRefresh(): Promise<void> {
     if (this.playlistRefreshPromise) return this.playlistRefreshPromise;
     const onSettled = () => {
+      if (this.playlistRefreshPromise !== task) return;
       this.playlistRefreshPromise = null;
       this.schedulePlaylistRefresh(
         true,
         StorageService.getPlaylistRefreshIntervalMs() ?? undefined,
       );
     };
-    this.playlistRefreshPromise = this.refreshPlaylistInBackground()
+    const task = this.refreshPlaylistInBackground()
       .then(() => {
         onSettled();
       }, (err) => {
         onSettled();
         throw err;
       });
-    return this.playlistRefreshPromise;
+    this.playlistRefreshPromise = task;
+    return task;
+  }
+
+  private loadXtreamAccount(id: string): Promise<void> {
+    const previous = this.playlistRefreshPromise;
+    const task = (async () => {
+      if (previous) await previous.catch(() => undefined);
+      const account = StorageService.getPlaylists().find(source => source.id === id);
+      if (!account || account.source !== 'xtream' || !account.xtream || !isSourceEnabled(account)) {
+        throw new Error('Account is unavailable');
+      }
+      this.stopPlaylistRefresh();
+      this.stopEpgRefresh();
+      this.dataLoadRevision++;
+      await PlaylistService.refreshSource(id);
+      await ChannelHealthService.initialize();
+      this.player.syncCurrentIndex();
+      this.channelList.render();
+      this.sidebar.refresh();
+      this.livePreview.refresh();
+      const accounts = StorageService.getPlaylists()
+        .filter(source => source.source === 'xtream' && source.xtream && isSourceEnabled(source));
+      this.tabBar.setSections(accounts.length > 0);
+      this.tabBar.setAccounts(accounts, this.activeXtreamAccount()?.id ?? '');
+      await EpgService.updateSources(this.epgSources(), PlaylistService.getEpgEligibleChannels());
+      const results = await Promise.all([
+        EpgService.refresh(() => this.refreshEpgDependentViews(), true, id),
+        refreshAccountCatalog(account),
+      ]);
+      this.refreshEpgDependentViews();
+      this.search.invalidateCatalog();
+      this.movies.invalidateAccount(id);
+      this.series.invalidateAccount(id);
+      const active = this.activeXtreamAccount();
+      if (this.isCurrentView('movies')) this.movies.ensureLoaded(active);
+      if (this.isCurrentView('series')) this.series.ensureLoaded(active);
+      this.searchPrewarm.schedule('account');
+      if (!results.every(Boolean)) throw new Error('Account refresh was incomplete');
+    })();
+    this.playlistRefreshPromise = task;
+    const settled = (): void => {
+      if (this.playlistRefreshPromise !== task) return;
+      this.playlistRefreshPromise = null;
+      this.schedulePlaylistRefresh(true, StorageService.getPlaylistRefreshIntervalMs() ?? undefined);
+      this.scheduleEpgRefresh(true, StorageService.getEpgRefreshIntervalMs() ?? undefined);
+    };
+    return task.then(settled, err => { settled(); throw err; });
   }
 
   private async refreshPlaylistInBackground(): Promise<void> {
@@ -906,8 +957,10 @@ class App {
 
   private async loadData(forceEpgRefresh = false): Promise<void> {
     const done = log.time('loadData');
+    const revision = ++this.dataLoadRevision;
     this.loadingData = true;
     show(this.views.loading);
+    this.showView('loading');
     this.stopEpgRefresh();
     this.stopPlaylistRefresh();
     if (this.playlistRefreshPromise) await this.playlistRefreshPromise;
@@ -960,9 +1013,6 @@ class App {
         EpgService.reset();
       }
       const epgChannels = PlaylistService.getEpgEligibleChannels();
-      if (epgSources.length) {
-        await EpgService.restoreCached(epgSources, epgChannels);
-      }
 
       const hasXtream = StorageService.getPlaylists()
         .some((p) => p.source === 'xtream' && isSourceEnabled(p));
@@ -995,31 +1045,8 @@ class App {
         }
       }
 
-      if (epgSources.length) {
-        if (forceEpgRefresh) {
-          EpgService.refresh(() => this.refreshEpgDependentViews(), true)
-            .then(() => {
-              this.refreshEpgDependentViews();
-              this.scheduleEpgRefresh(
-                true,
-                StorageService.getEpgRefreshIntervalMs() ?? undefined,
-              );
-            }, (err) => {
-              log.error('EPG load failed:', err);
-              this.scheduleEpgRefresh(
-                true,
-                StorageService.getEpgRefreshIntervalMs() ?? undefined,
-              );
-            });
-        } else if (StorageService.getEpgRefreshIntervalMs() === null) {
-          EpgService.refresh(() => this.refreshEpgDependentViews())
-            .then(() => {
-              this.refreshEpgDependentViews();
-            }, err => log.error('Initial EPG load failed:', err));
-        } else {
-          this.scheduleEpgRefresh(true);
-        }
-      }
+      // A large saved guide must not hold channels or remote input behind loading.
+      void this.restoreEpgAfterChannels(epgSources, epgChannels, forceEpgRefresh, revision);
       this.schedulePlaylistRefresh(true);
       this.searchPrewarm.schedule('startup');
     } catch (err) {
@@ -1031,6 +1058,37 @@ class App {
       this.loadingData = false;
       hide(this.views.loading);
       done();
+    }
+  }
+
+  private async restoreEpgAfterChannels(
+    sources: EpgSource[],
+    channels: Channel[],
+    force: boolean,
+    revision: number,
+  ): Promise<void> {
+    if (!sources.length) return;
+    const publish = (): void => {
+      if (revision !== this.dataLoadRevision) return;
+      this.refreshEpgDependentViews();
+      if (this.isCurrentView('epg')) this.epgGrid.render();
+    };
+    try {
+      await EpgService.restoreCached(sources, channels);
+      if (revision !== this.dataLoadRevision) return;
+      publish();
+      if (force || StorageService.getEpgRefreshIntervalMs() === null) {
+        await EpgService.refresh(publish, force);
+        if (revision !== this.dataLoadRevision) return;
+        publish();
+        this.scheduleEpgRefresh(true, StorageService.getEpgRefreshIntervalMs() ?? undefined);
+      } else {
+        this.scheduleEpgRefresh(true);
+      }
+    } catch (err) {
+      if (revision !== this.dataLoadRevision) return;
+      log.error('EPG load failed:', err);
+      this.scheduleEpgRefresh(true, StorageService.getEpgRefreshIntervalMs() ?? undefined);
     }
   }
 
@@ -1069,9 +1127,7 @@ class App {
     this.historyDropdown?.close('view-change');
     this.livePreview?.beforeViewChange(name);
     if (name !== 'channels' && this.channelList.isEditing) this.channelList.exitEditMode();
-    // Re-assert the persisted theme on every view transition. This reverts any
-    // unsaved live preview when Settings closes (Back / section switch / Cancel)
-    // while keeping a just-saved theme, since save() persists before this runs.
+    // Re-assert the saved appearance on every view transition.
     applyTheme(StorageService.getTheme());
     applyOverlayStyle(StorageService.getOverlayStyle());
     applyTextSize(StorageService.getTextSize());
@@ -1277,6 +1333,7 @@ class App {
     this.applyDisplayTz();
     this.channelList.render();
     this.livePreview.refresh();
+    this.player.refreshEpg();
     void this.search.refreshPrograms();
     this.searchPrewarm.schedule('epg');
   }
@@ -1587,6 +1644,7 @@ class App {
   }
 
   private handleKey(action: Action, event?: NumberEvent): void {
+    if (this.loadingData) return;
     const currentView = this.viewStack[this.viewStack.length - 1];
     const owner = Focus.owner();
 
@@ -1730,11 +1788,13 @@ class App {
         break;
       case 'player':
         if (this.player.isVod()) {
-          // A VOD menu (opened by the pointer) captures D-pad nav; Left closes
-          // it. Otherwise D-pad drives VOD playback (seek / pause / OSD).
+          // The seek controls keep Left/Right while visible; otherwise Right
+          // opens the VOD menu, and Left closes it.
           if (this.menu.visible) {
             if (action === 'up' || action === 'down' || action === 'select') this.menu.handleAction(action);
             else if (action === 'left') this.menu.hide();
+          } else if (action === 'right' && !this.player.canSeek()) {
+            this.menu.show();
           } else {
             this.player.handleAction(action, event);
           }
@@ -1786,31 +1846,13 @@ class App {
     }
   }
 
-  private initSidebarTrigger(): void {
+  private initPlayerPointer(): void {
     document.addEventListener('pointermove', (e: PointerEvent) => {
       const currentView = this.viewStack[this.viewStack.length - 1];
       if (currentView !== 'player') return;
 
-      const osd = $('#player-osd', this.views.player);
-      const osdRect = osd?.getBoundingClientRect();
-      const overOsd = !!osd && !osd.classList.contains('hidden') && !!osdRect
-        && e.clientY >= osdRect.top;
-
-      // VOD (movies/series) has no channels and no live menu — only the OSD
-      // (title + seek bar) is pointer-revealable; suppress the channel sidebar
-      // and the live player menu.
-      const vod = this.player.isVod();
-      // A modal over the player, such as the subtitle sync adjuster, keeps
-      // the edge panels shut.
-      const modal = !!Focus.owner()?.modal;
-
-      // Protect the full-width area beside and below the OSD too: its edge
-      // controls sit next to margins where an imprecise cursor can open a panel.
       const overTabs = !!(e.target as HTMLElement).closest('.player-sidebar .sidebar-tabs');
-      if (!overOsd && !vod && !modal && e.clientX < 80 && !this.menu.visible) {
-        this.sidebar.show();
-        this.sidebar.handlePointerMove(e.clientX, false, overTabs);
-      } else if (this.sidebar.visible) {
+      if (this.sidebar.visible) {
         const overSidebar = !!(e.target as HTMLElement).closest('.player-sidebar');
         const delayingDismiss = this.sidebar.handlePointerMove(e.clientX, overSidebar, overTabs);
         if (!delayingDismiss && !overSidebar
@@ -1821,12 +1863,7 @@ class App {
         }
       }
 
-      // Right menu. Live/catch-up and VOD alike; for VOD it shows the VOD action
-      // set (Info, Settings) plus any audio/subtitle tracks — the channel rows
-      // are hidden, so it's never empty.
-      if (!overOsd && !modal && e.clientX > 1840 && !this.sidebar.visible) {
-        this.menu.show();
-      } else if (this.menu.visible) {
+      if (this.menu.visible) {
         const overMenu = !!(e.target as HTMLElement).closest('.player-menu');
         if (overMenu) {
           this.menu.resetTimer();
@@ -1858,6 +1895,7 @@ class App {
 
 
   private async onSettingsSaved(action: SaveAction): Promise<void> {
+    const automatic = action === 'autosave';
     if (action === 'edit-channels') {
       this.tabBar.setActive('live');
       this.showView('channels');
@@ -1884,6 +1922,7 @@ class App {
         setLocale(locale);
         this.tabBar.refresh();
         ReminderService.reschedulePending();
+        if (automatic) this.settings.render();
       }
       // Republish on 'apply' too: subtitle credentials and other display-only
       // settings never reach the phone page otherwise. Advisory, so it never
@@ -1891,20 +1930,38 @@ class App {
       void SetupClient.publishState();
     }
     if (action === 'reload') {
+      if (this.loadingData) return;
+      this.loadingData = true;
+      const loadingText = $('#loading-text');
+      if (loadingText) loadingText.textContent = t('app.loadingChannels');
+      show(this.views.loading);
+      this.showView('loading');
       this.search.invalidateCatalog();
-      await Promise.all([clearCachedPlaylist(), clearCachedCatalog()]);
-      this.showView('channels');
-      await this.loadData(true);
+      try {
+        await Promise.all([clearCachedPlaylist(), clearCachedCatalog()]);
+        await this.loadData(true);
+      } catch (err) {
+        log.error('Playlist reload failed:', err);
+        this.showView('settings');
+        showToast(t('app.loadFailed'));
+      } finally {
+        this.loadingData = false;
+        hide(this.views.loading);
+      }
       return;
     }
     // 'apply': only display settings changed — re-apply + re-render, no re-fetch.
-    if (action === 'apply') {
+    if (action === 'apply' || automatic) {
       this.search.invalidateCatalog();
+      applyTheme(StorageService.getTheme());
+      applyOverlayStyle(StorageService.getOverlayStyle());
+      applyTextSize(StorageService.getTextSize());
       this.applyDisplayTz();
       this.epgGrid.resetDay();
       this.scheduleEpgRefresh();
-      this.schedulePlaylistRefresh();
+      this.schedulePlaylistRefresh(false, StorageService.getPlaylistRefreshIntervalMs() ?? undefined);
     }
+    if (automatic) return;
     this.channelList.render();
     this.showView('channels');
   }

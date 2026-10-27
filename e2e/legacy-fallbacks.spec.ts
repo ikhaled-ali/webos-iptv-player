@@ -356,6 +356,8 @@ test('no flex-gap container separates an element from loose text in the catalog'
   await expect(page.locator('#player-osd')).toBeVisible();
 
   await page.mouse.move(1900, 540);
+  await expect(page.locator('#player-menu')).not.toBeVisible();
+  await page.keyboard.press('ArrowRight');
   await expect(page.locator('#player-menu')).toBeVisible();
   await page.locator('[data-menu-action="__subs_open__"]').click();
   const search = page.locator('[data-menu-action="__subs_search__"]');

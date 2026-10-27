@@ -287,7 +287,9 @@ defaults; runtime freshness uses the saved preferences and the age of the
 loaded data. Off stops periodic channel-list or program-guide refresh, while
 still allowing a missing guide cache to populate. Only a cold cache blocks
 startup on a channel-list download; an overdue one is shown first and refreshed
-in the background. Xtream catalogs refresh when Movies, Series, or Search
+in the background. Saved program guides restore after channels become usable,
+so reading a large guide does not block navigation or playback. Xtream catalogs
+refresh when Movies, Series, or Search
 accesses expired data and do not have an Off option. Background catalog
 refreshes are shared per cache key, run at most two at a time with the rest
 queued, survive leaving the view, keep the stale copy on a failed or empty
@@ -300,6 +302,15 @@ An incomplete automatic channel-list refresh keeps the previous complete list
 instead of publishing partial data. **Refresh All Data** remains available in
 Off mode; it reloads enabled channel sources, forces the configured guide
 sources to refresh, and clears Xtream catalog and related media-metadata caches.
+
+Each Xtream account also has a **Load** button beside **Remove** in Settings.
+It becomes **Update** once that account's channel list has been loaded. This
+action downloads only that account's channels, guide, Movies, and Series;
+other accounts keep their saved content. The button stays busy during the
+update, and a failed request keeps the previous content available for retry.
+Loaded account IDs are saved with the combined channel list, including accounts
+with no live channels, so restarting does not turn a completed load into a
+first load again.
 
 The app does not provide account-based cloud sync or a remote backup of this
 data. Playlist providers and subtitle services still receive the requests
@@ -362,12 +373,12 @@ quota reported by webOS.
 
 Cleanup removes data in this order:
 
-1. Expired entries.
+1. Expired entries other than the parsed channel list.
 2. Least-recently-used Search indexes.
 3. Least-recently-used subtitles.
 4. Least-recently-used catalog and media metadata.
 5. Least-recently-used program guides.
-6. Least-recently-used parsed playlists.
+6. Parsed playlists, including expired ones, as a last resort.
 
 A Search index never causes other data to be removed: it replaces older
 indexes of the same source and is skipped when it would take more than 10% of

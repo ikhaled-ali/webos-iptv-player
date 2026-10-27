@@ -85,7 +85,7 @@ test('live playback keeps the current channel after reconnect attempts are exhau
   const attempts = page.locator('#live-reconnect-attempts');
   await attempts.locator('.dropdown-trigger').click();
   await attempts.locator('[data-dropdown-value="1"]').click();
-  await page.locator('#save-settings').click();
+  await page.locator('#cancel-settings').click();
   await expect(page.locator('#view-channels')).toBeVisible();
   await page.keyboard.press('Enter');
   await expect(page.locator('.osd-channel-name')).toHaveText('Channel One');
@@ -520,6 +520,7 @@ test('Magic Remote dwell expands groups and stages pointer dismissal', async ({ 
   await gotoGroupedPlayer(page);
   const sidebar = page.locator('#player-sidebar');
 
+  await page.keyboard.press('ArrowLeft');
   await page.mouse.move(30, 540);
   await expect(sidebar).toHaveClass(/groups-expanded/);
 
@@ -543,6 +544,7 @@ test('the group panel lights the group it slides in under a pointer moved mid-sl
   const sidebar = page.locator('#player-sidebar');
   const groups = sidebar.locator('.sidebar-group-panel');
   const target = sidebar.locator('.sidebar-group-item').nth(3);
+  await page.keyboard.press('ArrowLeft');
   await page.mouse.move(30, 540);
   await expect(sidebar).toHaveClass(/groups-expanded/);
   await panelSettled(sidebar);
@@ -650,7 +652,8 @@ test('the player menu reopens with one ring, on its first row', async ({ page })
 
 test('the player menu ring follows the pointer and the D-pad, and returns to the row it rests on', async ({ page }) => {
   await gotoLivePlayer(page);
-  await page.mouse.move(1900, 540);
+  await page.mouse.move(960, 300);
+  await page.keyboard.press('ArrowRight');
   const menu = page.locator('#player-menu');
   const rows = menu.locator('.menu-item');
   await expect(menu).toHaveClass(/visible/);
@@ -686,7 +689,7 @@ async function panelSettled(panel: ReturnType<Page['locator']>): Promise<void> {
   }, { intervals: [100] }).toBe(true);
 }
 
-test('the player menu lights the row it slides out under', async ({ page }) => {
+test('the player menu waits for Right at the pointer edge and then supports hover', async ({ page }) => {
   await gotoLivePlayer(page);
   const menu = page.locator('#player-menu');
   const rows = menu.locator('.menu-item');
@@ -703,15 +706,19 @@ test('the player menu lights the row it slides out under', async ({ page }) => {
     return rect.width === 0 || rect.left >= 1920;
   })).toBe(true);
 
-  // From the D-pad, the pointer stops at the edge and the panel slides in beneath it.
+  // The edge stays closed until its arrow key opens the panel.
   await noHoverWithoutMove(page);
   await page.mouse.move(1860, box.y + box.height / 2);
+  await expect(menu).not.toHaveClass(/visible/);
+  await page.keyboard.press('ArrowRight');
+  await expect(rows.first()).toHaveClass(/focused/);
+  await page.mouse.move(1861, box.y + box.height / 2);
   await expect(menu).toHaveClass(/visible/);
   await expect(rows.nth(2)).toHaveClass(/focused/);
   await expect(page.locator('.focused')).toHaveCount(1);
 });
 
-test('the channel panel lights the channel it slides out under', async ({ page }) => {
+test('the channel panel waits for Left at the pointer edge and then supports hover', async ({ page }) => {
   const lines = ['#EXTM3U'];
   for (let index = 0; index < 200; index++) {
     lines.push(`#EXTINF:-1 group-title="Group",Channel ${String(index)}`, `http://host/${String(index)}.m3u8`);
@@ -735,10 +742,14 @@ test('the channel panel lights the channel it slides out under', async ({ page }
   await page.keyboard.press('Escape');
   await expect(sidebar).not.toBeVisible();
 
-  // From the D-pad, the pointer stops at the edge and the panel slides in beneath it.
+  // The edge stays closed until its arrow key opens the panel.
   await noHoverWithoutMove(page);
   // Inside the 80 px open edge, but past the 48 px dwell that opens the groups.
   await page.mouse.move(64, box.y + box.height / 2);
+  await expect(sidebar).not.toBeVisible();
+  await page.keyboard.press('ArrowLeft');
+  await panelSettled(sidebar);
+  await page.mouse.move(65, box.y + box.height / 2);
   await expect(sidebar).toBeVisible();
   await expect(target).toHaveClass(/focused/);
   await expect(page.locator('.focused')).toHaveCount(1);
@@ -833,7 +844,7 @@ test('the live subtitle sync adjuster keeps the channel panel shut at the screen
   await expect(page.locator('#view-player')).toBeVisible();
   const menu = page.locator('#player-menu');
   const sidebar = page.locator('#player-sidebar');
-  await page.mouse.move(1900, 540);
+  await page.keyboard.press('ArrowRight');
   await expect(menu).toHaveClass(/visible/);
   await expect.poll(() => menu.evaluate((el) => el.getBoundingClientRect().right)).toBe(1920);
   await menu.locator('[data-menu-action="__subs_open__"]').click();
@@ -874,44 +885,25 @@ test('the OSD band keeps its edge controls ahead of pointer-triggered panels', a
   await expect(page.locator('#player-menu')).not.toBeVisible();
 });
 
-test('pointer-opened player panels do not reveal or hide the OSD', async ({ page }) => {
-  await routePlaylist(page);
-  await routeLiveManifest(page);
-  await neuterVideo(page);
-  await seedPlaylist(page);
-  await page.goto('/');
-  await expect(page.locator('#view-channels')).toBeVisible();
-  await page.keyboard.press('Enter');
-
-  const osd = page.locator('#player-osd');
-  await expect(osd).toBeVisible();
-  await page.mouse.move(1890, 1000);
-  await page.keyboard.press('Enter');
-  await expect(osd).not.toBeVisible();
-
-  await page.mouse.move(1891, 1000);
-  const menu = page.locator('#player-menu');
-  await expect(menu).toBeVisible();
-  await expect(osd).not.toBeVisible();
-
-  await page.evaluate(() =>
-    document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 405, bubbles: true })));
-  await expect(menu).toBeVisible();
-  await expect(osd).toBeVisible();
-  await page.keyboard.press('ArrowRight');
-
-  await page.mouse.move(30, 1000);
-  await page.keyboard.press('Enter');
-  await expect(osd).not.toBeVisible();
-  await page.mouse.move(29, 1000);
+test('pointer movement never opens player panels, while Left and Right still do', async ({ page }) => {
+  await gotoLivePlayer(page);
   const sidebar = page.locator('#player-sidebar');
+  const menu = page.locator('#player-menu');
+  for (const [x, y] of [[30, 540], [1890, 540], [1, 1000], [1919, 1000]]) {
+    await page.mouse.move(x, y);
+    await expect(sidebar).not.toBeVisible();
+    await expect(menu).not.toBeVisible();
+  }
+  await page.keyboard.press('ArrowLeft');
   await expect(sidebar).toBeVisible();
-  await expect(osd).not.toBeVisible();
-
-  await page.evaluate(() =>
-    document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 405, bubbles: true })));
-  await expect(sidebar).toBeVisible();
-  await expect(osd).toBeVisible();
+  await pressRemoteBack(page);
+  await expect(sidebar).not.toBeVisible();
+  await page.keyboard.press('ArrowRight');
+  await expect(menu).toBeVisible();
+  await pressRemoteBack(page);
+  await expect(menu).not.toBeVisible();
+  await page.mouse.move(1890, 540);
+  await expect(menu).not.toBeVisible();
 });
 
 test('keeps pseudo-localized player menu labels within the panel', async ({ page }) => {
@@ -1313,18 +1305,20 @@ test('the channel panel opened by key shows the far channel that is playing', as
   await expect(page.locator('.focused')).toHaveCount(1);
 });
 
-test('the channel panel opened by pointer shows the far channel that is playing', async ({ page }) => {
+test('the channel panel opened by Left with a pointer at the edge shows the playing channel', async ({ page }) => {
   await playFarChannel(page);
   const sidebar = page.locator('#player-sidebar');
   await noHoverWithoutMove(page);
   await page.mouse.move(960, 540);
   await page.mouse.move(30, 540);
+  await expect(sidebar).not.toBeVisible();
+  await page.keyboard.press('ArrowLeft');
   await expect(sidebar).toBeVisible();
   await panelSettled(sidebar);
   const playing = sidebar.locator('.sidebar-ch-item.playing');
   await expect(playing).toContainText('Channel 150');
   await expectInList(playing, sidebar.locator('.sidebar-channel-list'));
-  // The ring follows the resting pointer, which sits over a row of this window.
+  // The key keeps the ring on the playing channel despite the resting pointer.
   await expect(page.locator('.focused')).toHaveCount(1);
   await expect(sidebar.locator('.sidebar-ch-item.focused')).toHaveCount(1);
 });

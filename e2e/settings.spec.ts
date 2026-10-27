@@ -228,7 +228,7 @@ test.describe('Settings navigation', () => {
     });
     expect(animationRow.optionsCenter).toBeCloseTo(animationRow.rowCenter, 0);
     await page.locator('#animation-mode [data-value="essential"]').click();
-    await page.locator('#save-settings').click();
+    await page.locator('#cancel-settings').click();
 
     await expect(page.locator('html')).toHaveAttribute('data-animation', 'essential');
     const durations = await page.evaluate(() => {
@@ -255,7 +255,7 @@ test.describe('Settings navigation', () => {
       `;
       document.body.appendChild(motionFixtures);
       const result = {
-        button: seconds(getComputedStyle(document.querySelector('#save-settings')!)
+        button: seconds(getComputedStyle(document.querySelector('#cancel-settings')!)
           .transitionDuration),
         search: seconds(getComputedStyle(document.querySelector('.tab-bar-search-input')!)
           .transitionDuration),
@@ -710,7 +710,7 @@ test.describe('Settings navigation', () => {
     // Live preview: the scale applies before saving.
     expect(await fontSize()).toBeCloseTo(base * 1.3, 1);
 
-    await page.locator('#save-settings').click();
+    await page.locator('#cancel-settings').click();
     await expect(page.locator('#view-channels')).toBeVisible();
 
     // Persisted across a relaunch and applied outside Settings, without
@@ -770,9 +770,9 @@ test.describe('Settings hover under the tab bar', () => {
     await expect.poll(() => lit(category)).toBe(true);
     await expect.poll(() => rings(page)).toHaveLength(1);
 
-    const save = page.locator('#save-settings');
+    const save = page.locator('#cancel-settings');
     await save.hover();
-    await expect.poll(() => rings(page)).toEqual(['save-settings']);
+    await expect.poll(() => rings(page)).toEqual(['cancel-settings']);
     expect(await lit(category)).toBe(false);
     await expect(page.locator('.tab-bar .account-menu')).toBeVisible();
   });
@@ -790,9 +790,9 @@ test.describe('Settings hover under the tab bar', () => {
     await page.keyboard.press('ArrowUp');
     await expect(page.locator('.tab-bar .focused')).toHaveCount(1);
 
-    const save = page.locator('#save-settings');
+    const save = page.locator('#cancel-settings');
     await save.hover();
-    await expect.poll(() => rings(page)).toEqual(['save-settings']);
+    await expect.poll(() => rings(page)).toEqual(['cancel-settings']);
     await expect(page.locator('#view-settings')).toHaveAttribute('data-ring-owner', '');
     await expect(page.locator('.tab-bar .focused')).toHaveCount(0);
   });
@@ -821,7 +821,7 @@ test.describe('Settings text fields', () => {
     await page.goto('/');
     await page.locator('[data-settings-target="subtitles"]').click();
     const field = page.locator('#subdl-key');
-    const save = page.locator('#save-settings');
+    const save = page.locator('#cancel-settings');
 
     await field.click();
     await expect(field).toBeFocused();
@@ -1097,7 +1097,7 @@ test.describe('Settings playlists', () => {
     // bubbling nav:hover.
     await page.locator('.playlist-url').first().blur();
     await page.evaluate(() => {
-      document.getElementById('save-settings')!
+      document.getElementById('load-playlists')!
         .dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
     });
     await page.keyboard.press('Enter');
@@ -1126,7 +1126,7 @@ test.describe('Settings playlists', () => {
     // Use page.evaluate for an explicit CustomEvent so SpatialNav's parent-
     // bound listener definitely receives the bubbling nav:hover.
     await page.evaluate(() => {
-      document.getElementById('save-settings')!
+      document.getElementById('load-playlists')!
         .dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
     });
     await page.keyboard.press('Enter');
@@ -1355,7 +1355,7 @@ test.describe('Settings Xtream live output', () => {
       const url = new URL(request.url());
       return url.pathname.endsWith('/get.php') && url.searchParams.get('output') === 'm3u8';
     });
-    await page.locator('#save-settings').click();
+    await page.locator('#load-playlists').click();
     await hlsRequest;
 
     await expect(page.locator('#view-channels')).toBeVisible();
@@ -1432,7 +1432,7 @@ test.describe('Settings Xtream live categories', () => {
     await expect(picker).toBeHidden();
     await expect(button).toContainText('2 of 3');
 
-    await page.locator('#save-settings').click();
+    await page.locator('#load-playlists').click();
     await expect(page.locator('#view-channels')).toBeVisible();
     await expect(channels(page)).toHaveCount(2);
     await expect(channels(page)).not.toContainText(['Bravo']);

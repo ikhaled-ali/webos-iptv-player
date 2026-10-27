@@ -646,7 +646,7 @@ const XTREAM_SCREENS: Screen[] = [
     name: 'vod-menu',
     budget: 0.001,
     go: async (p) => {
-      await p.mouse.move(1900, 540);
+      await p.keyboard.press('ArrowRight');
       await expect(p.locator('#player-menu')).toBeVisible();
     },
   },
@@ -687,7 +687,7 @@ const XTREAM_SCREENS: Screen[] = [
     budget: 0.001,
     go: async (p) => {
       await p.keyboard.press('Escape');
-      await p.mouse.move(1900, 540);
+      await p.keyboard.press('ArrowRight');
       await p.locator('[data-menu-action="__subs_open__"]').click();
       await p.locator('[data-menu-action="__subs_search__"]').click();
       await expect(p.locator('#subtitle-search .subs-count').first()).toBeVisible();

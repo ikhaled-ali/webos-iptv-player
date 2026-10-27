@@ -359,7 +359,7 @@ export function liveCategoriesButtonContent(
 
 /** One editable Xtream account: its fields grouped in a card
  *  keyed by the entry's stable id. Untrusted values interpolate through `html`. */
-function xtreamCard(pl: Partial<PlaylistEntry>) {
+function xtreamCard(pl: Partial<PlaylistEntry>, loading = false) {
   const liveOutput = normalizeXtreamLiveOutputPreference(pl.xtream?.liveOutput);
   const enabled = pl.enabled !== false;
   return html`
@@ -402,6 +402,10 @@ function xtreamCard(pl: Partial<PlaylistEntry>) {
           normalizeLiveCategoryFilter(pl.xtream?.liveCategories),
           pl.id ? StorageService.getLiveCategorySnapshot(pl.id) : null,
         )}</button>
+        <button class="btn btn-secondary load-xtream" data-focusable
+                data-key="xtream-load:${pl.id || ''}" aria-disabled="${loading || !enabled}"
+                aria-busy="${loading}">${t(loading ? 'common.loading'
+                  : PlaylistService.hasLoadedSource(pl) ? 'common.update' : 'common.load')}</button>
         <button class="btn btn-danger remove-xtream" data-focusable>${t('common.remove')}</button>
         <div class="xtream-status"></div>
       </div>
@@ -478,10 +482,8 @@ function formatExpiry(expiresAt: number | null): string {
   });
 }
 
-/** What the app does after Settings closes: reload = re-fetch playlist/EPG;
- *  apply = re-render for display-only changes; reset = erase local app data;
- *  edit-channels = open the channel list in edit mode; cancel = discard. */
-export type SaveAction = 'reload' | 'apply' | 'reset' | 'cancel' | 'edit-channels';
+// Autosave keeps Settings open; loading sources and the exit actions belong to App.
+export type SaveAction = 'reload' | 'apply' | 'autosave' | 'reset' | 'cancel' | 'edit-channels';
 
 export class Settings {
   private container: HTMLElement;
@@ -501,14 +503,14 @@ export class Settings {
   // The control Settings came back to, until its first reveal.
   private landedKey: string | null = null;
   private currentRow: Element | null = null;
-  // Pending theme selection (persisted on Save; live-previewed while browsing).
+  // Theme activation requires two clicks or two remote OK presses.
   private selectedTheme = '';
-  private themeHoverToken = 0;
+  private themeActivation: { id: string; at: number; via: Via } | null = null;
   private epgOffsets: Record<string, number> = {};
   private storedEpgOffsets: Record<string, number> = {};
   private confirmationPrompt = new ConfirmationPrompt('prompt.settings');
   private liveCategoryPicker = new LiveCategoryPicker();
-  // Picker results waiting for Save, per card id; `account` ties each to the
+  // Picker results per card id; `account` ties each to the
   // server and username it was chosen for.
   private pendingLiveCategories = new Map<string, {
     filter: XtreamLiveCategoryFilter | undefined;
@@ -530,6 +532,7 @@ export class Settings {
   private healthProgress: ChannelHealthProgress | null = null;
   private healthPaused = false;
   private healthResume: (() => void) | null = null;
+  private loadingAccounts = new Set<string>();
 
   constructor(
     container: HTMLElement,
@@ -542,6 +545,7 @@ export class Settings {
     private authorizeSourceRemoval:
       (id: string, proceed: () => void, turnOff?: boolean) => void =
       (_id, proceed) => proceed(),
+    private onLoadAccount: (id: string) => Promise<void> = async () => {},
   ) {
     this.container = container;
     this.onSave = onSave;
@@ -580,7 +584,7 @@ export class Settings {
       if (!el) return;
       this.notedKey = null;
       this.pick(el, 'pointer');
-      this.activate(el);
+      this.activate(el, 'pointer');
     });
 
     // The global key handler ignores most keys in a text field, so the field
@@ -633,21 +637,19 @@ export class Settings {
       ) {
         this.refreshManualEpgScopes();
       }
+      this.save(false, false);
+    });
+    this.container.addEventListener('change', (e: Event) => {
+      if ((e.target as HTMLElement).tagName === 'INPUT') this.save();
     });
 
-    // Hover moves focus, except that while a text field has the caret the
-    // hovered control is only noted. Hovering a swatch previews its theme
-    // app-wide; leaving it restores the selected theme at once.
+    // A field with the caret keeps the keys while the pointer moves elsewhere.
     this.container.addEventListener('nav:hover', (e: Event) => {
       const el = e.target as HTMLElement;
       if (!el.hasAttribute('data-focusable')) return;
       const caret = this.caretInput();
       if (caret && caret !== el) {
         this.notedKey = this.keyOf(el);
-        if (el.dataset.themeId) {
-          this.themeHoverToken++;
-          previewTheme(el.dataset.themeId);
-        }
         return;
       }
       this.notedKey = null;
@@ -655,7 +657,6 @@ export class Settings {
     });
     this.container.addEventListener('nav:unhover', (e: Event) => {
       const el = e.target as HTMLElement;
-      if (el.dataset.themeId) this.restoreThemeAfterHover();
       if (this.notedKey !== null && this.notedKey === this.keyOf(el)) this.notedKey = null;
       // A field with the caret keeps its ring.
       if (this.caretInput() || el !== this.resolveFocused()) return;
@@ -720,6 +721,7 @@ export class Settings {
 
   render(): void {
     this.pendingLiveCategories.clear();
+    this.themeActivation = null;
     const allPlaylists = StorageService.getPlaylists();
     const playlists = allPlaylists.filter(pl => pl.source !== 'upload' && pl.source !== 'xtream');
     const accounts = allPlaylists.filter(pl => pl.source === 'xtream');
@@ -825,7 +827,7 @@ export class Settings {
                 <h3 class="settings-section-title">${t('settings.xtreamAccount')}</h3>
                 <div class="xtream-entries" id="xtream-entries">
                   ${accounts.length
-                    ? html`${accounts.map((pl) => xtreamCard(pl))}`
+                    ? html`${accounts.map((pl) => xtreamCard(pl, this.loadingAccounts.has(pl.id)))}`
                     : html`<div class="empty-hint">${t('settings.noXtream')}</div>`}
                 </div>
                 <button class="btn btn-primary" data-focusable id="add-xtream">${t('settings.addXtream')}</button>
@@ -866,7 +868,10 @@ export class Settings {
                     `)}`
                     : html`<div class="empty-hint">${t('settings.noPlaylists')}</div>`}
                 </div>
-                <button class="btn btn-primary" data-focusable id="add-playlist">${t('settings.addPlaylist')}</button>
+                <div class="settings-row">
+                  <button class="btn btn-primary" data-focusable id="add-playlist">${t('settings.addPlaylist')}</button>
+                  <button class="btn btn-secondary" data-focusable id="load-playlists">${t('channel.reloadPlaylists')}</button>
+                </div>
               </div>
 
               <div class="settings-section">
@@ -1218,13 +1223,13 @@ export class Settings {
           </div>
 
           <div class="settings-actions" data-nav-container>
-            <button class="btn btn-secondary btn-large" data-focusable id="cancel-settings">${t('common.cancel')}</button>
-            <button class="btn btn-primary btn-large" data-focusable id="save-settings">${t('settings.saveApply')}</button>
+            <button class="btn btn-secondary btn-large" data-focusable id="cancel-settings">${t('common.close')}</button>
           </div>
         </div>
       </div>
     `);
 
+    this.updateAccountButtons();
     this.enter();
     void this.refreshSetupInfo();
     // Sync uploads from the local service on every Settings open. Subsequent
@@ -1366,6 +1371,7 @@ export class Settings {
     if (bounded === 0) delete this.epgOffsets[source];
     else this.epgOffsets[source] = bounded;
     this.updateEpgOffsetControl();
+    this.save();
   }
 
   private updateEpgOffsetControl(): void {
@@ -1471,7 +1477,8 @@ export class Settings {
     this.nav.focus(entry);
   }
 
-  private activate(el: HTMLElement): void {
+  private activate(el: HTMLElement, via: Via = 'key'): void {
+    if (el.getAttribute('aria-disabled') === 'true') return;
     if (el.classList.contains('settings-nav-item')) {
       this.scrollToCategory(el.dataset.settingsTarget as SettingsCategory);
     } else if (el.id === 'add-playlist') {
@@ -1494,6 +1501,8 @@ export class Settings {
       this.authorizeSourceRemoval(this.sourceId(el), () => this.removeXtreamEntry(el));
     } else if (el.classList.contains('check-xtream')) {
       void this.checkXtreamAccount(el);
+    } else if (el.classList.contains('load-xtream')) {
+      void this.loadXtreamAccount(el);
     } else if (el.classList.contains('xtream-live-categories')) {
       this.openLiveCategories(el);
     } else if (el.classList.contains('source-toggle')) {
@@ -1512,18 +1521,19 @@ export class Settings {
       // Single-select toggle group: clear the siblings, activate the chosen option.
       el.parentElement?.querySelectorAll('.toggle-option').forEach(b => b.classList.remove('active'));
       el.classList.add('active');
+      this.save();
     } else if (el.classList.contains('epg-offset-step')) {
       this.adjustEpgOffset(Number(el.dataset.offsetDelta));
     } else if (el.classList.contains('epg-offset-value')) {
       this.setEpgOffset(0);
     } else if (el.classList.contains('theme-swatch')) {
-      this.selectThemeSwatch(el);
-    } else if (el.id === 'save-settings') {
-      this.save();
+      this.selectThemeSwatch(el, via);
+    } else if (el.id === 'load-playlists') {
+      this.save(true);
     } else if (el.id === 'cancel-settings') {
       this.onSave('cancel');
     } else if (el.id === 'refresh-data') {
-      this.onSave('reload');
+      this.save(true);
     } else if (el.id === 'clear-cache') {
       this.confirmationPrompt.show({
         title: t('settings.clearCacheTitle'),
@@ -1822,8 +1832,7 @@ export class Settings {
     }
   }
 
-  // Applied on its own (not only on Save) so leaving through "Edit channel list"
-  // still honors the toggle.
+  // Rebuild visible channels as soon as the toggle changes.
   private saveShowHidden(): void {
     const btn = $('#show-hidden .toggle-option.active', this.container);
     if (!btn) return;
@@ -1843,8 +1852,6 @@ export class Settings {
     this.liveCategoryPicker.hide();
   }
 
-  // Live theme preview: focusing (D-pad) or hovering (pointer) a swatch previews
-  // that theme app-wide; anything else falls back to the currently selected theme.
   private confirmResetCustomization(): void {
     this.confirmationPrompt.show({
       title: t('settings.resetCustomizationTitle'),
@@ -1861,20 +1868,8 @@ export class Settings {
     });
   }
 
-  // The pointer leaving a swatch for another hovers the next one in the same
-  // task; restoring the selected theme in between would restyle the whole
-  // document twice per move, so the restore waits until that hover is done.
-  private restoreThemeAfterHover(): void {
-    const token = ++this.themeHoverToken;
-    void Promise.resolve().then(() => {
-      if (token === this.themeHoverToken) previewTheme(this.selectedTheme);
-    });
-  }
-
   private onNavFocus(el: HTMLElement | null): void {
-    this.themeHoverToken++;
-    if (el?.dataset.themeId) previewTheme(el.dataset.themeId);
-    else previewTheme(this.selectedTheme);
+    if (el?.dataset.themeId !== this.themeActivation?.id) this.themeActivation = null;
     if (!el) return;
     const key = this.keyOf(el);
     if (key !== this.landedKey) this.landedKey = null;
@@ -2219,15 +2214,20 @@ export class Settings {
     this.setActiveCategory(active);
   }
 
-  // OK on a swatch: mark it the pending selection (persisted on Save & Apply;
-  // reverted to savedTheme if Settings closes without saving — see App.showView).
-  private selectThemeSwatch(el: HTMLElement): void {
+  private selectThemeSwatch(el: HTMLElement, via: Via): void {
     const id = el.dataset.themeId;
     if (!id) return;
+    const now = Date.now();
+    const previous = this.themeActivation;
+    this.themeActivation = { id, at: now, via };
+    if (!previous || previous.id !== id || previous.via !== via
+        || now - previous.at > 500) return;
+    this.themeActivation = null;
     this.container.querySelectorAll('.theme-swatch').forEach(s => s.classList.remove('active'));
     el.classList.add('active');
     this.selectedTheme = id;
     previewTheme(id);
+    this.save();
   }
 
   // Opening moves focus to the active option, or the first one when the stored
@@ -2252,12 +2252,11 @@ export class Settings {
   private selectDropdownOption(el: HTMLElement): void {
     const dd = commitDropdownOption(el);
     if (!dd) return;
-    // Text size previews live so the choice can be judged at its own scale;
-    // showView() reverts it if Settings closes without saving.
     if (dd.id === 'text-size') applyTextSize(dd.dataset.value ?? '');
     if (dd.id === 'epg-offset-source') this.updateEpgOffsetControl();
     const trigger = dd.querySelector<HTMLElement>('.dropdown-trigger');
     if (trigger) this.nav.focus(trigger);
+    if (dd.id !== 'epg-offset-source') this.save();
   }
 
   private addPlaylistEntry(): void {
@@ -2270,11 +2269,11 @@ export class Settings {
       emptyHint.remove();
       const header = document.createElement('div');
       header.className = 'settings-row playlist-header-row';
-      header.innerHTML = `
+      morph(header, html`
         <div class="settings-field"><label>${t('settings.name')}</label></div>
         <div class="settings-field"><label>${t('settings.url')}</label></div>
         <div class="playlist-header-spacer"></div>
-      `;
+      `);
       entries.appendChild(header);
     }
 
@@ -2291,7 +2290,7 @@ export class Settings {
     row.className = 'settings-row';
     row.dataset.id = genPlaylistId();
     row.setAttribute('data-source-entry', '');
-    row.innerHTML = `
+    morph(row, html`
       <div class="settings-field">
         <input type="text" class="settings-input playlist-name"
                aria-label="${t('settings.playlistName')}" placeholder="${t('settings.myPlaylist')}"
@@ -2302,9 +2301,9 @@ export class Settings {
                aria-label="${t('settings.playlistUrl')}" placeholder="https://...m3u"
                data-focusable value="">
       </div>
-      ${String(sourceToggle(true))}
+      ${sourceToggle(true)}
       <button class="btn btn-danger remove-playlist" data-focusable>${t('common.remove')}</button>
-    `;
+    `);
     entries.appendChild(row);
     this.refreshManualEpgScopes();
 
@@ -2411,7 +2410,7 @@ export class Settings {
     const playlists = this.epgScopePlaylistsFromEditor();
     const index = entries.querySelectorAll('[data-manual-epg-source]').length;
     const wrap = document.createElement('div');
-    wrap.innerHTML = String(manualEpgSourceRow(
+    morph(wrap, manualEpgSourceRow(
       { url: '', playlistIds: [] },
       playlists,
       index,
@@ -2443,6 +2442,7 @@ export class Settings {
       this.currentEpgOffsetSource(),
     );
     this.nav.focus($('#add-epg-source', this.container));
+    this.save();
   }
 
   private moveManualEpgSource(button: HTMLElement, direction: -1 | 1): void {
@@ -2461,6 +2461,7 @@ export class Settings {
       this.currentEpgOffsetSource(),
     );
     this.nav.focus(target.querySelector<HTMLElement>('.manual-epg-url'));
+    this.save();
   }
 
   private renumberManualEpgSources(): void {
@@ -2517,6 +2518,7 @@ export class Settings {
       this.manualEpgSourcesFromEditor(),
       this.currentEpgOffsetSource(),
     );
+    this.save();
   }
 
   private sourceId(el: HTMLElement): string {
@@ -2540,6 +2542,7 @@ export class Settings {
     }
     this.refreshManualEpgScopes();
     this.nav.focusFirst();
+    this.save();
   }
 
   private addXtreamEntry(): void {
@@ -2550,7 +2553,7 @@ export class Settings {
     // Build the card off-DOM from the trusted template, then attach it. The
     // seeded id gives morph/save a stable key from the moment it's created.
     const tmp = document.createElement('div');
-    tmp.innerHTML = String(xtreamCard({ id: genPlaylistId() }));
+    morph(tmp, xtreamCard({ id: genPlaylistId() }));
     const card = tmp.firstElementChild as HTMLElement | null;
     if (!card) return;
     entries.appendChild(card);
@@ -2576,6 +2579,7 @@ export class Settings {
     }
     this.refreshManualEpgScopes();
     this.nav.focusFirst();
+    this.save();
   }
 
   private toggleSource(button: HTMLElement): void {
@@ -2587,6 +2591,7 @@ export class Settings {
     if (label) label.textContent = t(enabled ? 'settings.on' : 'settings.off');
     button.closest<HTMLElement>('[data-source-entry]')
       ?.classList.toggle('source-disabled', !enabled);
+    this.save();
   }
 
   /**
@@ -2638,6 +2643,52 @@ export class Settings {
       })}`,
       'ok',
     );
+  }
+
+  private updateAccountButtons(): void {
+    for (const card of this.container.querySelectorAll<HTMLElement>('.xtream-card')) {
+      const button = card.querySelector<HTMLElement>('.load-xtream');
+      if (!button) continue;
+      const id = card.dataset.id || '';
+      const source = StorageService.getPlaylists().find(entry => entry.id === id);
+      const busy = this.loadingAccounts.has(id);
+      card.querySelectorAll<HTMLInputElement>('input').forEach(input => { input.readOnly = busy; });
+      card.querySelectorAll<HTMLElement>('button:not(.load-xtream)').forEach(control => {
+        control.setAttribute('aria-disabled', String(busy));
+      });
+      button.textContent = t(busy ? 'common.loading'
+        : source && PlaylistService.hasLoadedSource(source) ? 'common.update' : 'common.load');
+      button.setAttribute('aria-busy', String(busy));
+      button.setAttribute('aria-disabled', String(busy || source?.enabled === false));
+    }
+  }
+
+  private async loadXtreamAccount(button: HTMLElement): Promise<void> {
+    const card = button.closest<HTMLElement>('.xtream-card');
+    if (!card) return;
+    const id = card.dataset.id || '';
+    if (this.loadingAccounts.has(id)) return;
+    const account = this.cardAccount(card);
+    if (!account.url || !account.username || !account.password) {
+      this.setXtreamStatus(id, html`${t('settings.enterCredentials')}`, 'err');
+      return;
+    }
+    this.save();
+    const saved = StorageService.getPlaylists().find(source => source.id === id);
+    if (!saved || !isSourceEnabled(saved)) return;
+    this.loadingAccounts.add(id);
+    this.updateAccountButtons();
+    this.setXtreamStatus(id, html``, '');
+    try {
+      await this.onLoadAccount(id);
+      this.setXtreamStatus(id, html``, '');
+    } catch (err) {
+      log.error('Account load failed', err);
+      this.setXtreamStatus(id, html`${t('settings.verifyFailed')}`, 'err');
+    } finally {
+      this.loadingAccounts.delete(id);
+      this.updateAccountButtons();
+    }
   }
 
   private cardAccount(card: HTMLElement): { url: string; username: string; password: string; key: string } {
@@ -2709,7 +2760,7 @@ export class Settings {
           counts,
         };
         this.pendingLiveCategories.set(id, { filter, account: account.key, catalogIds, reviewed });
-        // A re-pointed or unsaved account gets its snapshot only once Save succeeds.
+        // Persist the reviewed snapshot with the matching account.
         if (stored) StorageService.setLiveCategorySnapshot(id, reviewed);
         log.info('Live categories chosen', 'event=xtream.category_filter.picked',
           `mode=${filter ? filter.mode : 'all'}`, `categories=${String(filter ? filter.ids.length : 0)}`,
@@ -2718,6 +2769,7 @@ export class Settings {
           `#xtream-entries .xtream-card[data-id="${id}"] .xtream-live-categories`,
         );
         if (target) morph(target, liveCategoriesButtonContent(filter, reviewed, catalogIds));
+        this.save();
         restoreFocus();
       },
       onCancel: restoreFocus,
@@ -2746,7 +2798,8 @@ export class Settings {
     morph(el, content);
   }
 
-  private save(): void {
+  private save(load = false, notify = true): void {
+    const stored = StorageService.getPlaylists();
     // Read row-by-row so each row's stable id (data-id) is preserved; a row
     // added before this build has none, so mint one.
     const rows = $$('#playlist-entries .settings-row:not(.playlist-header-row)', this.container) as HTMLElement[];
@@ -2754,10 +2807,16 @@ export class Settings {
 
     for (const row of rows) {
       const url = row.querySelector<HTMLInputElement>('.playlist-url')!.value.trim();
-      if (!url) continue;
+      if (!url) {
+        const previous = stored.find(source => source.id === row.dataset.id && source.url);
+        if (previous) playlists.push(previous);
+        continue;
+      }
       const name = row.querySelector<HTMLInputElement>('.playlist-name')!.value.trim();
+      const id = row.dataset.id || genPlaylistId();
+      row.dataset.id = id;
       const entry: PlaylistEntry = {
-        id: row.dataset.id || genPlaylistId(),
+        id,
         name: name || t('settings.playlistDefault', { number: playlists.length + 1 }),
         url,
         source: 'url',
@@ -2777,13 +2836,18 @@ export class Settings {
       const rawUrl = card.querySelector<HTMLInputElement>('.xtream-url')!.value.trim();
       const username = card.querySelector<HTMLInputElement>('.xtream-username')!.value.trim();
       const password = card.querySelector<HTMLInputElement>('.xtream-password')!.value;
-      if (!rawUrl || !username || !password) continue;
+      if (!rawUrl || !username || !password) {
+        const previous = stored.find(source => source.id === card.dataset.id && source.xtream);
+        if (previous) accounts.push(previous);
+        continue;
+      }
       const base = normalizeXtreamBaseUrl(rawUrl);
       const name = card.querySelector<HTMLInputElement>('.xtream-name')!.value.trim();
       const liveOutput = normalizeXtreamLiveOutputPreference(
         card.querySelector<HTMLElement>('.xtream-output .dropdown')!.dataset.value,
       );
       const id = card.dataset.id || genPlaylistId();
+      card.dataset.id = id;
       const xtream: NonNullable<PlaylistEntry['xtream']> = { username, password, liveOutput };
       const accountKey = `${base}|${username}`;
       const liveCategories = this.cardLiveCategories(id, accountKey);
@@ -2806,7 +2870,6 @@ export class Settings {
     const nonUpload = [...playlists, ...accounts];
 
     // Preserve auto-managed uploaded playlists (not shown in the editors above).
-    const stored = StorageService.getPlaylists();
     const uploads = stored.filter(pl => pl.source === 'upload').map((playlist) => {
       const toggle = this.container.querySelector<HTMLElement>(
         `#upload-entries [data-id="${playlist.id}"] .source-toggle`,
@@ -2814,7 +2877,7 @@ export class Settings {
       return withEnabledState(playlist, toggle?.dataset.enabled !== 'false');
     });
     const nextSources = [...nonUpload, ...uploads];
-    const manualEpgSources = this.manualEpgSourcesFromEditor(
+    let manualEpgSources = this.manualEpgSourcesFromEditor(
       new Set(nextSources.map(source => source.id)),
     );
     const seenEpgUrls = new Set<string>();
@@ -2823,7 +2886,7 @@ export class Settings {
       seenEpgUrls.add(source.url);
       return false;
     })?.url;
-    if (duplicateEpgUrl) {
+    if (duplicateEpgUrl && load) {
       const duplicateInput = Array.from(
         this.container.querySelectorAll<HTMLInputElement>('.manual-epg-url'),
       ).filter(input => input.value.trim() === duplicateEpgUrl)[1];
@@ -2835,9 +2898,13 @@ export class Settings {
       return;
     }
 
+    if (duplicateEpgUrl) manualEpgSources = StorageService.getManualEpgSources();
+
     ReminderService.backfillSourceIds();
     // A re-pointed account loses its old snapshot on save; keep the one its picker just reviewed.
-    if (StorageService.setPlaylists(nextSources)) {
+    const sourcesSaved = StorageService.setPlaylists(nextSources);
+    this.updateAccountButtons();
+    if (sourcesSaved) {
       for (const [reviewedId, reviewed] of reviewedSnapshots) {
         StorageService.setLiveCategorySnapshot(reviewedId, reviewed);
       }
@@ -2864,33 +2931,37 @@ export class Settings {
 
     const tzModeBtn = $('#tz-mode .toggle-option.active', this.container);
     if (tzModeBtn?.dataset.value) StorageService.setTzMode(tzModeBtn.dataset.value as TzMode);
-    const sourceByChannel: Record<string, string> = {};
-    const legacySources = new Map<string, string>();
-    const ambiguousLegacyKeys = new Set<string>();
-    for (const channel of PlaylistService.channels) {
-      const sourceUrl = EpgService.getSourceUrl(channel);
-      if (!sourceUrl) continue;
-      sourceByChannel[channelKey(channel)] = sourceUrl;
-      const legacyKey = legacyChannelKey(channel);
-      if (legacySources.has(legacyKey)) {
-        ambiguousLegacyKeys.add(legacyKey);
-      } else {
-        legacySources.set(legacyKey, sourceUrl);
+    const offsetSig = (offsets: Record<string, number>) =>
+      JSON.stringify(Object.keys(offsets).sort().map(url => [url, offsets[url]]));
+    if (offsetSig(this.storedEpgOffsets) !== offsetSig(this.epgOffsets)) {
+      const sourceByChannel: Record<string, string> = {};
+      const legacySources = new Map<string, string>();
+      const ambiguousLegacyKeys = new Set<string>();
+      for (const channel of PlaylistService.channels) {
+        const sourceUrl = EpgService.getSourceUrl(channel);
+        if (!sourceUrl) continue;
+        sourceByChannel[channelKey(channel)] = sourceUrl;
+        const legacyKey = legacyChannelKey(channel);
+        if (legacySources.has(legacyKey)) {
+          ambiguousLegacyKeys.add(legacyKey);
+        } else {
+          legacySources.set(legacyKey, sourceUrl);
+        }
       }
+      for (const [legacyKey, sourceUrl] of legacySources) {
+        if (!ambiguousLegacyKeys.has(legacyKey)) sourceByChannel[legacyKey] = sourceUrl;
+      }
+      ReminderService.migrateEpgOffsets(
+        this.storedEpgOffsets,
+        this.epgOffsets,
+        sourceByChannel,
+      );
+      StorageService.migrateCatchupEpgOffsets(
+        this.storedEpgOffsets,
+        this.epgOffsets,
+        sourceByChannel,
+      );
     }
-    for (const [legacyKey, sourceUrl] of legacySources) {
-      if (!ambiguousLegacyKeys.has(legacyKey)) sourceByChannel[legacyKey] = sourceUrl;
-    }
-    ReminderService.migrateEpgOffsets(
-      this.storedEpgOffsets,
-      this.epgOffsets,
-      sourceByChannel,
-    );
-    StorageService.migrateCatchupEpgOffsets(
-      this.storedEpgOffsets,
-      this.epgOffsets,
-      sourceByChannel,
-    );
     const nextEpgOffsets = { ...this.epgOffsets };
     for (const source of previousManualEpgSources) {
       if (!manualEpgSources.some(candidate => candidate.url === source.url)
@@ -2970,26 +3041,12 @@ export class Settings {
       },
     });
 
-    // Source, EPG URL, and time correction changes rebuild loaded data. Display-only
-    // settings (time zone, auto-play) just re-render in place.
-    const sig = (l: PlaylistEntry[]) =>
-      JSON.stringify(l.map(pl => [
-        pl.id,
-        pl.name,
-        pl.url,
-        isSourceEnabled(pl),
-        pl.xtream?.username,
-        pl.xtream?.password,
-        pl.xtream ? normalizeXtreamLiveOutputPreference(pl.xtream.liveOutput) : '',
-        pl.xtream ? normalizeLiveCategoryFilter(pl.xtream.liveCategories) ?? null : null,
-      ]));
-    const offsetSig = (offsets: Record<string, number>) =>
-      JSON.stringify(Object.keys(offsets).sort().map(url => [url, offsets[url]]));
-    const dataChanged = JSON.stringify(manualEpgSources)
-        !== JSON.stringify(previousManualEpgSources)
-      || sig(stored) !== sig(nextSources)
-      || offsetSig(this.storedEpgOffsets) !== offsetSig(this.epgOffsets);
-    this.onSave(dataChanged ? 'reload' : 'apply');
+    this.storedEpgOffsets = { ...this.epgOffsets };
+    if (sourcesSaved === false) {
+      showToast(t('app.saveFailed'));
+      if (load) return;
+    }
+    if (notify) this.onSave(load ? 'reload' : 'autosave');
   }
 
   /**

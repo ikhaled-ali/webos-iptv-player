@@ -27,7 +27,7 @@ test('switching through every language refreshes cached Recently Watched labels'
     await enterTab(page, 'settings');
     await page.locator('#app-language .dropdown-trigger').click();
     await page.locator(`#app-language [data-dropdown-value="${locale}"]`).click();
-    await page.locator('#save-settings').click();
+    await page.locator('#cancel-settings').click();
     await expect(recentLabel).toHaveText(label);
   }
 });

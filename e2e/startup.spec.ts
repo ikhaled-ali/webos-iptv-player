@@ -5,6 +5,8 @@ import {
   seedPlaylist,
   PLAYLIST_URL,
   SAMPLE_M3U,
+  neuterVideo,
+  routeLiveManifest,
   type Page,
 } from './helpers';
 
@@ -316,3 +318,93 @@ test('an expired playlist cache boots at once and refreshes in the background', 
     releaseRefresh();
   }
 });
+
+for (const autoPlay of [false, true]) {
+  test(`saved channels are interactive before a slow saved guide restores${autoPlay ? ' with auto-play' : ''}, without downloading again`, async ({ page }) => {
+    let playlistRequests = 0;
+    let guideRequests = 0;
+    await neuterVideo(page);
+    await routeLiveManifest(page);
+    await page.clock.setFixedTime(new Date('2026-10-25T12:00:00Z'));
+    await page.addInitScript(() => {
+      localStorage.setItem('iptv_log_level', 'info');
+      if (!localStorage.getItem('iptv_playlists')) {
+        localStorage.setItem('iptv_playlists', JSON.stringify([
+          { id: 'p1', name: 'Alpha', url: 'http://host/playlist.m3u' },
+        ]));
+      }
+    });
+    await page.route('http://host/playlist.m3u', route => {
+      playlistRequests++;
+      return playlistRequests > 1 ? route.abort() : route.fulfill({
+        contentType: 'application/x-mpegurl',
+        body: '#EXTM3U url-tvg="http://host/guide.xml"\n'
+          + '#EXTINF:-1 tvg-id="ch1",Alpha\nhttp://host/a.m3u8\n'
+          + '#EXTINF:-1 tvg-id="ch2",Bravo\nhttp://host/b.m3u8',
+      });
+    });
+    await page.route('http://host/guide.xml', route => {
+      guideRequests++;
+      return guideRequests > 1 ? route.abort() : route.fulfill({
+        contentType: 'application/xml',
+        body: '<tv><channel id="ch1"><display-name>Alpha</display-name></channel>'
+          + '<programme channel="ch1" start="20261025110000 +0000" stop="20261025130000 +0000">'
+          + '<title>Saved Program</title></programme></tv>',
+      });
+    });
+    const stored = page.waitForEvent('console', message =>
+      message.text().includes('event=playlist.cache.write.completed'));
+    await page.goto('/');
+    await expect(page.locator('.channel-main .channel-now').first()).toHaveText('Saved Program');
+    await stored;
+
+    await page.addInitScript((autoPlay) => {
+      if (autoPlay) localStorage.setItem('iptv_auto_play', 'true');
+      const get = IDBObjectStore.prototype.get;
+      const releases: Array<() => void> = [];
+      const win = window as unknown as { releaseGuide: () => void; guideRead: boolean };
+      win.releaseGuide = () => releases.splice(0).forEach(release => release());
+      win.guideRead = false;
+      IDBObjectStore.prototype.get = function (key: IDBValidKey | IDBKeyRange) {
+        const request = get.call(this, key);
+        if (this.name !== 'epg-cache') return request;
+        const held = {} as IDBRequest;
+        request.onsuccess = event => {
+          Object.defineProperty(held, 'result', { value: request.result });
+          win.guideRead = true;
+          releases.push(() => held.onsuccess?.call(held, event));
+        };
+        return held;
+      };
+    }, autoPlay);
+    await page.reload();
+    try {
+      await expect.poll(() => page.evaluate(() =>
+        (window as unknown as { guideRead: boolean }).guideRead)).toBe(true);
+      await expect(page.locator('#view-loading')).toBeHidden();
+      const rows = page.locator('.channel-main .channel-item');
+      await expect(rows.locator('.channel-name')).toHaveText(['Alpha', 'Bravo']);
+      if (autoPlay) {
+        await expect(page.locator('#view-player')).toBeVisible();
+        await expect(page.locator('#player-osd')).toBeVisible();
+        await expect(page.locator('.osd-programme-title')).toHaveCount(0);
+      } else {
+        await page.keyboard.press('ArrowRight');
+        await page.keyboard.press('ArrowDown');
+        await expect(rows.nth(1)).toHaveClass(/focused/);
+      }
+      expect(playlistRequests).toBe(1);
+      expect(guideRequests).toBe(1);
+    } finally {
+      await page.evaluate(() => (window as unknown as { releaseGuide: () => void }).releaseGuide());
+    }
+    await expect(page.locator('.channel-main .channel-now').first()).toHaveText('Saved Program');
+    if (autoPlay) {
+      await expect(page.locator('.osd-programme-title')).toHaveText('Saved Program');
+    } else {
+      await expect(page.locator('.channel-main .channel-item').nth(1)).toHaveClass(/focused/);
+    }
+    expect(playlistRequests).toBe(1);
+    expect(guideRequests).toBe(1);
+  });
+}

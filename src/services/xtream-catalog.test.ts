@@ -65,6 +65,7 @@ import {
   onCatalogListRefreshed,
   onCatalogListWritten,
   loadVodStreams,
+  refreshAccountCatalog,
 } from './xtream-catalog';
 import { getCachedCatalog, setCachedCatalog, setCachedCatalogState } from './idb-cache';
 import { CONFIG } from '../config';
@@ -89,6 +90,51 @@ beforeEach(() => {
 });
 
 describe('xtream-catalog', () => {
+  it('forces only the selected account catalogs and their fresh partitions to update', async () => {
+    clientMock.getVodStreams.mockResolvedValue([{ streamId: 'new', categoryId: '1' }]);
+    clientMock.getSeries.mockResolvedValue([{ seriesId: 'new', categoryId: '1' }]);
+    const previous = [{ streamId: 'old', categoryId: '1' }];
+    for (const key of ['x1|vod_all', 'x1|vod_streams-v2|1', 'x2|vod_all']) {
+      cacheStore.set(key, { key, timestamp: Date.now(), data: previous });
+    }
+
+    expect(await refreshAccountCatalog(account)).toBe(true);
+
+    expect(clientMock.getVodStreams).toHaveBeenCalledTimes(1);
+    expect(clientMock.getSeries).toHaveBeenCalledTimes(1);
+    expect(cacheStore.get('x1|vod_all')?.data).toEqual([{ streamId: 'new', categoryId: '1' }]);
+    expect(cacheStore.get('x2|vod_all')?.data).toBe(previous);
+    expect(setCachedCatalog.mock.calls.every(([key]) => key.startsWith('x1|'))).toBe(true);
+  });
+
+  it('shares a manual account update and accepts an account without movies or series', async () => {
+    clientMock.getVodCategories.mockResolvedValue([]);
+    clientMock.getSeriesCategories.mockResolvedValue([]);
+    const first = refreshAccountCatalog(account);
+    const second = refreshAccountCatalog(account);
+    expect(second).toBe(first);
+    expect(await first).toBe(true);
+    expect(clientMock.getVodCategories).toHaveBeenCalledTimes(1);
+    expect(cacheStore.get('x1|vod_all')?.data).toEqual([]);
+    expect(cacheStore.get('x1|series_all')?.data).toEqual([]);
+  });
+
+  it('does not let an older background response overwrite a manual account update', async () => {
+    let finish!: (value: Array<{ id: string; name: string }>) => void;
+    cacheStore.set('x1|vod_categories', {
+      key: 'x1|vod_categories', timestamp: Date.now() - 24 * 60 * 60 * 1000,
+      data: [{ id: 'old', name: 'Old' }],
+    });
+    clientMock.getVodCategories.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    clientMock.getVodStreams.mockResolvedValue([{ streamId: '1', categoryId: '1' }]);
+    clientMock.getSeriesCategories.mockResolvedValue([]);
+    await loadVodCategories(account);
+    await settle();
+    expect(await refreshAccountCatalog(account)).toBe(true);
+    finish([{ id: 'obsolete', name: 'Obsolete' }]);
+    await settle();
+    expect(cacheStore.get('x1|vod_categories')?.data).toEqual([{ id: '1', name: 'Cat A' }]);
+  });
   it('uses the oldest whole-catalog timestamp for Search memory expiry without reading payloads', async () => {
     const oldest = Date.now() - 2 * 60 * 60 * 1000;
     cacheStore.set('x1|vod_all', {

@@ -1666,6 +1666,10 @@ export class Player {
     return this.currentChannel;
   }
 
+  refreshEpg(): void {
+    if (this.osd.isVisible()) this.osd.render();
+  }
+
   /** Rebind live playback after the channel catalog is rebuilt or reordered. */
   syncCurrentIndex(): void {
     if (!this.currentChannel) return;

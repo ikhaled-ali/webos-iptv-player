@@ -297,6 +297,79 @@ function click(selector: string): void {
 
 afterEach(() => Focus.uninstall());
 
+describe('Settings immediate changes', () => {
+  beforeEach(() => settings.render());
+
+  it('saves configuration immediately without closing Settings', () => {
+    click('#auto-play .toggle-option[data-value="on"]');
+    expect(storageMock.setAutoPlay).toHaveBeenCalledWith(true);
+    expect(onSave).toHaveBeenCalledWith('autosave');
+    expect(container.querySelector('#save-settings')).toBeNull();
+  });
+
+  it('saves a new playlist as its URL is entered and loads explicitly', () => {
+    click('#add-playlist');
+    const input = container.querySelector<HTMLInputElement>('.playlist-url')!;
+    input.value = 'http://host/a';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(storageMock.setPlaylists).toHaveBeenCalledWith([
+      expect.objectContaining({ url: 'http://host/a', source: 'url' }),
+    ]);
+    expect(onSave).not.toHaveBeenCalledWith('reload');
+    click('#load-playlists');
+    expect(onSave).toHaveBeenLastCalledWith('reload');
+  });
+
+  it('does not preview on hover, focus, or one click; two clicks apply and save', () => {
+    themeMock.previewTheme.mockClear();
+    const swatch = container.querySelector<HTMLElement>('[data-theme-id="arctic"]')!;
+    swatch.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
+    click('[data-theme-id="arctic"]');
+    expect(themeMock.previewTheme).not.toHaveBeenCalled();
+    expect(state.theme).toBe('midnight');
+    click('[data-theme-id="arctic"]');
+    expect(themeMock.previewTheme).toHaveBeenCalledWith('arctic');
+    expect(state.theme).toBe('arctic');
+  });
+
+  it('keeps an existing source while a required field is being replaced', () => {
+    state.playlists = [{
+      id: 'x1', name: 'Alpha', url: 'http://host', source: 'xtream',
+      xtream: { username: 'u1', password: 'p1' },
+    }];
+    settings.render();
+    const username = container.querySelector<HTMLInputElement>('.xtream-username')!;
+    username.value = '';
+    username.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(storageMock.setPlaylists).toHaveBeenLastCalledWith(state.playlists);
+    click('#auto-play [data-value="on"]');
+    expect(storageMock.setAutoPlay).toHaveBeenCalledWith(true);
+    expect(storageMock.setPlaylists).toHaveBeenLastCalledWith(state.playlists);
+  });
+
+  it('saves other preferences while a duplicate guide URL is being corrected', () => {
+    state.manualEpgSources = [
+      { url: 'http://host/a', playlistIds: [] },
+      { url: 'http://host/b', playlistIds: [] },
+    ];
+    settings.render();
+    const inputs = container.querySelectorAll<HTMLInputElement>('.manual-epg-url');
+    inputs[1].value = inputs[0].value;
+    inputs[1].dispatchEvent(new Event('input', { bubbles: true }));
+    click('#auto-play [data-value="on"]');
+    expect(storageMock.setAutoPlay).toHaveBeenCalledWith(true);
+    expect(state.manualEpgSources[1].url).toBe('http://host/b');
+    expect(document.activeElement).not.toBe(inputs[1]);
+  });
+
+  it('does not load stale sources after a failed save', () => {
+    storageMock.setPlaylists.mockReturnValueOnce(false);
+    click('#load-playlists');
+    expect(onSave).not.toHaveBeenCalledWith('reload');
+    expect(toastMock.showToast).toHaveBeenCalledWith('Unable to save changes. Please try again.');
+  });
+});
+
 describe('Settings.render', () => {
   it('renders the category sidebar with General first', () => {
     settings.render();
@@ -497,7 +570,7 @@ describe('Settings.render', () => {
     expect(container.querySelector('#playlist-entries [data-source-entry]')
       ?.classList.contains('source-disabled')).toBe(true);
 
-    click('#save-settings');
+    click('#load-playlists');
 
     expect(storageMock.setPlaylists).toHaveBeenCalledWith([
       { id: 'p1', name: 'P1', url: 'http://a', source: 'url', enabled: false },
@@ -618,7 +691,7 @@ describe('Settings.render', () => {
   it('persists and applies the selected animation mode', () => {
     settings.render();
     click('#animation-mode [data-value="full"]');
-    click('#save-settings');
+    click('#load-playlists');
     expect(storageMock.setAnimationMode).toHaveBeenCalledWith('full');
     expect(motionMock.applyAnimationMode).toHaveBeenCalledWith('full');
   });
@@ -627,7 +700,7 @@ describe('Settings.render', () => {
     settings.render();
     click('#number-entry-osd-timeout [data-dropdown-value="1800"]');
     click('#player-osd-timeout [data-dropdown-value="8000"]');
-    click('#save-settings');
+    click('#load-playlists');
     expect(storageMock.setNumberEntryOsdTimeoutMs).toHaveBeenCalledWith(1800);
     expect(storageMock.setPlayerOsdTimeoutMs).toHaveBeenCalledWith(8000);
   });
@@ -700,7 +773,7 @@ describe('Settings.render', () => {
     const minus = container.querySelector<HTMLElement>('[data-offset-delta="-15"]')!;
     minus.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
     settings.handleAction('select');
-    click('#save-settings');
+    click('#load-playlists');
     expect(storageMock.setEpgOffsets).toHaveBeenCalledWith({
       'http://host/epg.xml': -15,
     });
@@ -720,7 +793,7 @@ describe('Settings.render', () => {
       .toBe('http://host/new.xml');
     expect(container.querySelector('.epg-offset-value')?.textContent?.trim()).toBe('0 min');
     click('[data-offset-delta="15"]');
-    click('#save-settings');
+    click('#load-playlists');
     expect(storageMock.setEpgOffsets).toHaveBeenCalledWith({
       'http://host/new.xml': 15,
     });
@@ -770,7 +843,7 @@ describe('Settings.render', () => {
       .toBe(true);
     expect(reordered[0].querySelector('.manual-epg-url')?.classList)
       .toContain('focused');
-    click('#save-settings');
+    click('#load-playlists');
 
     expect(storageMock.setManualEpgSources).toHaveBeenCalledWith([
       { url: 'http://host/b.xml', playlistIds: ['p2'] },
@@ -829,7 +902,7 @@ describe('Settings.render', () => {
     const inputs = container.querySelectorAll<HTMLInputElement>('.manual-epg-url');
     inputs[1].value = inputs[0].value;
 
-    click('#save-settings');
+    click('#load-playlists');
 
     expect(storageMock.setPlaylists).not.toHaveBeenCalled();
     expect(storageMock.setManualEpgSources).not.toHaveBeenCalled();
@@ -863,9 +936,10 @@ describe('Settings.render', () => {
     const sourceUrl = vi.spyOn(EpgService, 'getSourceUrl')
       .mockImplementation(channel =>
         channel === first ? 'http://host/a.xml' : 'http://host/b.xml');
+    state.manualEpgSources = [{ url: 'http://host/a.xml', playlistIds: [] }];
     settings.render();
 
-    click('#save-settings');
+    click('.epg-offset-step[data-offset-delta="15"]');
 
     const sourceMap = storageMock.migrateCatchupEpgOffsets.mock.calls[0][2];
     expect(sourceMap[channelKey(first)]).toBe('http://host/a.xml');
@@ -969,44 +1043,41 @@ describe('Settings theme picker', () => {
     expect(active[0].getAttribute('data-theme-id')).toBe('plum-night');
   });
 
-  it('selecting a swatch previews it and moves the active marker', () => {
-    click('.theme-swatch[data-theme-id="arctic"]');
-    expect(themeMock.previewTheme).toHaveBeenCalledWith('arctic');
-    const active = container.querySelectorAll('.theme-swatch.active');
-    expect(active).toHaveLength(1);
-    expect(active[0].getAttribute('data-theme-id')).toBe('arctic');
-  });
-
-  it('previews on pointer hover and restores the selected theme when the pointer leaves', async () => {
-    // Select Arctic (pending), then hover a different swatch and move the pointer off.
-    click('.theme-swatch[data-theme-id="arctic"]');
-    const amber = container.querySelector<HTMLElement>('.theme-swatch[data-theme-id="vintage-amber"]')!;
-    amber.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
-    expect(themeMock.previewTheme).toHaveBeenLastCalledWith('vintage-amber');
-    // Leaving to a non-swatch restores the selected (Arctic), not the saved (midnight).
-    amber.dispatchEvent(new CustomEvent('nav:unhover', { bubbles: true }));
-    await Promise.resolve();
-    expect(themeMock.previewTheme).toHaveBeenLastCalledWith('arctic');
-  });
-
-  it('keeps previewing when the pointer moves between swatches', async () => {
-    const arctic = container.querySelector<HTMLElement>('.theme-swatch[data-theme-id="arctic"]')!;
-    const amber = container.querySelector<HTMLElement>('.theme-swatch[data-theme-id="vintage-amber"]')!;
-    arctic.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
+  it('never previews while hovering or leaving swatches', async () => {
     themeMock.previewTheme.mockClear();
+    const arctic = container.querySelector<HTMLElement>('[data-theme-id="arctic"]')!;
+    const amber = container.querySelector<HTMLElement>('[data-theme-id="vintage-amber"]')!;
+    arctic.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
     arctic.dispatchEvent(new CustomEvent('nav:unhover', { bubbles: true }));
     amber.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
     await Promise.resolve();
-    // Each theme change restyles the whole document, so swatch→swatch must
-    // not restore the selected theme in between.
-    expect(themeMock.previewTheme.mock.calls).toEqual([['vintage-amber']]);
+    expect(themeMock.previewTheme).not.toHaveBeenCalled();
+    expect(state.theme).toBe('midnight');
   });
 
-  it('persists the selected theme only on Save & Apply', () => {
-    click('.theme-swatch[data-theme-id="vintage-amber"]');
-    expect(storageMock.setTheme).not.toHaveBeenCalled();
-    click('#save-settings');
-    expect(storageMock.setTheme).toHaveBeenCalledWith('vintage-amber');
+  it('persists and applies the theme after two remote OK presses', () => {
+    const swatch = container.querySelector<HTMLElement>('[data-theme-id="arctic"]')!;
+    swatch.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
+    themeMock.previewTheme.mockClear();
+    settings.handleAction('select');
+    expect(themeMock.previewTheme).not.toHaveBeenCalled();
+    settings.handleAction('select');
+    expect(state.theme).toBe('arctic');
+    expect(themeMock.previewTheme).toHaveBeenCalledWith('arctic');
+  });
+
+  it('does not combine slow clicks, clicks on different themes, or pointer and remote input', () => {
+    const now = vi.spyOn(Date, 'now');
+    now.mockReturnValue(1000);
+    click('[data-theme-id="arctic"]');
+    now.mockReturnValue(2000);
+    click('[data-theme-id="arctic"]');
+    expect(state.theme).toBe('midnight');
+    click('[data-theme-id="vintage-amber"]');
+    expect(state.theme).toBe('midnight');
+    settings.handleAction('select');
+    expect(state.theme).toBe('midnight');
+    now.mockRestore();
   });
 
   it('reflects the saved overlay style on the toggle', () => {
@@ -1029,9 +1100,9 @@ describe('Settings theme picker', () => {
     expect(item?.closest('.settings-row')).toBeNull();
   });
 
-  it('persists the overlay style on Save & Apply', () => {
+  it('persists the overlay style immediately', () => {
     click('#overlay-style .toggle-option[data-value="frosted"]');
-    click('#save-settings');
+    click('#load-playlists');
     expect(storageMock.setOverlayStyle).toHaveBeenCalledWith('frosted');
   });
 
@@ -1052,11 +1123,10 @@ describe('Settings theme picker', () => {
       .toBe('100% (Default)');
   });
 
-  it('previews the text size immediately and persists it on Save & Apply', () => {
+  it('applies and saves the text size immediately', () => {
     click('#text-size .dropdown-option[data-dropdown-value="130"]');
     expect(themeMock.applyTextSize).toHaveBeenCalledWith('130');
-    expect(storageMock.setTextSize).not.toHaveBeenCalled();
-    click('#save-settings');
+
     expect(storageMock.setTextSize).toHaveBeenCalledWith('130');
   });
 });
@@ -1096,7 +1166,7 @@ describe('Settings editing', () => {
 
     container.querySelectorAll<HTMLElement>('.remove-playlist')[2]
       .dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    click('#save-settings');
+    click('#load-playlists');
 
     const saved = storageMock.setPlaylists.mock.calls.at(-1)![0] as { id: string; name: string }[];
     expect(saved.map(p => p.name)).toEqual(['Playlist 1', 'Playlist 2', 'Playlist 4', 'Playlist 5']);
@@ -1271,7 +1341,7 @@ describe('Settings editing', () => {
     });
   });
 
-  it('cancel discards; refresh reloads', () => {
+  it('Close exits; refresh reloads', () => {
     click('#cancel-settings');
     expect(onSave).toHaveBeenLastCalledWith('cancel');
     click('#refresh-data');
@@ -1503,29 +1573,26 @@ describe('Settings.save', () => {
 
     click(`#live-preview-setting [data-value="${enabled ? 'off' : 'on'}"]`);
     expect(activeValue()).toBe(enabled ? 'off' : 'on');
-    expect(state.livePreview).toBe(enabled);
-    expect(storageMock.setLivePreview).not.toHaveBeenCalled();
-
-    click('#save-settings');
+    expect(state.livePreview).toBe(!enabled);
     expect(storageMock.setLivePreview).toHaveBeenCalledExactlyOnceWith(!enabled);
     expect(state.livePreview).toBe(!enabled);
-    expect(onSave).toHaveBeenCalledWith('apply');
+    expect(onSave).toHaveBeenCalledWith('autosave');
     expect(storageMock.setAutoPlay).toHaveBeenCalledWith(false);
     settings.render();
     expect(activeValue()).toBe(enabled ? 'off' : 'on');
   });
 
-  it.each([false, true])('discards an unsaved live preview change from %s on Cancel', (enabled) => {
+  it.each([false, true])('keeps an immediately saved live preview change from %s on Close', (enabled) => {
     state.livePreview = enabled;
     settings.render();
     click(`#live-preview-setting [data-value="${enabled ? 'off' : 'on'}"]`);
     click('#cancel-settings');
     expect(onSave).toHaveBeenCalledWith('cancel');
-    expect(storageMock.setLivePreview).not.toHaveBeenCalled();
-    expect(state.livePreview).toBe(enabled);
+    expect(storageMock.setLivePreview).toHaveBeenCalledWith(!enabled);
+    expect(state.livePreview).toBe(!enabled);
     settings.render();
     expect(container.querySelector('#live-preview-setting .toggle-option.active')?.getAttribute('data-value'))
-      .toBe(enabled ? 'on' : 'off');
+      .toBe(enabled ? 'off' : 'on');
   });
 
   it('defaults prebuffering to On in Playback settings', () => {
@@ -1541,23 +1608,22 @@ describe('Settings.save', () => {
     state.prebuffering = enabled;
     settings.render();
     click(`#prebuffering-setting [data-value="${enabled ? 'off' : 'on'}"]`);
-    expect(state.prebuffering).toBe(enabled);
-    click('#save-settings');
+    expect(state.prebuffering).toBe(!enabled);
     expect(storageMock.setPrebuffering).toHaveBeenCalledExactlyOnceWith(!enabled);
-    expect(onSave).toHaveBeenCalledWith('apply');
+    expect(onSave).toHaveBeenCalledWith('autosave');
     settings.render();
     expect(container.querySelector('#prebuffering-setting .toggle-option.active')?.getAttribute('data-value'))
       .toBe(enabled ? 'off' : 'on');
   });
 
-  it('discards an unsaved prebuffering change on Cancel', () => {
+  it('keeps an immediately saved prebuffering change on Close', () => {
     click('#prebuffering-setting [data-value="off"]');
     click('#cancel-settings');
     expect(onSave).toHaveBeenCalledWith('cancel');
-    expect(storageMock.setPrebuffering).not.toHaveBeenCalled();
-    expect(state.prebuffering).toBe(true);
+    expect(storageMock.setPrebuffering).toHaveBeenCalledWith(false);
+    expect(state.prebuffering).toBe(false);
     settings.render();
-    expect(container.querySelector('#prebuffering-setting .toggle-option.active')?.getAttribute('data-value')).toBe('on');
+    expect(container.querySelector('#prebuffering-setting .toggle-option.active')?.getAttribute('data-value')).toBe('off');
   });
 
   it('persists trimmed playlists, EPG and auto-play, then reloads', () => {
@@ -1571,7 +1637,7 @@ describe('Settings.save', () => {
     container.querySelector<HTMLInputElement>('.manual-epg-url')!.value = ' http://epg ';
     click('#auto-play [data-value="on"]');
 
-    click('#save-settings');
+    click('#load-playlists');
 
     expect(storageMock.setPlaylists).toHaveBeenCalledWith([{ id: expect.any(String), name: 'My', url: 'http://x', source: 'url' }]);
     expect(storageMock.setManualEpgSources).toHaveBeenCalledWith([
@@ -1588,7 +1654,7 @@ describe('Settings.save', () => {
     settings.render();
     container.querySelector<HTMLElement>(
       '#playlist-entries .settings-row:not(.playlist-header-row)')!.dataset.id = 'b';
-    click('#save-settings');
+    click('#load-playlists');
     expect(onSave).toHaveBeenCalledWith('reload');
   });
 
@@ -1596,9 +1662,8 @@ describe('Settings.save', () => {
     state.playlists = [{ id: 'p1', name: 'P', url: 'http://p' }]; // unchanged by the form
     settings.render();
     click('#tz-mode [data-value="feed"]'); // only the time zone changes
-    click('#save-settings');
     expect(storageMock.setTzMode).toHaveBeenCalledWith('feed');
-    expect(onSave).toHaveBeenCalledWith('apply'); // no re-fetch
+    expect(onSave).toHaveBeenCalledWith('autosave'); // no re-fetch
   });
 
   it('persists the selected app language as a display-only change', () => {
@@ -1606,9 +1671,8 @@ describe('Settings.save', () => {
     settings.render();
     click('#app-language [data-dropdown-trigger]');
     click('#app-language [data-dropdown-value="zh-CN"]');
-    click('#save-settings');
     expect(storageMock.setLocalePreference).toHaveBeenCalledWith('zh-CN');
-    expect(onSave).toHaveBeenCalledWith('apply');
+    expect(onSave).toHaveBeenCalledWith('autosave');
   });
 
   it('saves reconnect attempts without forcing a full data reload', () => {
@@ -1616,24 +1680,23 @@ describe('Settings.save', () => {
     settings.render();
 
     click('#live-reconnect-attempts [data-dropdown-value="5"]');
-    click('#save-settings');
 
     expect(storageMock.setLiveReconnectAttempts).toHaveBeenCalledWith(5);
-    expect(onSave).toHaveBeenCalledWith('apply');
+    expect(onSave).toHaveBeenCalledWith('autosave');
   });
 
   it('saves playlist and guide refresh intervals without forcing a data reload', () => {
+    state.playlists = [];
     settings.render();
 
     click('#playlist-refresh-interval [data-dropdown-value="12"]');
     click('#epg-refresh-interval [data-dropdown-value="0"]');
     state.playlists = [];
-    click('#save-settings');
 
     expect(storageMock.setPlaylistRefreshIntervalHours).toHaveBeenCalledWith(12);
     expect(storageMock.setEpgRefreshIntervalHours).toHaveBeenCalledWith(0);
     expect(storageMock.setXtreamCatalogRefreshIntervalHours).not.toHaveBeenCalled();
-    expect(onSave).toHaveBeenCalledWith('apply');
+    expect(onSave).toHaveBeenCalledWith('autosave');
   });
 
   it('saves the Xtream catalog refresh interval when the control is available', () => {
@@ -1647,7 +1710,6 @@ describe('Settings.save', () => {
     settings.render();
 
     click('#xtream-catalog-refresh-interval [data-dropdown-value="12"]');
-    click('#save-settings');
 
     expect(storageMock.setXtreamCatalogRefreshIntervalHours).toHaveBeenCalledWith(12);
   });
@@ -1664,7 +1726,7 @@ describe('Settings.save', () => {
   it('defaults a missing name to "Playlist N"', () => {
     const urls = container.querySelectorAll<HTMLInputElement>('.playlist-url');
     urls[0].value = 'http://only';
-    click('#save-settings');
+    click('#load-playlists');
     expect(storageMock.setPlaylists).toHaveBeenCalledWith([{ id: expect.any(String), name: 'Playlist 1', url: 'http://only', source: 'url' }]);
   });
 
@@ -1673,7 +1735,7 @@ describe('Settings.save', () => {
     expect(activeTz()).toBe('device'); // default
     click('#tz-mode [data-value="feed"]');
     expect(activeTz()).toBe('feed');
-    click('#save-settings');
+    click('#load-playlists');
     expect(storageMock.setTzMode).toHaveBeenCalledWith('feed');
   });
 
@@ -1682,7 +1744,7 @@ describe('Settings.save', () => {
     expect(activeMode()).toBe('global'); // default — preserves pre-scoping behavior
     click('#channel-cycle-mode [data-value="active"]');
     expect(activeMode()).toBe('active');
-    click('#save-settings');
+    click('#load-playlists');
     expect(storageMock.setChannelCycleMode).toHaveBeenCalledWith('active');
   });
 
@@ -1693,7 +1755,7 @@ describe('Settings.save', () => {
     (container.querySelector('#os-user') as HTMLInputElement).value = 'u';
     (container.querySelector('#os-pass') as HTMLInputElement).value = 'p';
     click('#os-pref-lang [data-dropdown-value="zh-CN"]');
-    click('#save-settings');
+    click('#load-playlists');
     const cfg = storageMock.getOnlineSubtitleConfig();
     expect(cfg.subdl.apiKey).toBe('SK');
     expect(cfg.opensubtitles).toMatchObject({ apiKey: 'OK', username: 'u', password: 'p' });
@@ -1703,7 +1765,7 @@ describe('Settings.save', () => {
   it('saves the Assrt token', () => {
     settings.render();
     (container.querySelector('#assrt-key') as HTMLInputElement).value = 'AZ';
-    click('#save-settings');
+    click('#load-playlists');
     expect(storageMock.getOnlineSubtitleConfig().assrt.apiKey).toBe('AZ');
   });
 });
@@ -1928,7 +1990,7 @@ describe('Settings.handleAction', () => {
   it('keeps remote actions in an open dropdown after pointer focus escapes', () => {
     settings.render();
     click('#app-language [data-dropdown-trigger]');
-    const save = container.querySelector<HTMLElement>('#save-settings')!;
+    const save = container.querySelector<HTMLElement>('#load-playlists')!;
     save.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
 
     settings.handleAction('down');
@@ -1948,7 +2010,7 @@ describe('Settings.handleAction', () => {
   it('select activates the focused control (remote OK)', () => {
     state.playlists = [{ name: 'P1', url: 'http://a' }];
     settings.render();
-    container.querySelector<HTMLElement>('#save-settings')!
+    container.querySelector<HTMLElement>('#load-playlists')!
       .dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
     settings.handleAction('select');
     expect(storageMock.setPlaylists).toHaveBeenCalled();
@@ -2104,7 +2166,7 @@ describe('Settings uploads section', () => {
     settings.render();
     const urls = container.querySelectorAll<HTMLInputElement>('.playlist-url');
     urls[0].value = 'http://renamed';
-    container.querySelector<HTMLElement>('#save-settings')!
+    container.querySelector<HTMLElement>('#load-playlists')!
       .dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
     expect(storageMock.setPlaylists).toHaveBeenCalledWith([
@@ -2231,7 +2293,7 @@ describe('Settings uploads auto-refresh', () => {
 
     expect(container.querySelector<HTMLElement>('#upload-entries .source-toggle')
       ?.dataset.enabled).toBe('true');
-    click('#save-settings');
+    click('#load-playlists');
     expect(storageMock.setPlaylists).toHaveBeenCalledWith([
       expect.objectContaining({ id: 'upload-source', source: 'upload' }),
     ]);
@@ -2322,7 +2384,7 @@ describe('Settings Xtream section', () => {
     expect(card.classList.contains('source-disabled')).toBe(true);
     expect(card.querySelector<HTMLElement>('.source-toggle')?.dataset.enabled).toBe('false');
 
-    click('#save-settings');
+    click('#load-playlists');
 
     const saved = storageMock.setPlaylists.mock.calls.at(-1)![0] as PlaylistEntry[];
     expect(saved[0].enabled).toBe(false);
@@ -2338,6 +2400,63 @@ describe('Settings Xtream section', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].querySelector<HTMLInputElement>('.playlist-url')!.value).toBe('http://m3u');
     expect(container.querySelectorAll('#xtream-entries .xtream-card')).toHaveLength(1);
+  });
+
+  it('loads one account beside Remove, keeps its button busy across renders, then shows Update', async () => {
+    state.playlists = [{
+      id: 'x1', name: 'Alpha', url: 'http://host', source: 'xtream',
+      xtream: { username: 'u', password: 'p' },
+    }];
+    let finish!: () => void;
+    let loaded = false;
+    const hasLoaded = vi.spyOn(PlaylistService, 'hasLoadedSource').mockImplementation(() => loaded);
+    const loader = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));
+    settings.focusScope.dispose();
+    container.remove();
+    container = document.body.appendChild(document.createElement('div'));
+    settings = new Settings(container, onSave, onChannelsChanged, undefined, undefined, undefined, undefined, loader);
+    settings.render();
+    const button = () => container.querySelector<HTMLElement>('.load-xtream')!;
+    try {
+      expect(button().textContent).toBe('Load');
+      expect(button().nextElementSibling?.classList.contains('remove-xtream')).toBe(true);
+      click('.load-xtream');
+      click('.load-xtream');
+      expect(loader).toHaveBeenCalledExactlyOnceWith('x1');
+      expect(button().getAttribute('aria-busy')).toBe('true');
+      settings.render();
+      expect(button().textContent).toBe('Loading…');
+      expect(container.querySelector<HTMLInputElement>('.xtream-username')?.readOnly).toBe(true);
+      loaded = true;
+      finish();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(button().textContent).toBe('Update');
+      expect(button().getAttribute('aria-busy')).toBe('false');
+      expect(container.querySelector<HTMLInputElement>('.xtream-username')?.readOnly).toBe(false);
+    } finally {
+      hasLoaded.mockRestore();
+    }
+  });
+
+  it('keeps a failed account load retryable without loading a disabled account', async () => {
+    state.playlists = [{
+      id: 'x1', name: 'Alpha', url: 'http://host', source: 'xtream',
+      xtream: { username: 'u', password: 'p' },
+    }];
+    const loader = vi.fn(async () => { throw new Error('offline'); });
+    settings.focusScope.dispose();
+    container.remove();
+    container = document.body.appendChild(document.createElement('div'));
+    settings = new Settings(container, onSave, onChannelsChanged, undefined, undefined, undefined, undefined, loader);
+    settings.render();
+    click('.load-xtream');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(container.querySelector('.xtream-status')?.textContent).toContain('Unable to connect');
+    expect(container.querySelector('.load-xtream')?.textContent).toBe('Load');
+    state.playlists[0].enabled = false;
+    settings.render();
+    click('.load-xtream');
+    expect(loader).toHaveBeenCalledTimes(1);
   });
 
   it('shows the empty hint when no xtream accounts are configured', () => {
@@ -2422,7 +2541,7 @@ describe('Settings Xtream section', () => {
     fillCard(card, { name: 'My Provider', url: 'host:8080/', user: 'user1', pass: 'pass1' });
     const id = card.dataset.id!;
 
-    click('#save-settings');
+    click('#load-playlists');
 
     expect(storageMock.setPlaylists).toHaveBeenCalledWith([
       { id: 'p1', name: 'M3U', url: 'http://m3u', source: 'url' },
@@ -2444,7 +2563,7 @@ describe('Settings Xtream section', () => {
     }];
     settings.render();
     click('#xtream-output-x1 [data-dropdown-value="m3u8"]');
-    click('#save-settings');
+    click('#load-playlists');
     const saved = storageMock.setPlaylists.mock.calls.at(-1)![0] as PlaylistEntry[];
     expect(saved[0].xtream?.liveOutput).toBe('m3u8');
     expect(onSave).toHaveBeenCalledWith('reload');
@@ -2456,7 +2575,7 @@ describe('Settings Xtream section', () => {
     click('#add-xtream');
     const card = container.querySelector<HTMLElement>('#xtream-entries .xtream-card')!;
     fillCard(card, { url: 'http://host:8080', user: 'u', pass: 'p' });
-    click('#save-settings');
+    click('#load-playlists');
     const saved = storageMock.setPlaylists.mock.calls.at(-1)![0] as { name: string }[];
     expect(saved).toHaveLength(1);
     expect(saved[0].name).toBe('host:8080');
@@ -2470,7 +2589,7 @@ describe('Settings Xtream section', () => {
     const cards = container.querySelectorAll<HTMLElement>('#xtream-entries .xtream-card');
     fillCard(cards[0], { name: 'A', url: 'http://a:8080', user: 'u', pass: 'p' });
     fillCard(cards[1], { name: 'B', url: 'http://b:8080', user: 'u', pass: '' });
-    click('#save-settings');
+    click('#load-playlists');
     const saved = storageMock.setPlaylists.mock.calls.at(-1)![0] as { name: string; source?: string }[];
     const xtream = saved.filter(p => p.source === 'xtream');
     expect(xtream).toHaveLength(1);
@@ -2622,7 +2741,7 @@ describe('Settings Xtream Live categories', () => {
     // clearing origin-specific category filters would be correct in that case.
     card.querySelector<HTMLInputElement>('.xtream-url')!.value = 'http://host:8080/';
     card.querySelector<HTMLInputElement>('.xtream-password')!.value = 'p2';
-    click('#save-settings');
+    click('#load-playlists');
     expect(savedXtream()[0].xtream).toEqual({
       username: 'u', password: 'p2', liveOutput: 'ts', liveCategories,
     });
@@ -2632,7 +2751,7 @@ describe('Settings Xtream Live categories', () => {
     state.playlists = [account({ liveCategories: { mode: 'include', ids: ['c1'] } })];
     settings.render();
     container.querySelector<HTMLInputElement>('#xtream-entries .xtream-username')!.value = 'u2';
-    click('#save-settings');
+    click('#load-playlists');
     expect(savedXtream()[0].xtream).toEqual({ username: 'u2', password: 'p', liveOutput: 'ts' });
   });
 
@@ -2676,7 +2795,7 @@ describe('Settings Xtream Live categories', () => {
     });
     expect(button().querySelector('.xtream-live-categories-value')?.textContent).toBe('2 of 3');
 
-    click('#save-settings');
+    click('#load-playlists');
     expect(savedXtream()[0].xtream?.liveCategories).toEqual({ mode: 'include', ids: ['c1', 'c3'] });
     expect(onSave).toHaveBeenCalledWith('reload');
   });
@@ -2691,7 +2810,7 @@ describe('Settings Xtream Live categories', () => {
     Focus.owner()!.handle('yellow');
     container.querySelector<HTMLInputElement>('#xtream-entries .xtream-username')!.value = 'u2';
 
-    click('#save-settings');
+    click('#load-playlists');
 
     expect(savedXtream()[0].xtream?.liveCategories).toBeUndefined();
   });
@@ -2709,10 +2828,10 @@ describe('Settings Xtream Live categories', () => {
     click('#xtream-entries .xtream-live-categories');
     await flush();
     Focus.owner()!.handle('yellow');
-    expect(storageMock.setLiveCategorySnapshot).not.toHaveBeenCalled();
-    expect(snapshots.get('x1')).toEqual({ knownIds: ['c1'], announcedIds: [], counts: {} });
+    expect(storageMock.setLiveCategorySnapshot).toHaveBeenCalled();
+    expect(snapshots.get('x1')).toEqual({ knownIds: ['c1', 'c2', 'c3'], announcedIds: [], counts: {} });
 
-    click('#save-settings');
+    click('#load-playlists');
 
     expect(savedXtream()[0].xtream?.username).toBe('u2');
     expect(snapshots.get('x1')).toEqual({ knownIds: ['c1', 'c2', 'c3'], announcedIds: [], counts: {} });
@@ -2729,7 +2848,7 @@ describe('Settings Xtream Live categories', () => {
     await flush();
     Focus.owner()!.handle('yellow');
 
-    click('#save-settings');
+    click('#load-playlists');
 
     expect(storageMock.setPlaylists).toHaveBeenCalled();
     expect(storageMock.setLiveCategorySnapshot).not.toHaveBeenCalled();
@@ -2748,7 +2867,7 @@ describe('Settings Xtream Live categories', () => {
     expect(settings.isPromptVisible).toBe(false);
     expect(picker()!.classList.contains('hidden')).toBe(true);
     expect(storageMock.setLiveCategorySnapshot).not.toHaveBeenCalled();
-    click('#save-settings');
+    click('#load-playlists');
     expect(savedXtream()[0].xtream?.liveCategories).toEqual({ mode: 'include', ids: ['c1'] });
   });
 });

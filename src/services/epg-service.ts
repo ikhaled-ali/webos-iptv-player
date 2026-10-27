@@ -147,10 +147,16 @@ class EpgServiceImpl {
     return this.enqueue(() => this.runRestoreCached(sources, channels));
   }
 
+  updateSources(sources: EpgSource[], channels: Channel[]): Promise<void> {
+    return this.enqueue(() => this.runRestoreCached(sources, channels, true));
+  }
+
   private async runRestoreCached(
     sources: EpgSource[],
     channels?: Channel[],
+    preserveCurrent = false,
   ): Promise<void> {
+    const previousFilters = this.appliedFilters;
     this.playlistChannels = channels ?? null;
     this.setSources(sources);
     this.mappedChannelIds = this.collectMappedChannelIds();
@@ -159,6 +165,16 @@ class EpgServiceImpl {
     const revision = ++this.revision;
     const restored = await Promise.all(this.sources.map(async (source) => {
       try {
+        const state = preserveCurrent ? this.states.get(source.url) : undefined;
+        const filter = this.filterFor(source);
+        if (state && (!filter || !isEmptyFilter(filter))) {
+          this.setState(source.url, {
+            ...state,
+            data: filterParsedEpg(state.data, filter).data,
+            needsRefresh: state.needsRefresh || !sameFilter(previousFilters.get(source.url) ?? null, filter),
+          });
+          return { source, result: 'stale' as const };
+        }
         return {
           source,
           result: await this.restoreCachedSource(source, revision),
@@ -228,13 +244,14 @@ class EpgServiceImpl {
     this.publish(revision);
   }
 
-  refresh(onDataPublished?: () => void, force = false): Promise<boolean> {
-    return this.enqueue(() => this.runRefresh(onDataPublished, force));
+  refresh(onDataPublished?: () => void, force = false, playlistId?: string): Promise<boolean> {
+    return this.enqueue(() => this.runRefresh(onDataPublished, force, playlistId));
   }
 
   private async runRefresh(
     onDataPublished?: () => void,
     force = false,
+    playlistId?: string,
   ): Promise<boolean> {
     const refreshIntervalMs = StorageService.getEpgRefreshIntervalMs();
     const idle = new Set<string>();
@@ -256,6 +273,7 @@ class EpgServiceImpl {
       );
     }
     const sourcesToRefresh = this.sources.filter((source) => {
+      if (playlistId && !source.playlistIds.includes(playlistId)) return false;
       if (idle.has(source.url)) return false;
       const state = this.states.get(source.url);
       return force || !state || state.needsRefresh

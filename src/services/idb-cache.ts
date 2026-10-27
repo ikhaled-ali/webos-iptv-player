@@ -129,6 +129,7 @@ interface CachedPlaylistPayload {
   channels: Channel[];
   epgSources: EpgSource[];
   timestamp: number;
+  loadedSourceIds?: string[];
 }
 
 type StoredRecord = Record<string, unknown> & CacheFields;
@@ -147,6 +148,7 @@ let scheduledPlaylist: {
   refreshIntervalMs: number | null;
   sourceSignature: string;
   scheduledAt: number;
+  loadedSourceIds?: string[];
 } | null = null;
 let playlistFrame: number | null = null;
 let playlistGeneration = 0;
@@ -201,6 +203,7 @@ function persistScheduledPlaylist(): void {
     pending.timestamp,
     pending.sourceSignature,
     pending.refreshIntervalMs,
+    pending.loadedSourceIds,
   ).then((stored) => {
     if (stored) {
       for (const listener of playlistWriteListeners) listener();
@@ -277,8 +280,9 @@ export function scheduleCachedPlaylist(
   timestamp = Date.now(),
   refreshIntervalMs: number | null = CONFIG.DEFAULT_PLAYLIST_REFRESH_INTERVAL_MS,
   token: PlaylistCacheToken = playlistCacheToken(),
+  loadedSourceIds?: string[],
 ): void {
-  if (!channels.length) return;
+  if (!channels.length && !loadedSourceIds?.length) return;
   if (
     token.generation !== playlistGeneration
     || token.signature !== playlistSourceSignature()
@@ -301,6 +305,7 @@ export function scheduleCachedPlaylist(
     refreshIntervalMs,
     sourceSignature: token.signature,
     scheduledAt,
+    loadedSourceIds,
   };
   cancelPlaylistSchedule();
   log.info(
@@ -923,7 +928,9 @@ async function pruneBytes(targetBytes: number): Promise<number> {
   };
 
   addUntilTarget(candidates
-    .filter((item) => item.expiresAt !== null && item.expiresAt <= now)
+    // Even an overdue playlist avoids a full download on the next boot.
+    .filter((item) => item.category !== 'playlist'
+      && item.expiresAt !== null && item.expiresAt <= now)
     .sort((a, b) => (a.expiresAt ?? 0) - (b.expiresAt ?? 0)));
   for (const category of ['search', 'subtitle', 'catalog', 'epg', 'playlist'] as const) {
     addUntilTarget(candidates
@@ -1542,6 +1549,7 @@ export async function getCachedPlaylist(
   channels: Channel[];
   epgSources: EpgSource[];
   timestamp: number;
+  loadedSourceIds?: string[];
 } | null> {
   const raw = await readRaw(PLAYLIST_STORE, PLAYLIST_CACHE_KEY);
   if (raw) {
@@ -1549,7 +1557,7 @@ export async function getCachedPlaylist(
     const timestamp = cacheRecordTimestamp(raw);
     if (
       payload?.sourceSignature === playlistSourceSignature()
-      && payload.channels?.length
+      && (payload.channels?.length || payload.loadedSourceIds?.length)
       && (refreshIntervalMs === null || Date.now() - timestamp < refreshIntervalMs)
     ) {
       rememberRecord(payload.channels, { store: PLAYLIST_STORE, key: PLAYLIST_CACHE_KEY, timestamp });
@@ -1557,6 +1565,7 @@ export async function getCachedPlaylist(
         channels: payload.channels,
         epgSources: payload.epgSources ?? [],
         timestamp,
+        ...(payload.loadedSourceIds ? { loadedSourceIds: payload.loadedSourceIds } : {}),
       };
     }
   }
@@ -1585,8 +1594,9 @@ function setCachedPlaylistWithSignature(
   timestamp: number,
   sourceSignature: string,
   refreshIntervalMs: number | null,
+  loadedSourceIds?: string[],
 ): Promise<boolean> {
-  if (!channels.length) return Promise.resolve(false);
+  if (!channels.length && !loadedSourceIds?.length) return Promise.resolve(false);
   return putRaw(PLAYLIST_STORE, {
     key: PLAYLIST_CACHE_KEY,
     timestamp,
@@ -1595,6 +1605,7 @@ function setCachedPlaylistWithSignature(
       channels,
       epgSources,
       timestamp,
+      ...(loadedSourceIds ? { loadedSourceIds } : {}),
     } satisfies CachedPlaylistPayload,
     expiresAt: refreshIntervalMs === null ? null : timestamp + refreshIntervalMs,
   }).then((stored) => {

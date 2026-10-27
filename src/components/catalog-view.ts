@@ -800,6 +800,10 @@ export abstract class CatalogView<C extends { id: string; name: string }, I exte
     void this.open(account);
   }
 
+  invalidateAccount(id: string): void {
+    if (this.account?.id === id) this.browseStale = true;
+  }
+
   // Search is closing over this section: drop a deep-linked detail it left
   // here and show what it opened over.
   leaveDeepLink(): void {

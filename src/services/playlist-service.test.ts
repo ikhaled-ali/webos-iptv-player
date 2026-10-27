@@ -147,6 +147,58 @@ describe('PlaylistService.refresh', () => {
     expect(channels.map(c => c.name)).toEqual(['Alpha', 'Bravo', 'Charlie']);
   });
 
+  it('updates one source without fetching another or dropping its channels', async () => {
+    await PlaylistService.refresh();
+    fetchTextMock.mockClear();
+    fetchTextMock.mockResolvedValue('#EXTM3U\n#EXTINF:-1 tvg-id="a",Alpha Updated\nhttp://stream/u1');
+
+    await PlaylistService.refreshSource('a');
+
+    expect(fetchTextMock).toHaveBeenCalledTimes(1);
+    expect(fetchTextMock.mock.calls[0][0]).toBe('http://host1/p1.m3u');
+    expect(PlaylistService.channels.map(c => c.name)).toEqual(['Alpha Updated', 'Bravo', 'Charlie']);
+    expect(PlaylistService.channels[1].playlistIds).toEqual(['b']);
+    expect(cacheMock.scheduleCachedPlaylist.mock.lastCall?.[5]).toEqual(['a', 'b']);
+  });
+
+  it('preserves saved content and loaded state when an account update fails', async () => {
+    await PlaylistService.refresh();
+    const saved = PlaylistService.allChannels;
+    cacheMock.scheduleCachedPlaylist.mockClear();
+    fetchTextMock.mockRejectedValueOnce(new Error('offline'));
+
+    await expect(PlaylistService.refreshSource('a')).rejects.toThrow('Account refresh failed');
+
+    expect(PlaylistService.allChannels).toBe(saved);
+    expect(cacheMock.scheduleCachedPlaylist).not.toHaveBeenCalled();
+    expect(PlaylistService.hasLoadedSource(storageMock.getPlaylists()[0])).toBe(true);
+  });
+
+  it('loads just a new source and remembers which configured sources have content', async () => {
+    PlaylistService.reset();
+    await PlaylistService.refreshSource('a');
+    expect(fetchTextMock).toHaveBeenCalledTimes(1);
+    expect(PlaylistService.hasLoadedSource(storageMock.getPlaylists()[0])).toBe(true);
+    expect(PlaylistService.hasLoadedSource(storageMock.getPlaylists()[1])).toBe(false);
+    expect(cacheMock.scheduleCachedPlaylist.mock.lastCall?.[5]).toEqual(['a']);
+  });
+
+  it('discards an account update after its credentials change', async () => {
+    await PlaylistService.refresh();
+    const saved = PlaylistService.allChannels;
+    let finish!: (value: string) => void;
+    fetchTextMock.mockImplementationOnce(() => new Promise<string>(resolve => { finish = resolve; }));
+    const updating = PlaylistService.refreshSource('a');
+    storageMock.getPlaylists.mockReturnValue([
+      { id: 'a', name: 'P1', url: 'http://host/changed' },
+      { id: 'b', name: 'P2', url: 'http://host2/p2.m3u' },
+    ]);
+    finish(P1);
+    await expect(updating).rejects.toThrow('Account changed while loading');
+    expect(PlaylistService.allChannels).toBe(saved);
+    expect(PlaylistService.hasLoadedSource(storageMock.getPlaylists()[0])).toBe(false);
+  });
+
   it('schedules the next refresh from the last successful refresh time', async () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
     try {
@@ -316,6 +368,7 @@ describe('PlaylistService.refresh', () => {
       expect.any(Number),
       6 * 60 * 60 * 1000,
       { signature: 's1', generation: 0 },
+      ['a', 'b'],
     );
   });
 
@@ -1531,6 +1584,7 @@ describe('PlaylistService customization', () => {
       expect.any(Number),
       6 * 60 * 60 * 1000,
       { signature: 's1', generation: 0 },
+      ['a'],
     );
   });
 

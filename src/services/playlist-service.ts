@@ -5,6 +5,7 @@ import {
   type EpgSource,
   type ParsedPlaylist,
   type PlaylistTab,
+  type PlaylistEntry,
 } from '../types';
 import { fetchAndParseM3U } from '../parsers/m3u-loader';
 import type { M3ULoadProgress } from '../parsers/m3u-loader';
@@ -14,6 +15,7 @@ import {
   xtreamCatchupSource,
   xtreamLiveUrl,
   resolveXtreamLiveOutput,
+  normalizeXtreamLiveOutputPreference,
   type XtreamCredentials,
   type XtreamLiveOutput,
 } from '../utils/xtream-url';
@@ -72,6 +74,16 @@ export interface LiveCategoryNotice {
 
 interface PlaylistRefreshOptions {
   preserveOnFailure?: boolean;
+  sourceId?: string;
+}
+
+function sourceContentKey(source: Partial<PlaylistEntry>): string {
+  return JSON.stringify([
+    source.url, source.source ?? 'url', source.enabled !== false, source.revision,
+    source.xtream && [source.xtream.username, source.xtream.password,
+      normalizeXtreamLiveOutputPreference(source.xtream.liveOutput),
+      normalizeLiveCategoryFilter(source.xtream.liveCategories)],
+  ]);
 }
 
 function usableDirectSource(value: string): string {
@@ -154,6 +166,17 @@ class PlaylistServiceImpl {
   private failedSourceIds = new Set<string>();
   private liveCategoryNotices: LiveCategoryNotice[] = [];
   private refreshTimestamp: number | null = null;
+  private loadedSources = new Map<string, string>();
+
+  hasLoadedSource(source: Partial<PlaylistEntry>): boolean {
+    return !!source.id && this.loadedSources.get(source.id) === sourceContentKey(source);
+  }
+
+  async refreshSource(id: string): Promise<Channel[]> {
+    const result = await this.refresh(undefined, { sourceId: id, preserveOnFailure: true });
+    if (this.failedSourceIds.has(id)) throw new Error('Account refresh failed');
+    return result;
+  }
 
   hasLiveCategoryNotices(): boolean {
     return this.currentLiveCategoryNotices().length > 0;
@@ -239,6 +262,7 @@ class PlaylistServiceImpl {
    * list view.
    */
   reset(): void {
+    this.loadedSources.clear();
     this.failedSourceIds.clear();
     this.refreshTimestamp = null;
     this.allChannels = [];
@@ -277,6 +301,10 @@ class PlaylistServiceImpl {
     // background instead of blocking startup on a full download.
     const cached = await getCachedPlaylist(null);
     if (cached) {
+      const loadedIds = new Set(cached.loadedSourceIds ?? enabledSources.map(source => source.id));
+      this.loadedSources = new Map(enabledSources
+        .filter(source => loadedIds.has(source.id))
+        .map(source => [source.id, sourceContentKey(source)]));
       this.failedSourceIds.clear();
       this.refreshTimestamp = cached.timestamp;
       const channelsNeedFiltering = cached.channels
@@ -316,7 +344,9 @@ class PlaylistServiceImpl {
   ): Promise<Channel[]> {
     const done = log.time('refresh');
     const cacheToken = playlistCacheToken();
-    const playlists = StorageService.getPlaylists().filter(isSourceEnabled);
+    const enabled = StorageService.getPlaylists().filter(isSourceEnabled);
+    const playlists = options.sourceId ? enabled.filter(source => source.id === options.sourceId) : enabled;
+    if (options.sourceId && !playlists.length) throw new Error('Account is unavailable');
     if (!playlists.length) {
       log.info('No playlist sources enabled');
       this.reset();
@@ -325,9 +355,9 @@ class PlaylistServiceImpl {
       return [];
     }
 
-    const allChannels: Channel[] = [];
+    let allChannels: Channel[] = [];
     const byUrl = new Map<string, Channel>();
-    const epgSources: EpgSource[] = [];
+    let epgSources: EpgSource[] = [];
     let failedPlaylists = 0;
     const failedSourceIds = new Set<string>();
     let completedProcessed = 0;
@@ -597,7 +627,15 @@ class PlaylistServiceImpl {
       plDone();
     }
 
-    this.failedSourceIds = failedSourceIds;
+    const currentToken = playlistCacheToken();
+    if (options.sourceId && (currentToken.generation !== cacheToken.generation
+      || !StorageService.getPlaylists().some(source => source.id === options.sourceId
+        && sourceContentKey(source) === sourceContentKey(playlists[0])))) {
+      throw new Error('Account changed while loading');
+    }
+    this.failedSourceIds = options.sourceId
+      ? new Set([...Array.from(this.failedSourceIds).filter(id => id !== options.sourceId), ...failedSourceIds])
+      : failedSourceIds;
     if (failedPlaylists && options.preserveOnFailure) {
       log.warn(
         'Keeping the current channel list because an automatic refresh was incomplete',
@@ -609,18 +647,54 @@ class PlaylistServiceImpl {
       return this.channels;
     }
     const refreshTimestamp = Date.now();
+    if (options.sourceId) {
+      const refreshedChannels = allChannels;
+      const refreshedEpg = epgSources;
+      allChannels = [];
+      epgSources = [];
+      const merged = new Map<string, Channel>();
+      for (const source of StorageService.getPlaylists().filter(isSourceEnabled)) {
+        const selected = source.id === options.sourceId;
+        if (!selected && !this.hasLoadedSource(source)) continue;
+        for (const channel of selected ? refreshedChannels : this.allChannels) {
+          if (!channel.playlistIds.includes(source.id)) continue;
+          const existing = merged.get(channel.url);
+          if (existing) existing.playlistIds.push(source.id);
+          else {
+            const copy = { ...channel, playlistIds: [source.id] };
+            merged.set(copy.url, copy);
+            allChannels.push(copy);
+          }
+        }
+        for (const epg of selected ? refreshedEpg : this.epgSources) {
+          if (!epg.playlistIds.includes(source.id)) continue;
+          const existing = epgSources.find(candidate => candidate.url === epg.url);
+          if (existing) existing.playlistIds.push(source.id);
+          else epgSources.push({ ...epg, playlistIds: [source.id] });
+        }
+      }
+    } else {
+      this.loadedSources.clear();
+    }
+    for (const source of playlists) {
+      if (!failedSourceIds.has(source.id)) this.loadedSources.set(source.id, sourceContentKey(source));
+    }
+    const currentSources = StorageService.getPlaylists().filter(isSourceEnabled);
+    this.loadedSources = new Map(Array.from(this.loadedSources)
+      .filter(([id, key]) => currentSources.some(source => source.id === id && sourceContentKey(source) === key)));
     this.allChannels = allChannels;
     this.epgSources = epgSources;
     // Customization preserves source names/groups on each channel, so cached
     // channels can be re-customized after an edit without another network load.
     if (!failedPlaylists) {
-      this.refreshTimestamp = refreshTimestamp;
+      this.refreshTimestamp = options.sourceId ? this.refreshTimestamp ?? refreshTimestamp : refreshTimestamp;
       scheduleCachedPlaylist(
         allChannels,
         epgSources,
-        refreshTimestamp,
+        this.refreshTimestamp,
         StorageService.getPlaylistRefreshIntervalMs(),
-        cacheToken,
+        options.sourceId ? currentToken : cacheToken,
+        Array.from(this.loadedSources.keys()),
       );
     } else {
       this.refreshTimestamp = null;

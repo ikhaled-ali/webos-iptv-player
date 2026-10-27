@@ -588,7 +588,7 @@ test('Settings enters edit mode, reveals hidden channels, and resets everything'
 
   // Show hidden reveals the hidden channel in the normal list, marked.
   await page.locator('#show-hidden [data-value="on"]').click();
-  await page.locator('#save-settings').click();
+  await page.locator('#cancel-settings').click();
   await expect(page.locator('#view-channels')).toBeVisible();
   await expect(page.locator('.channel-main .channel-item')).toHaveCount(4);
   await expect(page.locator('.channel-main .hidden-entry')).toHaveCount(1);
@@ -599,7 +599,7 @@ test('Settings enters edit mode, reveals hidden channels, and resets everything'
   await page.locator('#reset-customization').click();
   await expect(page.locator('.confirmation-prompt')).toBeVisible();
   await page.locator('.confirmation-btn').first().click();
-  await page.locator('#save-settings').click();
+  await page.locator('#cancel-settings').click();
   await expect(page.locator('#view-channels')).toBeVisible();
   await expect(page.locator('.channel-main .hidden-entry')).toHaveCount(0);
   await expect(page.locator('.channel-main .channel-item')).toHaveCount(4);

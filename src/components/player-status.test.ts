@@ -2,7 +2,17 @@
 import { describe, expect, it } from 'vitest';
 import { PlayerStatus } from './player-status';
 
-describe('centered playback status', () => {
+describe('playback status', () => {
+  it('keeps the status before the OSD so visible messages can reserve space', () => {
+    const container = document.createElement('div');
+    const osd = document.createElement('div');
+    osd.className = 'player-osd';
+    container.appendChild(osd);
+    new PlayerStatus(container);
+    expect(container.firstElementChild?.classList.contains('player-status')).toBe(true);
+    expect(container.lastElementChild).toBe(osd);
+  });
+
   it('shows each pending state and clears when playback resumes', () => {
     const container = document.createElement('div');
     const status = new PlayerStatus(container);

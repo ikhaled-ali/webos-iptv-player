@@ -27,7 +27,7 @@ test('stale cached EPG stays visible while a refresh is in flight', async ({ pag
   await routePlaylist(page);
   await seedPlaylist(page);
   await page.clock.setFixedTime(now);
-  await page.route('**/guide.xml', async (route) => {
+  await page.route(epgUrl, async (route) => {
     epgRequests++;
     if (epgRequests > 1) await refreshGate;
     await route.fulfill({
@@ -42,33 +42,29 @@ test('stale cached EPG stays visible while a refresh is in flight', async ({ pag
     const nowPlaying = page.locator('.channel-main .channel-item').first().locator('.channel-now');
     await expect(nowPlaying).toHaveText('Cached Show');
 
-    await page.evaluate(({ url, timestamp }) => new Promise<void>((resolve, reject) => {
+    await expect.poll(() => page.evaluate((timestamp) => new Promise<boolean>((resolve, reject) => {
       const open = indexedDB.open('iptv');
       open.onerror = () => reject(open.error);
       open.onsuccess = () => {
         const db = open.result;
         const tx = db.transaction('epg-cache', 'readwrite');
         const store = tx.objectStore('epg-cache');
-        const read = store.get(url);
+        const read = store.openCursor();
+        let stored = false;
         read.onerror = () => reject(read.error);
         read.onsuccess = () => {
-          if (!read.result) {
-            reject(new Error('EPG cache entry was not stored'));
-            return;
-          }
-          store.put({ ...read.result, timestamp });
+          if (!read.result) return;
+          stored = true;
+          read.result.update({ ...read.result.value, timestamp });
         };
         tx.oncomplete = () => {
           db.close();
-          resolve();
+          resolve(stored);
         };
         tx.onerror = () => reject(tx.error);
         tx.onabort = () => reject(tx.error);
       };
-    }), {
-      url: epgUrl,
-      timestamp: now.getTime() - 24 * 60 * 60 * 1000,
-    });
+    }), now.getTime() - 24 * 60 * 60 * 1000)).toBe(true);
 
     await page.reload();
     await expect.poll(() => epgRequests).toBe(2);
@@ -281,7 +277,7 @@ test.describe('EPG time zone', () => {
     await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 406, bubbles: true })));
     await expect(page.locator('#view-settings')).toBeVisible();
     await page.locator('#tz-mode [data-value="feed"]').click();
-    await page.locator('#save-settings').click();
+    await page.locator('#cancel-settings').click();
     await expect(page.locator('#view-channels')).toBeVisible();
 
     await openEpg(page);

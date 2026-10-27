@@ -68,9 +68,28 @@ function ensureActive(signal?: AbortSignal): void {
   }
 }
 
-function ensureCatalogActive(generation: number, signal?: AbortSignal): void {
+interface CatalogGeneration {
+  global: number;
+  account: string;
+  revision: number;
+}
+
+const accountRevisions = new Map<string, number>();
+const accountRefreshes = new Map<string, Promise<boolean>>();
+
+function generationFor(key: string): CatalogGeneration {
+  const account = key.split('|')[0];
+  return { global: catalogCacheGeneration(), account, revision: accountRevisions.get(account) ?? 0 };
+}
+
+function generationCurrent(generation: CatalogGeneration): boolean {
+  return generation.global === catalogCacheGeneration()
+    && generation.revision === (accountRevisions.get(generation.account) ?? 0);
+}
+
+function ensureCatalogActive(generation: CatalogGeneration, signal?: AbortSignal): void {
   ensureActive(signal);
-  if (generation !== catalogCacheGeneration()) {
+  if (!generationCurrent(generation)) {
     throw new XtreamRequestError('cancelled', 'Catalog cache was cleared');
   }
 }
@@ -152,13 +171,13 @@ function refreshListInBackground<T>(
 ): void {
   if (queuedRefreshKeys.has(key)) return;
   queuedRefreshKeys.add(key);
-  const generation = catalogCacheGeneration();
+  const generation = generationFor(key);
   refreshQueue.push(async () => {
     try {
-      if (generation !== catalogCacheGeneration()) return;
+      if (!generationCurrent(generation)) return;
       const result = listResult(await refetch(undefined, cached));
       const { data } = result;
-      if (generation !== catalogCacheGeneration()) return;
+      if (!generationCurrent(generation)) return;
       if (!data.length && !result.state && !allowEmpty) {
         log.warn(
           'Catalog refresh was empty; keeping stale data',
@@ -174,7 +193,7 @@ function refreshListInBackground<T>(
         const accepted = await setCachedCatalogState(
           key, cached.timestamp, result.state, StorageService.getXtreamCatalogRefreshIntervalMs(),
         );
-        if (generation !== catalogCacheGeneration()) return;
+        if (!generationCurrent(generation)) return;
         if (!accepted) {
           log.debug('Catalog freshness update was not accepted', key);
           return;
@@ -184,11 +203,11 @@ function refreshListInBackground<T>(
       }
       await storeList(key, result);
       log.debug('refreshed', key, `(${data.length})`);
-      if (generation !== catalogCacheGeneration()) return;
+      if (!generationCurrent(generation)) return;
       notifyListWritten(key);
       for (const listener of refreshListeners) listener(key);
     } catch (err) {
-      if (generation !== catalogCacheGeneration()) return;
+      if (!generationCurrent(generation)) return;
       log.warn(
         'Catalog refresh failed; keeping stale data',
         'event=xtream.catalog.stale',
@@ -212,14 +231,23 @@ async function cachedList<T>(
   refetch: RefetchList<T>,
   allowEmpty = false,
 ): Promise<T[]> {
-  const generation = catalogCacheGeneration();
+  const generation = generationFor(key);
   ensureCatalogActive(generation, signal);
   const cached = await getCachedCatalog<T[]>(key);
   ensureCatalogActive(generation, signal);
   if (cached) {
-    if (Date.now() >= listExpiresAt(cached)) refreshListInBackground(key, cached, refetch, allowEmpty);
+    if (!accountRefreshes.has(generation.account) && Date.now() >= listExpiresAt(cached)) {
+      refreshListInBackground(key, cached, refetch, allowEmpty);
+    }
     log.debug('hit', key, `(${cached.data.length})`);
     return cached.data;
+  }
+  const pending = accountRefreshes.get(generation.account);
+  if (pending) {
+    await pending;
+    ensureCatalogActive(generation, signal);
+    const restored = await getCachedCatalog<T[]>(key);
+    if (restored) return restored.data;
   }
   const result = listResult(await refetch(signal));
   const { data } = result;
@@ -366,10 +394,11 @@ type CatalogPartition<T> =
   | { ok: false; data: T[]; available: boolean; error: unknown; deferred: boolean };
 
 interface CatalogLoadContext {
-  generation: number;
+  generation: CatalogGeneration;
   signal: AbortSignal | undefined;
   requestSignal: AbortSignal;
   timedOut: () => boolean;
+  force?: boolean;
 }
 
 const partitionQueue: Array<() => void> = [];
@@ -422,7 +451,7 @@ async function fetchPartition<T>(
   const { generation, signal } = context;
   const cached = await getCachedCatalog<T[]>(key);
   ensureCatalogActive(generation, signal);
-  if (cached && fresh(cached.timestamp)) {
+  if (!context.force && cached && fresh(cached.timestamp)) {
     return { ok: true, data: cached.data, expiresAt: listExpiresAt(cached) };
   }
   const stale = cached?.data ?? previous;
@@ -474,6 +503,7 @@ async function fetchWholeCatalog<T extends { categoryId: string }>(
   fetchCategories: (signal?: AbortSignal) => Promise<Array<{ id: string }>>,
   itemId: (item: T) => string,
   previous?: T[],
+  force = false,
 ): Promise<CatalogListResult<T>> {
   ensureActive(signal);
   const controller = new AbortController();
@@ -487,7 +517,8 @@ async function fetchWholeCatalog<T extends { categoryId: string }>(
   signal?.addEventListener('abort', cancel);
   const timer = setTimeout(expire, CONFIG.XTREAM.CATALOG_LOAD_BUDGET_MS);
   const context: CatalogLoadContext = {
-    generation: catalogCacheGeneration(),
+    force,
+    generation: generationFor(accountId),
     signal,
     requestSignal: controller.signal,
     timedOut: () => {
@@ -546,7 +577,7 @@ async function fetchCatalogPartitions<T extends { categoryId: string }>(
     fetchPartition(
       `${accountId}|${categoryResource}`, context, fetchCategories,
       oldCategories.length ? oldCategories : undefined,
-      true,
+      !context.force,
     ),
     getCachedCatalog<{ nextCategory: string }>(cursorKey),
   ]);
@@ -687,4 +718,42 @@ export function loadAllSeries(
       );
     },
   );
+}
+
+export function refreshAccountCatalog(account: PlaylistEntry): Promise<boolean> {
+  const pending = accountRefreshes.get(account.id);
+  if (pending) return pending;
+  accountRevisions.set(account.id, (accountRevisions.get(account.id) ?? 0) + 1);
+  const task = runAccountCatalogRefresh(account);
+  accountRefreshes.set(account.id, task);
+  const done = (): void => { accountRefreshes.delete(account.id); };
+  void task.then(done, done);
+  return task;
+}
+
+async function runAccountCatalogRefresh(account: PlaylistEntry): Promise<boolean> {
+  const generation = generationFor(account.id);
+  const client = clientFor(account);
+  const refresh = async <T extends { categoryId: string }>(
+    resource: 'vod_all' | 'series_all',
+    fetchItems: (id: string, signal?: AbortSignal) => Promise<T[]>,
+    fetchCategories: (signal?: AbortSignal) => Promise<Array<{ id: string }>>,
+    itemId: (item: T) => string,
+  ): Promise<boolean> => {
+    const key = `${account.id}|${resource}`;
+    const cached = await getCachedCatalog<T[]>(key);
+    const result = await fetchWholeCatalog(
+      account.id, resource, undefined, fetchItems, fetchCategories, itemId, cached?.data, true,
+    );
+    ensureCatalogActive(generation);
+    await storeList(key, result);
+    notifyListWritten(key);
+    for (const listener of refreshListeners) listener(key);
+    return result.state?.complete !== false;
+  };
+  const results = await Promise.all([
+    refresh('vod_all', client.getVodStreams, client.getVodCategories, item => item.streamId),
+    refresh('series_all', client.getSeries, client.getSeriesCategories, item => item.seriesId),
+  ]);
+  return results.every(Boolean);
 }

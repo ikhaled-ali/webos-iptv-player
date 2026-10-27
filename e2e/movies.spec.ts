@@ -307,7 +307,7 @@ test('Back from a detail finds browse scrolled and focused as it was left', asyn
   expect(back).toEqual({ focused: true, scrollLeft: left });
 });
 
-test('VOD playback suppresses the live channel sidebar and shows a VOD-only menu at the pointer edges', async ({ page }) => {
+test('VOD playback suppresses the live channel sidebar and opens its VOD-only menu with Right', async ({ page }) => {
   await seedMovies(page);
   await routeLiveManifest(page);
   // Keep VOD alive in the player: neuter the <video> so the empty mock movie
@@ -330,24 +330,43 @@ test('VOD playback suppresses the live channel sidebar and shows a VOD-only menu
   // being paused, stays up) so the pointer probe isn't racing the transition.
   await expect(page.locator('#player-osd .osd-channel-name')).toBeVisible();
 
-  // The left edge opens the channel switcher during live playback; VOD has no
-  // channels, so the pointer must not summon it. Check once (not a retrying
+  // VOD has no channels, so the pointer must not summon it. Check once (not a retrying
   // wait) — the sidebar auto-hides, which would mask a wrong show.
   await page.mouse.move(10, 540);
   await page.waitForTimeout(200);
   expect(await page.locator('#player-sidebar.visible').count()).toBe(0);
 
-  // The right edge opens the VOD menu with playback speed, but never the live
+  // Right opens the VOD menu with playback speed, but never the live
   // channel rows or the "Playing:" channel name.
   await page.mouse.move(1900, 540);
+  await expect(page.locator('#player-menu')).not.toBeVisible();
+  await page.keyboard.press('ArrowRight');
   const menu = page.locator('#player-menu');
   await expect(menu).toBeVisible();
-  await expect(menu).toContainText('Title Info');
+  await expect(menu).toContainText('Quality');
   await expect(menu).toContainText('Settings');
   await expect(menu).toContainText('Playback Speed');
   expect(await menu.textContent()).not.toContain('Program Guide');
   expect(await menu.textContent()).not.toContain('Toggle Favorite');
   expect(await menu.textContent()).not.toContain('Playing:');
+
+  await page.keyboard.press('ArrowLeft');
+  await expect(menu).not.toBeVisible();
+  const video = page.locator('#video-player');
+  await video.evaluate((element: HTMLVideoElement) => {
+    Object.defineProperty(element, 'duration', { configurable: true, value: 3600 });
+    element.currentTime = 120;
+  });
+  await page.keyboard.press('ArrowRight');
+  await expect(menu).not.toBeVisible();
+  expect(await video.evaluate((element: HTMLVideoElement) => element.currentTime)).toBe(130);
+  await page.keyboard.press('ArrowLeft');
+  expect(await video.evaluate((element: HTMLVideoElement) => element.currentTime)).toBe(120);
+  await video.evaluate(element => {
+    Object.defineProperty(element, 'duration', { configurable: true, value: NaN });
+  });
+  await page.keyboard.press('ArrowRight');
+  await expect(menu).toBeVisible();
 
   await menu.locator('[data-menu-action="__speed_open__"]').click();
   await menu.locator('[data-playback-rate="1.5"]').click();
@@ -384,6 +403,8 @@ test('a VOD sidecar subtitle creates its application track when selected', async
 
   // Open the right-edge menu into the Subtitles sub-menu; the sidecar is listed.
   await page.mouse.move(1900, 540);
+  await expect(page.locator('#player-menu')).not.toBeVisible();
+  await page.keyboard.press('ArrowRight');
   const menu = page.locator('#player-menu');
   await expect(menu).toBeVisible();
   await page.keyboard.press('ArrowDown'); // Title Info -> Settings
@@ -430,6 +451,8 @@ test('a VOD ASS sidecar renders through the assjs overlay when selected', async 
   // Open the right-edge menu into the Subtitles sub-menu; the ASS sidecar is listed
   // (it never becomes a native <track>, so this proves the synthetic-option path).
   await page.mouse.move(1900, 540);
+  await expect(page.locator('#player-menu')).not.toBeVisible();
+  await page.keyboard.press('ArrowRight');
   const menu = page.locator('#player-menu');
   await expect(menu).toBeVisible();
   await page.keyboard.press('ArrowDown'); // Title Info -> Settings

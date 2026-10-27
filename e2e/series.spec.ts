@@ -144,7 +144,7 @@ test('Back walks Series detail -> browse -> Live instead of ejecting', async ({ 
   await expect(page.locator('#view-channels')).toBeVisible();
 });
 
-test('episode playback suppresses the live channel sidebar and shows a VOD-only menu at the pointer edges', async ({ page }) => {
+test('episode playback suppresses the live channel sidebar and opens its VOD-only menu with Right', async ({ page }) => {
   await seedSeries(page);
   await routeLiveManifest(page);
   // Keep VOD alive in the player: neuter the <video> so the empty mock episode
@@ -171,19 +171,20 @@ test('episode playback suppresses the live channel sidebar and shows a VOD-only 
   // being paused, stays up) so the pointer probe isn't racing the transition.
   await expect(page.locator('#player-osd .osd-channel-name')).toBeVisible();
 
-  // The left edge opens the channel switcher during live playback; an episode
-  // has no channels, so the pointer must not summon it. Check once (not a
+  // An episode has no channels, so the pointer must not summon it. Check once (not a
   // retrying wait) — the sidebar auto-hides, which would mask a wrong show.
   await page.mouse.move(10, 540);
   await page.waitForTimeout(200);
   expect(await page.locator('#player-sidebar.visible').count()).toBe(0);
 
-  // The right edge opens the VOD menu for an episode too, including playback
+  // Right opens the VOD menu for an episode too, including playback
   // speed but never the live channel rows or the "Playing:" channel name.
   await page.mouse.move(1900, 540);
+  await expect(page.locator('#player-menu')).not.toBeVisible();
+  await page.keyboard.press('ArrowRight');
   const menu = page.locator('#player-menu');
   await expect(menu).toBeVisible();
-  await expect(menu).toContainText('Title Info');
+  await expect(menu).toContainText('Quality');
   await expect(menu).toContainText('Settings');
   await expect(menu).toContainText('Playback Speed');
   expect(await menu.textContent()).not.toContain('Program Guide');

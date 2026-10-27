@@ -110,6 +110,33 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe('EpgService programme lookup', () => {
+  it('keeps uncached guides when one account is reconfigured and its guide update fails', async () => {
+    const sources = [source('http://a', ['a']), source('http://b', ['b'])];
+    const channels = [channel({ id: 'a', name: 'Alpha', playlistIds: ['a'] }),
+      channel({ id: 'b', name: 'Bravo', playlistIds: ['b'] })];
+    parseXMLTVMock.mockImplementation((url: string) => url === 'http://a'
+      ? parsed('a', 'Alpha', 'From A') : parsed('b', 'Bravo', 'From B'));
+    await EpgService.load(sources, channels);
+    await EpgService.updateSources(sources, channels);
+    fetchAndParseXMLTVMock.mockRejectedValueOnce(new Error('offline'));
+    expect(await EpgService.refresh(undefined, true, 'b')).toBe(false);
+    for (const [index, title] of ['From A', 'From B'].entries()) {
+      const id = EpgService.findChannelId(channels[index]);
+      expect(EpgService.getNowPlaying(id!)?.title).toBe(title);
+    }
+  });
+  it('forces only the selected account guide to refresh and keeps the other guide', async () => {
+    parseXMLTVMock.mockImplementation((url: string) => url === 'http://a'
+      ? parsed('a', 'Alpha', 'From A') : parsed('b', 'Bravo', 'From B'));
+    await EpgService.load([source('http://a', ['a']), source('http://b', ['b'])]);
+    fetchAndParseXMLTVMock.mockClear();
+
+    expect(await EpgService.refresh(undefined, true, 'a')).toBe(true);
+
+    expect(fetchAndParseXMLTVMock.mock.calls.map(call => call[0])).toEqual(['http://a']);
+    const id = EpgService.findChannelId(channel({ id: 'b', name: 'Bravo', playlistIds: ['b'] }));
+    expect(EpgService.getNowPlaying(id!)?.title).toBe('From B');
+  });
   beforeEach(() => {
     EpgService.programmes = {
       ch1: [

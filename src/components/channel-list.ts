@@ -345,14 +345,14 @@ export class ChannelList {
       this.groupVirtualizer.ensureVisible(focusedGroupPosition, groupViewportHeight);
     }
     const groupRange = this.groupVirtualizer.getRange(groups.length, groupViewportHeight);
+    const footer = this.editor.renderFooter(
+      this.currentGroup === 'builtin:favorites' && filteredChannels.length > 0,
+    ) || this.renderPreviewHints();
 
     morph(this.container, html`
       <div class="channel-view ${editing && !managingFavorites ? 'editing' : ''} ${
         managingFavorites ? 'favorite-managing' : ''} ${
-        !editing && this.currentGroup === 'builtin:favorites'
-          && (managingFavorites || filteredChannels.length)
-          ? 'has-channel-hints'
-          : ''}">
+        footer ? 'has-channel-hints' : ''}">
         <div class="sidebar" data-nav-container>
           <div class="sidebar-header">
             <div class="channel-count">${tp('channel.count', totalChannels)}</div>
@@ -427,9 +427,7 @@ export class ChannelList {
         }" data-key="channel-scroll-indicator" aria-hidden="true">
           <div class="channel-scroll-thumb"></div>
         </div>
-        ${this.editor.renderFooter(
-          this.currentGroup === 'builtin:favorites' && filteredChannels.length > 0,
-        ) || this.renderPreviewHints()}
+        ${footer}
         ${this.editor.renderGroupPicker()}
       </div>
     `);

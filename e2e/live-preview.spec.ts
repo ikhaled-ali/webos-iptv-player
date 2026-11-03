@@ -120,6 +120,47 @@ async function selectFirst(page: Page): Promise<void> {
   await expect(page.locator('#view-player')).toBeHidden();
 }
 
+for (const state of ['ready', 'active'] as const) {
+  for (const input of ['wheel', 'keys'] as const) {
+    test(`the last channel clears the hints bar with the preview ${state} using ${input}`, async ({ page }) => {
+      const playlist = ['#EXTM3U', ...Array.from({ length: 40 }, (_, index) => [
+        `#EXTINF:-1 tvg-id="ch${index + 1}" group-title="Group 1",ch${index + 1}`,
+        `http://host/ch${index + 1}.m3u8`,
+      ]).flat()].join('\n');
+      await setup(page, { playlist, enabled: true });
+      if (state === 'active') await selectFirst(page);
+      await page.locator('[data-group="source:Group 1"]').click();
+      const main = page.locator('#channel-browser .channel-main');
+      const last = main.locator('[data-list-position="39"]');
+      if (input === 'wheel') {
+        await main.hover({ position: { x: 4, y: 10 } });
+        await page.mouse.wheel(0, 10000);
+      } else {
+        await page.keyboard.press('ArrowRight');
+        await expect(main.locator('[data-list-position="0"]')).toHaveClass(/\bfocused\b/);
+        for (let index = 1; index < 40; index++) {
+          await page.keyboard.press('ArrowDown');
+          await page.evaluate(() => new Promise(resolve => {
+            requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          }));
+        }
+        await expect(last).toHaveClass(/\bfocused\b/);
+      }
+      await expect(last).toBeAttached();
+
+      await expect.poll(async () => {
+        const row = await last.boundingBox();
+        const hints = await page.locator('#channel-browser .edit-hints').boundingBox();
+        return row && hints ? row.y + row.height - hints.y : Infinity;
+      }).toBeLessThanOrEqual(0);
+
+      const viewport = await main.boundingBox();
+      const hints = await page.locator('#channel-browser .edit-hints').boundingBox();
+      expect(viewport!.y + viewport!.height).toBeLessThanOrEqual(hints!.y);
+    });
+  }
+}
+
 async function snapshot(page: Page) {
   return page.evaluate(() => {
     const video = document.querySelector<HTMLVideoElement>('#video-player')!;

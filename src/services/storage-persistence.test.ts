@@ -382,4 +382,33 @@ describe('StorageService IndexedDB migration', () => {
     expect(watchKeys).not.toContain('watch:x1|series|s1');
     await Stored.clearUserData();
   });
+
+  it('keeps watched episodes and up-next entries across a relaunch', async () => {
+    localStorage.clear();
+    vi.resetModules();
+    const { StorageService: Stored } = await import('./storage-service');
+    await Stored.init();
+    await Stored.clearUserData();
+    await Stored.init();
+    const owner = { kind: 'series' as const, itemId: 's1' };
+    Stored.markEpisodeWatched('x1', 's1', 'e1');
+    Stored.setResume(resumeEntry({
+      kind: 'episode', itemId: 'e2', position: 0, duration: 0, upNext: true, watchlistOwner: owner,
+    }));
+    Stored.setResume(resumeEntry({ kind: 'episode', itemId: 'f1', watchlistOwner: { ...owner, itemId: 's2' } }));
+    Stored.clearSeriesResume('x1', 's2');
+    await Stored.flush();
+
+    vi.resetModules();
+    const { StorageService: Relaunched } = await import('./storage-service');
+    await Relaunched.init();
+    expect(Relaunched.getWatchedEpisodes('x1', 's1')).toEqual(['e1']);
+    expect(Relaunched.getSeriesResumeList('x1', 's1')).toEqual([
+      expect.objectContaining({ itemId: 'e2', upNext: true }),
+    ]);
+    expect(Relaunched.getSeriesResumeList('x1', 's2')).toEqual([]);
+    expect((await loadUserRecords('playback-progress')).map(item => item.key))
+      .toContain('watched:x1|s1');
+    await Relaunched.clearUserData();
+  });
 });

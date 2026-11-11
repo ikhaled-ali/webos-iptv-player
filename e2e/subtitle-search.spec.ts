@@ -1,4 +1,4 @@
-import { test, expect, routeLiveManifest, SAMPLE_M3U, enterTab, type Page } from './helpers';
+import { test, expect, routeLiveManifest, SAMPLE_M3U, enterTab, type Page, openPlayerMenu } from './helpers';
 import { seedXtream } from './fixtures/xtream';
 
 // Online-subtitle search for Xtream VOD. The player's "Search online…" subtitle
@@ -104,11 +104,9 @@ async function startVodPlayback(page: Page): Promise<void> {
 // Open the right-edge VOD menu, dive into Subtitles, and pick "Search online…"
 // to raise the search overlay; the menu closes as the overlay opens.
 async function openSearchOverlay(page: Page): Promise<void> {
-  await page.keyboard.press('ArrowRight');
+  await openPlayerMenu(page);
   const menu = page.locator('#player-menu');
-  await expect(menu).toBeVisible();
-  await page.keyboard.press('ArrowDown'); // Title Info -> Settings
-  await page.keyboard.press('ArrowDown'); // Settings -> Playback Speed
+  await page.keyboard.press('ArrowDown'); // Quality -> Playback Speed
   await page.keyboard.press('ArrowDown'); // Playback Speed -> Subtitles
   await page.keyboard.press('Enter');     // open the Subtitles sub-menu (focus lands on "Off")
   await expect(menu).toContainText('Search online');
@@ -277,7 +275,7 @@ test('the subtitle sync adjuster keeps the keys, and the screen edge keeps the m
   await startVodPlayback(page);
   const menu = page.locator('#player-menu');
   const settled = () => expect.poll(() => menu.evaluate((el) => el.getBoundingClientRect().right)).toBe(1920);
-  await page.keyboard.press('ArrowRight');
+  await openPlayerMenu(page);
   await expect(menu).toHaveClass(/visible/);
   await settled();
   await menu.locator('[data-menu-action="__subs_open__"]').click();
@@ -299,7 +297,7 @@ test('the subtitle sync adjuster keeps the keys, and the screen edge keeps the m
 
   await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 461, bubbles: true })));
   await expect(page.locator('#subtitle-offset')).toBeHidden();
-  await page.keyboard.press('ArrowRight');
+  await openPlayerMenu(page);
   await expect(menu).toHaveClass(/visible/);
   await expect(owner).toHaveAttribute('data-focus-scope', 'player.menu');
   await expect(page.locator('.focused')).toHaveCount(1);

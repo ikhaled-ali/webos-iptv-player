@@ -18,12 +18,10 @@ const MENU_ITEMS = [
   { action: 'red', color: 'red', labelKey: 'player.switchPlayer' },
   { action: 'green', color: 'green', labelKey: 'player.retry' },
   { action: 'yellow', color: 'yellow', labelKey: 'player.quality' },
-  { action: 'blue', color: 'blue', labelKey: 'common.settings' },
 ] as const;
 
 const VOD_MENU_ITEMS = [
   { action: 'yellow', color: 'yellow', labelKey: 'player.quality' },
-  { action: 'blue', color: 'blue', labelKey: 'common.settings' },
 ] as const;
 
 // Sentinel data-menu-action values for the non-color rows.

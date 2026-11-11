@@ -764,7 +764,7 @@ export class Search {
 
   private posterCell(name: string, poster: string): ReturnType<typeof html> {
     return poster
-      ? html`<img class="catalog-poster" src="${poster}" alt="" loading="lazy" onerror="this.style.display='none'">`
+      ? html`<img class="catalog-poster" src="${poster}" alt="" loading="lazy" decoding="async" onerror="this.style.display='none'">`
       : html`<div class="catalog-poster catalog-poster-empty">${name.charAt(0)}</div>`;
   }
 
@@ -1648,6 +1648,7 @@ export class Search {
     viewport: number,
   ): VirtualList {
     return new VirtualList({
+      revealMargin: CONFIG.NAVIGATION.REVEAL_MARGIN,
       itemSize,
       overscan,
       fallbackViewportSize: viewport,

@@ -28,7 +28,6 @@ html.q-no-flex-gap .loading-container > * + * { margin-top: 24px; }
 html.q-no-flex-gap .reminder-buttons > * + *, html.q-no-flex-gap .catchup-resume-buttons > * + *, html.q-no-flex-gap .confirmation-buttons > * + * { margin-left: 24px; }
 html.q-no-flex-gap .playlist-tabs > * + * { margin-left: 4px; }
 html.q-no-flex-gap .group-item > * + * { margin-left: 12px; }
-html.q-no-flex-gap .channel-list-scroll.recent-list > * + * { margin-top: 4px; }
 html.q-no-flex-gap .channel-item > * + * { margin-left: 16px; }
 html.q-no-flex-gap .edit-hints > * + * { margin-left: 24px; }
 html.q-no-flex-gap .edit-hint > * + * { margin-left: 8px; }
@@ -46,14 +45,15 @@ html.q-no-flex-gap .live-preview-controls > * + * { margin-left: 8px; }
 html.q-no-flex-gap .live-preview-program > * + * { margin-left: 18px; }
 html.q-no-flex-gap .live-preview-legend > * + * { margin-left: 8px; }
 html.q-no-flex-gap .live-preview-hint > * + * { margin-left: 8px; }
-html.q-no-flex-gap .osd-channel > * + * { margin-left: 16px; }
-html.q-no-flex-gap .osd-stream-info > * + * { margin-left: 8px; }
-html.q-no-flex-gap .osd-programme-detail > * + * { margin-left: 16px; }
-html.q-no-flex-gap .osd-programme-time > * + * { margin-left: 16px; }
+html.q-no-flex-gap .osd-live > * + * { margin-left: 24px; }
+html.q-no-flex-gap .osd-channel > * + * { margin-left: 12px; }
+html.q-no-flex-gap .osd-stream-info > * + * { margin-left: 12px; }
 html.q-no-flex-gap .osd-progress-row > * + * { margin-left: 12px; }
 html.q-no-flex-gap .osd-dvr-live > * + * { margin-left: 8px; }
-html.q-no-flex-gap .osd-next > * + * { margin-left: 12px; }
-html.q-no-flex-gap .osd-next-episode-actions > * + * { margin-left: 16px; }
+html.q-no-flex-gap .osd-actions > * + * { margin-left: 16px; }
+html.q-no-flex-gap .osd-vod-transport > * + * { margin-left: 20px; }
+html.q-no-flex-gap .osd-vod-aside > * + * { margin-left: 20px; }
+html.q-no-flex-gap .osd-vod-next > * + * { margin-left: 12px; }
 html.q-no-flex-gap .player-sidebar .sidebar-group-width-probe > * + * { margin-left: 10px; }
 html.q-no-flex-gap .player-sidebar .sidebar-channel-title > * + * { margin-left: 12px; }
 html.q-no-flex-gap .player-sidebar .sidebar-group-item > * + * { margin-left: 10px; }
@@ -120,7 +120,7 @@ html.q-no-flex-gap .reminder-day-cards > * + * { margin-top: 12px; }
 }
 html.q-no-flex-gap .reminder-manager-time > * + * { margin-left: 10px; }
 html.q-no-flex-gap .reminder-manager-empty > * + * { margin-top: 12px; }
-html.q-no-flex-gap .tab-bar-inner > * + * { margin-left: 32px; }
+html.q-no-flex-gap .tab-bar-inner > * + * { margin-left: 48px; }
 html.q-no-flex-gap .search-list > * + * { margin-top: 8px; }
 html.q-no-flex-gap .search-channel-row > * + * { margin-left: 24px; }
 html.q-no-flex-gap .search-program-list > * + * { margin-top: 8px; }

@@ -322,14 +322,14 @@ describe('Settings immediate changes', () => {
 
   it('does not preview on hover, focus, or one click; two clicks apply and save', () => {
     themeMock.previewTheme.mockClear();
-    const swatch = container.querySelector<HTMLElement>('[data-theme-id="arctic"]')!;
+    const swatch = container.querySelector<HTMLElement>('[data-theme-id="amethyst"]')!;
     swatch.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
-    click('[data-theme-id="arctic"]');
+    click('[data-theme-id="amethyst"]');
     expect(themeMock.previewTheme).not.toHaveBeenCalled();
     expect(state.theme).toBe('midnight');
-    click('[data-theme-id="arctic"]');
-    expect(themeMock.previewTheme).toHaveBeenCalledWith('arctic');
-    expect(state.theme).toBe('arctic');
+    click('[data-theme-id="amethyst"]');
+    expect(themeMock.previewTheme).toHaveBeenCalledWith('amethyst');
+    expect(state.theme).toBe('amethyst');
   });
 
   it('keeps an existing source while a required field is being replaced', () => {
@@ -1036,19 +1036,19 @@ describe('Settings theme picker', () => {
   });
 
   it('marks the saved theme active on open', () => {
-    state.theme = 'plum-night';
+    state.theme = 'ember';
     settings.render();
     const active = container.querySelectorAll('.theme-swatch.active');
     expect(active).toHaveLength(1);
-    expect(active[0].getAttribute('data-theme-id')).toBe('plum-night');
+    expect(active[0].getAttribute('data-theme-id')).toBe('ember');
   });
 
   it('never previews while hovering or leaving swatches', async () => {
     themeMock.previewTheme.mockClear();
-    const arctic = container.querySelector<HTMLElement>('[data-theme-id="arctic"]')!;
-    const amber = container.querySelector<HTMLElement>('[data-theme-id="vintage-amber"]')!;
-    arctic.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
-    arctic.dispatchEvent(new CustomEvent('nav:unhover', { bubbles: true }));
+    const amethyst = container.querySelector<HTMLElement>('[data-theme-id="amethyst"]')!;
+    const amber = container.querySelector<HTMLElement>('[data-theme-id="ember"]')!;
+    amethyst.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
+    amethyst.dispatchEvent(new CustomEvent('nav:unhover', { bubbles: true }));
     amber.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
     await Promise.resolve();
     expect(themeMock.previewTheme).not.toHaveBeenCalled();
@@ -1056,24 +1056,24 @@ describe('Settings theme picker', () => {
   });
 
   it('persists and applies the theme after two remote OK presses', () => {
-    const swatch = container.querySelector<HTMLElement>('[data-theme-id="arctic"]')!;
+    const swatch = container.querySelector<HTMLElement>('[data-theme-id="amethyst"]')!;
     swatch.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
     themeMock.previewTheme.mockClear();
     settings.handleAction('select');
     expect(themeMock.previewTheme).not.toHaveBeenCalled();
     settings.handleAction('select');
-    expect(state.theme).toBe('arctic');
-    expect(themeMock.previewTheme).toHaveBeenCalledWith('arctic');
+    expect(state.theme).toBe('amethyst');
+    expect(themeMock.previewTheme).toHaveBeenCalledWith('amethyst');
   });
 
   it('does not combine slow clicks, clicks on different themes, or pointer and remote input', () => {
     const now = vi.spyOn(Date, 'now');
     now.mockReturnValue(1000);
-    click('[data-theme-id="arctic"]');
+    click('[data-theme-id="amethyst"]');
     now.mockReturnValue(2000);
-    click('[data-theme-id="arctic"]');
+    click('[data-theme-id="amethyst"]');
     expect(state.theme).toBe('midnight');
-    click('[data-theme-id="vintage-amber"]');
+    click('[data-theme-id="ember"]');
     expect(state.theme).toBe('midnight');
     settings.handleAction('select');
     expect(state.theme).toBe('midnight');
@@ -1430,6 +1430,18 @@ describe('Settings Recently Watched clearing', () => {
       expect(storageMock.getResumeList).toHaveBeenLastCalledWith('x2');
       expect(storageMock.getWatchlist).toHaveBeenCalledWith('x2', 'vod');
       expect(storageMock.getWatchlist).toHaveBeenCalledWith('x2', 'series');
+    });
+
+    it('counts Continue Watching by title, one per series', () => {
+      const episode = (itemId: string, seriesId: string) => ({
+        accountId: 'x2', kind: 'episode', itemId, watchlistOwner: { kind: 'series', itemId: seriesId },
+      });
+      storageMock.getResumeList.mockReturnValueOnce([
+        episode('e2', 's1'), episode('e1', 's1'), episode('f1', 's2'), { accountId: 'x2', kind: 'vod', itemId: 'm1' },
+      ]);
+      settings.render();
+      const resume = container.querySelector('#clear-continue-watching')?.closest('.settings-item--action');
+      expect(resume?.textContent).toContain('"Account Bravo" (3).');
     });
 
     it('omits only concealed collection counts and retains account-wide clearing', () => {
@@ -1871,7 +1883,7 @@ describe('Settings.handleAction', () => {
   it('does not preview the hovered swatch when Settings gives the keys away from a field', () => {
     settings.render();
     const field = container.querySelector<HTMLInputElement>('#subdl-key')!;
-    const swatch = container.querySelector<HTMLElement>('.theme-swatch[data-theme-id="arctic"]')!;
+    const swatch = container.querySelector<HTMLElement>('.theme-swatch[data-theme-id="amethyst"]')!;
     hover(field);
     settings.handleAction('select');
     const before = settings.focusScope.focusKey;
@@ -1881,7 +1893,7 @@ describe('Settings.handleAction', () => {
     Focus.push(elsewhere);
     Focus.flush();
     expect(document.activeElement).not.toBe(field);
-    expect(themeMock.previewTheme).not.toHaveBeenCalledWith('arctic');
+    expect(themeMock.previewTheme).not.toHaveBeenCalledWith('amethyst');
     expect(settings.focusScope.focusKey).toBe(before);
     Focus.pop(elsewhere);
   });

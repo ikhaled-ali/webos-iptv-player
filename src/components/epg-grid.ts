@@ -83,15 +83,18 @@ export class EpgGrid {
   private resumePrompt = new CatchupResumePrompt('prompt.epg');
   private archiveLoadingKey = '';
   private readonly channelVirtualizer = new VirtualList({
+    revealMargin: CONFIG.NAVIGATION.REVEAL_MARGIN,
     itemSize: CHANNEL_ROW_SIZE,
     overscan: VIRTUAL_OVERSCAN,
     fallbackViewportSize: EPG_VIEWPORT_FALLBACK,
   });
   private readonly programmeVirtualizer = new VirtualList({
+    revealMargin: CONFIG.NAVIGATION.REVEAL_MARGIN,
     overscan: VIRTUAL_OVERSCAN,
     fallbackViewportSize: EPG_VIEWPORT_FALLBACK,
   });
   private readonly groupVirtualizer = new VirtualList({
+    revealMargin: CONFIG.NAVIGATION.REVEAL_MARGIN,
     itemSize: GROUP_ROW_SIZE,
     overscan: VIRTUAL_OVERSCAN,
     fallbackViewportSize: 400,
@@ -983,7 +986,8 @@ export class EpgGrid {
       if (this.scrollFrame !== null) return;
       this.scrollFrame = requestAnimationFrame(() => {
         this.scrollFrame = null;
-        this.render();
+        if (this.channelVirtualizer.rangeStale() || this.programmeVirtualizer.rangeStale()
+            || this.groupVirtualizer.rangeStale()) this.render();
       });
     }, true);
   }

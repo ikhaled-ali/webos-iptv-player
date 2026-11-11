@@ -9,6 +9,7 @@ import {
   measureRowTextFit,
   enterTab,
   SEARCH_M3U,
+  openPlayerMenu,
 } from './helpers';
 
 // The player view: playback start, sidebar, action menu, OSD, and live DVR.
@@ -579,18 +580,21 @@ test('the right-edge player menu opens and lists its color actions', async ({ pa
   await page.goto('/');
   await expect(page.locator('#view-channels')).toBeVisible();
 
-  // Enter the list and start playback, then ArrowRight opens the action menu.
+  // Enter the list and start playback, then the OSD's menu button opens the
+  // action menu; Right alone no longer does.
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
   await expect(page.locator('#view-player')).toBeVisible();
   await page.keyboard.press('ArrowRight');
+  await expect(page.locator('#player-menu')).not.toBeVisible();
+  await openPlayerMenu(page);
 
   const menu = page.locator('#player-menu');
   await expect(menu).toBeVisible();
-  await expect(menu.locator('.menu-item')).toHaveCount(4);
+  await expect(menu.locator('.menu-item')).toHaveCount(3);
   await expect(menu).toContainText('Switch player');
   await expect(menu).toContainText('Retry channel');
-  await expect(menu).toContainText('Settings');
+  await expect(menu).not.toContainText('Settings');
 
   // The first item is focused on open; Down moves focus to the second.
   const focused = menu.locator('.menu-item.focused');
@@ -653,7 +657,7 @@ test('the player menu reopens with one ring, on its first row', async ({ page })
 test('the player menu ring follows the pointer and the D-pad, and returns to the row it rests on', async ({ page }) => {
   await gotoLivePlayer(page);
   await page.mouse.move(960, 300);
-  await page.keyboard.press('ArrowRight');
+  await openPlayerMenu(page);
   const menu = page.locator('#player-menu');
   const rows = menu.locator('.menu-item');
   await expect(menu).toHaveClass(/visible/);
@@ -923,11 +927,11 @@ test('keeps pseudo-localized player menu labels within the panel', async ({ page
   await expect(search).toHaveAttribute('placeholder', /^\[!! /);
   await expect(search).toHaveCSS('text-overflow', 'ellipsis');
   await page.keyboard.press('ArrowRight');
-  await page.keyboard.press('ArrowRight');
+  await openPlayerMenu(page);
 
   const menu = page.locator('#player-menu');
   await expect(menu).toBeVisible();
-  await expect(menu.locator('.menu-item')).toHaveCount(4);
+  await expect(menu.locator('.menu-item')).toHaveCount(3);
   await expect(menu.locator('.menu-item').first()).toContainText('[!!');
   const menuWidth = await menu.evaluate(element => element.getBoundingClientRect().width);
   expect(menuWidth).toBeGreaterThan(340);
@@ -957,9 +961,8 @@ test('a long player-menu list scrolls with the Magic-Remote wheel, not the chann
   await expect(page.locator('#view-player')).toBeVisible();
   await expect(page.locator('.osd-channel-number')).toHaveText('1');
 
-  await page.keyboard.press('ArrowRight');
+  await openPlayerMenu(page);
   const menu = page.locator('#player-menu');
-  await expect(menu).toBeVisible();
 
   // Stub a long list (clone the first row 30×) so the container overflows.
   const list = menu.locator('.menu-items');

@@ -2,6 +2,8 @@ export interface VirtualListOptions {
   itemSize?: number;
   overscan: number;
   fallbackViewportSize: number;
+  // ensureVisible's room around the item when a call gives none.
+  revealMargin?: number;
 }
 
 export interface VirtualRange {
@@ -12,10 +14,14 @@ export interface VirtualRange {
 export class VirtualList {
   private offset = 0;
   private leading = 0;
+  private lastRange: VirtualRange | null = null;
+  private lastCount = 0;
+  private lastViewport = 0;
   private readonly itemSize: number | null;
   private sizes = new Float64Array(0);
   private offsets = new Float64Array(1);
   private readonly overscan: number;
+  private readonly revealMargin: number;
   readonly fallbackViewportSize: number;
 
   constructor(options: VirtualListOptions) {
@@ -28,6 +34,7 @@ export class VirtualList {
     }
     this.itemSize = options.itemSize ?? null;
     this.overscan = options.overscan;
+    this.revealMargin = Math.max(0, options.revealMargin ?? 0);
     this.fallbackViewportSize = options.fallbackViewportSize;
   }
 
@@ -89,6 +96,40 @@ export class VirtualList {
   }
 
   getRange(itemCount: number, viewportSize = this.fallbackViewportSize): VirtualRange {
+    const range = this.computeRange(itemCount, viewportSize);
+    this.lastRange = range;
+    this.lastCount = itemCount;
+    this.lastViewport = viewportSize;
+    return range;
+  }
+
+  /** Whether the viewport has scrolled past the window the last getRange()
+   *  returned. While the overscan still covers what is on screen, a scroll
+   *  needs no render. */
+  rangeStale(): boolean {
+    const last = this.lastRange;
+    if (!last) return true;
+    const count = this.itemSize === null
+      ? Math.min(Math.max(0, this.lastCount), this.offsets.length - 1)
+      : Math.max(0, this.lastCount);
+    if (count === 0) return last.end !== 0;
+    const viewStart = Math.max(0, this.viewStart);
+    const viewEnd = this.viewStart + this.lastViewport;
+    let first: number;
+    let end: number;
+    if (this.itemSize === null) {
+      first = this.itemAtOffset(Math.min(viewStart, this.offsets[count]), count);
+      end = this.firstOffsetAtOrAfter(viewEnd, count);
+    } else {
+      first = Math.floor(viewStart / this.itemSize);
+      end = Math.ceil(viewEnd / this.itemSize);
+    }
+    first = Math.min(first, count - 1);
+    end = Math.min(Math.max(end, first + 1), count);
+    return first < last.start || end > last.end;
+  }
+
+  private computeRange(itemCount: number, viewportSize: number): VirtualRange {
     if (this.itemSize === null) return this.getVariableRange(itemCount, viewportSize);
     const count = Math.max(0, itemCount);
     const visibleItems = Math.max(1, Math.ceil(viewportSize / this.itemSize));
@@ -106,7 +147,12 @@ export class VirtualList {
     return this.offsets[Math.min(Math.max(0, index), this.offsets.length - 1)];
   }
 
-  ensureVisible(index: number, viewportSize = this.fallbackViewportSize): boolean {
+  // `margin` keeps that much room between the item and the viewport edge.
+  ensureVisible(
+    index: number,
+    viewportSize = this.fallbackViewportSize,
+    margin = this.revealMargin,
+  ): boolean {
     if (index < 0) return false;
     const itemStart = this.getItemOffset(index);
     const itemEnd = this.itemSize !== null
@@ -115,8 +161,10 @@ export class VirtualList {
     if (itemEnd <= itemStart) return false;
     // Compare in container coordinates so the leading content counts against
     // the viewport instead of leaving rows it covers inside the range.
-    const start = this.leading + itemStart;
-    const end = this.leading + itemEnd;
+    // A margin past half the viewport would never let the item settle.
+    const room = Math.max(0, Math.min(margin, (viewportSize - (itemEnd - itemStart)) / 2));
+    const start = this.leading + itemStart - room;
+    const end = this.leading + itemEnd + room;
     let nextOffset = this.offset;
     if (start < nextOffset) {
       nextOffset = start;

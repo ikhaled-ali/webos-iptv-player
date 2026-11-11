@@ -11,6 +11,7 @@ import {
   StorageService,
   XTREAM_CATALOG_REFRESH_HOUR_OPTIONS,
 } from '../services/storage-service';
+import { latestPerSeries } from '../utils/vod-progress';
 import { EpgService } from '../services/epg-service';
 import { ChannelCustomizationService } from '../services/channel-customization';
 import { PlaylistService } from '../services/playlist-service';
@@ -694,7 +695,7 @@ export class Settings {
     let count: number;
     let concealed: boolean;
     if (kind === 'continue') {
-      const entries = StorageService.getResumeList(account.id);
+      const entries = latestPerSeries(StorageService.getResumeList(account.id));
       count = entries.length;
       concealed = entries.some(isResumeConcealed);
     } else {

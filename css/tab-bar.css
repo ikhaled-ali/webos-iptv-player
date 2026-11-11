@@ -8,7 +8,7 @@
   box-sizing: border-box;
   display: flex;
   align-items: center;
-  padding: 0 80px;
+  padding: 0 24px 0 60px;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border);
 }
@@ -38,35 +38,43 @@ body.tabbar-docked #view-epg .epg-view {
 .tab-bar-inner {
   display: flex;
   align-items: center;
-  gap: 32px;
+  gap: 48px;
   width: 100%;
 }
 
-.tab-bar-title {
-  font-size: 30px;
-  font-weight: 700;
-  color: var(--accent);
-  padding: 4px 2px;
-  border-bottom: 3px solid transparent;
-  margin-left: -24px;
-  margin-right: 32px;
-  white-space: nowrap;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.tab-bar-brand {
+  display: flex;
+  align-items: center;
 }
+
+/* The mark alone carries the brand; it grows with the text size like the
+   tabs beside it. */
+.tab-bar-brand > .app-logo {
+  display: block;
+  flex-shrink: 0;
+  /* The mark is wider than tall; the box keeps its viewBox's 55.5:52. */
+  width: calc(66px * var(--font-scale));
+  height: calc(62px * var(--font-scale));
+  shape-rendering: geometricPrecision;
+}
+
+/* No tile here: the letters take the text color, the play button and the
+   signal the theme's accent, so the mark holds in every theme. */
+.app-logo-letter,
+.app-logo-tv { fill: var(--text-primary); }
+.app-logo-play { fill: var(--accent); stroke: var(--accent); }
+.app-logo-signal { stroke: var(--accent); }
 
 .tab-bar-item {
   flex-shrink: 0;
   font-family: inherit;
-  font-size: 30px;
-  font-weight: 700;
+  font-size: 23px;
+  font-weight: 400;
   line-height: 1.4;
-  color: var(--text-secondary);
+  color: #fff;
   background: transparent;
   border: none;
-  padding: 4px 2px;
-  border-bottom: 3px solid transparent;
+  padding: 4px 0;
   cursor: pointer;
   /* A clicked tab keeps DOM focus; `.focused` is the only focus look. */
   outline: none;
@@ -74,12 +82,86 @@ body.tabbar-docked #view-epg .epg-view {
 
 .tab-bar-item.active {
   color: var(--text-primary);
-  border-bottom-color: var(--accent);
+}
+
+.tab-bar-item.active:not(.tab-bar-tab) {
+  background-color: var(--active-tint);
+}
+
+.tab-bar-item.active.focused:not(.tab-bar-tab) {
+  background-color: var(--active-tint-focused);
+  background-image: none;
 }
 
 .tab-bar-item.focused,
 html:not(.keyboard-nav) .tab-bar-item:hover {
   color: var(--text-primary);
+}
+
+/* A text tab: glyph beside the label. The current section sits on the same
+   light pill as focus, which grows stronger when it is focused too. */
+.tab-bar-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding: 10px 0; /* 52px tall, like the icon circles */
+  border: none;
+  z-index: 0; /* keeps the tint behind the label and above the bar */
+}
+
+/* The tint reaches 14px past the label on each side without moving it. */
+.tab-bar-tab.focused {
+  background-image: none;
+}
+
+.tab-bar-tab::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -14px;
+  right: -14px;
+  z-index: -1;
+  border-radius: 10px;
+  background-image: var(--focus-layer);
+}
+
+html:not(.keyboard-nav) .tab-bar-tab:hover::before,
+.tab-bar-tab.focused::before,
+.tab-bar-tab.active::before {
+  content: '';
+}
+
+.tab-bar-tab.active::before {
+  background-color: var(--active-tint);
+  background-image: none;
+}
+
+.tab-bar-tab.active.focused::before {
+  background-color: var(--active-tint-focused);
+}
+
+/* The logo gets 60px on each side: the bar's left padding before it, the
+   48px gap plus this after it. The first tab's pill starts past it. */
+.tab-bar-brand + .tab-bar-tab {
+  padding-left: 12px;
+}
+
+.tab-bar-brand + .tab-bar-tab::before {
+  left: -2px;
+}
+
+.tab-bar-tab-icon {
+  flex-shrink: 0;
+  width: calc(28px * var(--font-scale));
+  height: calc(28px * var(--font-scale));
+  margin-right: 10px;
+  color: var(--text-primary);
+}
+
+.tab-bar-tab-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 /* No overflow clip: it would cut the magnifier's focus glow. */
@@ -116,9 +198,9 @@ html:not(.keyboard-nav) .tab-bar-item:hover {
   outline: none;
 }
 
-/* A bare magnifier at rest; pointer hover and D-pad focus draw a circle
+/* A bare icon (search, settings) at rest; pointer hover and D-pad focus draw a circle
    matching the account avatar beside it. */
-.search-icon {
+.tab-bar-icon {
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -134,35 +216,166 @@ html:not(.keyboard-nav) .tab-bar-item:hover {
   cursor: pointer;
 }
 
-.search-icon svg {
-  width: 36px;
-  height: 36px;
+/* The right-hand controls sit 20px apart, glyph to glyph (settings 48px from
+   search, like the tabs): each pulls its left edge into the 48px gap, and the 52px circles
+   also give back the 11px around their glyph. */
+.tab-bar-inner > .tab-bar-icon {
+  margin-left: -11px; /* 48px from the magnifier, like the text tabs */
+  margin-right: -11px;
+}
+
+.tab-bar-inner > .tab-bar-lock,
+.tab-bar-inner > .tab-bar-clock,
+.tab-bar-inner > .tab-bar-weather,
+.tab-bar-inner > .tab-bar-account {
+  margin-left: -28px;
+}
+
+.tab-bar-search > .tab-bar-icon {
+  margin-right: -11px;
+}
+
+.tab-bar-icon svg {
+  width: 30px;
+  height: 30px;
   display: block;
 }
 
-html:not(.keyboard-nav) .search-icon:hover,
-.search-icon.focused {
-  background: var(--bg-tertiary);
-  border-color: var(--focus-ring);
-  box-shadow: 0 0 0 3px var(--accent-glow), 0 0 20px var(--accent-glow);
-}
-
-/* The text tabs' active underline, shown while the circle is not; a straight
-   bar, since `.tab-bar-item.active`'s bottom border would curve round it. */
-.search-icon.active:not(.focused) {
+html:not(.keyboard-nav) .tab-bar-icon:hover,
+.tab-bar-icon.focused {
+  background-image: var(--focus-layer);
   border-color: transparent;
+  box-shadow: none;
 }
 
-.search-icon.active:not(.focused)::after {
-  content: '';
-  position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: -2px;
-  height: 3px;
-  background: var(--accent);
+
+/* Time of day: status, not navigation, so it never takes focus. The rule
+   on its left sets it apart from the controls. */
+.tab-bar-clock {
+  flex-shrink: 0;
+  padding-left: 20px;
+  border-left: 2px solid var(--border);
+  font-size: 23px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-html:not(.keyboard-nav) .search-icon:hover::after {
-  content: none;
+/* Current weather after the clock: a condition glyph and the temperature.
+   Empty until the first reading arrives, so nothing shows offline. The rule
+   on its right mirrors the clock's and sets the account apart. */
+.tab-bar-weather {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding-right: 20px;
+  border-right: 2px solid var(--border);
+  font-size: 23px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.tab-bar-weather:empty {
+  display: none;
+}
+
+.tab-bar-weather-icon {
+  width: calc(28px * var(--font-scale));
+  height: calc(28px * var(--font-scale));
+  margin-right: 8px;
+}
+
+.tab-bar-weather-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Frosted bar: where the engine can blur what is behind it, Live, Movies,
+   Series, and Search run to the top of the screen and scroll under the bar.
+   Each scroller keeps its first 96px clear and declares them as
+   scroll-padding-top, which focus reveals and the list math read
+   (scrollInsetTop in utils/dom.ts). Elsewhere the bar stays solid and the
+   views start below it. */
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .tab-bar {
+    background: transparent;
+    border-bottom: none;
+  }
+
+  /* Measured on a webOS TV: blurring the content that scrolls under the bar
+     re-blurs every frame and drops a third of them, so only the Full
+     animation mode pays for the glass. Elsewhere the bar is opaque. */
+  html[data-animation="full"] .tab-bar {
+    -webkit-backdrop-filter: blur(28px) saturate(160%);
+    backdrop-filter: blur(28px) saturate(160%);
+  }
+
+  /* The theme's bar color; under the controls, over what scrolls beneath. */
+  .tab-bar::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: -1;
+    background: var(--bg-secondary);
+    opacity: 1;
+  }
+
+  html[data-animation="full"] .tab-bar::before {
+    opacity: 0.62;
+  }
+
+  body.tabbar-docked #view-channels,
+  body.tabbar-docked #view-movies,
+  body.tabbar-docked #view-series,
+  body.tabbar-docked #view-search {
+    top: 0;
+    height: 1080px;
+  }
+
+  body.tabbar-docked #view-channels .sidebar,
+  body.tabbar-docked #view-channels #live-preview {
+    padding-top: 96px;
+  }
+
+  body.tabbar-docked #view-channels .channel-main {
+    padding-top: 104px;
+    /* stylelint-disable-next-line plugin/no-unsupported-browser-features -- inside the backdrop-filter @supports, Chromium 76+ */
+    scroll-padding-top: 96px;
+  }
+
+  body.tabbar-docked #view-channels .channel-main.channel-main-grid {
+    padding-top: 120px;
+  }
+
+  body.tabbar-docked #view-channels .channel-scroll-indicator {
+    top: 108px;
+  }
+
+  body.tabbar-docked #view-movies .catalog-view:not(.catalog-browse),
+  body.tabbar-docked #view-series .catalog-view:not(.catalog-browse),
+  body.tabbar-docked #view-search .search-view {
+    padding-top: 136px;
+    /* stylelint-disable-next-line plugin/no-unsupported-browser-features -- inside the backdrop-filter @supports, Chromium 76+ */
+    scroll-padding-top: 96px;
+  }
+
+  /* Below the bar, plus the rail's own title; the reveal margin adds the
+     room for the focused poster's grow. */
+  body.tabbar-docked .catalog-rails {
+    /* stylelint-disable-next-line plugin/no-unsupported-browser-features -- inside the backdrop-filter @supports, Chromium 76+ */
+    scroll-padding-top: 140px;
+  }
+
+  /* The rails start below the bar they scroll under. */
+  body.tabbar-docked .catalog-rails-body {
+    padding-top: 136px;
+  }
 }

@@ -43,16 +43,20 @@
   pointer-events: none;
 }
 
+/* The live OSD is one glass panel: the picture shows through, blurred. The
+   tint alone has to carry the text where the engine cannot blur what is
+   behind it (legacy-webos-overrides.css makes it opaque there). */
 .player-osd {
   position: absolute;
-  bottom: 20px;
+  bottom: calc(40px + 28px * var(--font-scale));
   left: 40px;
   right: 40px;
-  background: rgba(30, 30, 50, 0.75);
-  border-radius: 12px;
-  padding: 16px 32px;
+  padding: 16px 24px;
+  background: rgba(18, 16, 18, 0.68);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(16px);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(28px) saturate(160%);
   z-index: 60;
 }
 
@@ -101,11 +105,19 @@
   color: var(--text-primary);
 }
 
+@supports (backdrop-filter: blur(1px)) {
+  [data-overlay="frosted"] .player-osd {
+    background: rgba(244, 246, 249, 0.72);
+  }
+}
+
 #view-player .player-status,
 #view-player .player-status * {
   pointer-events: none;
 }
 
+/* Its own fixed strip under the OSD: the OSD always leaves room for it, so
+   neither moves when a status comes or goes. */
 .player-status {
   position: absolute;
   bottom: 20px;
@@ -121,10 +133,6 @@
   z-index: 61;
 }
 
-.player-status:not(.hidden) ~ .player-osd {
-  bottom: calc(40px + 28px * var(--font-scale));
-}
-
 .player-status-text,
 .player-status-engine,
 .player-status-detail {
@@ -137,159 +145,167 @@
   font-size: 18px;
 }
 
+/* Live: the channel logo beside at most two lines, the channel and what is
+   on, then the progress row. */
+.osd-live {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.osd-col {
+  flex: 1;
+  min-width: 0;
+}
+
+.osd-col > * + * {
+  margin-top: 8px;
+}
+
+/* Channel header: what is tuned, how it is playing, the time of day. */
 .osd-channel {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 10px;
+  gap: 12px;
+  min-height: 40px;
 }
 
 .osd-channel-number {
-  font-size: 42px;
-  font-weight: 700;
-  color: var(--accent);
-  min-width: 60px;
+  flex-shrink: 0;
+  font-size: 26px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
 }
 
 .osd-channel-logo {
-  width: 48px;
-  height: 48px;
+  flex-shrink: 0;
+  width: 128px;
+  height: 88px;
   object-fit: contain;
-  border-radius: 4px;
+  border-radius: var(--radius);
 }
 
 .osd-channel-name {
-  font-size: 36px;
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 26px;
   font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .osd-stream-info {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding-left: 16px;
-  border-left: 2px solid var(--overlay-divider);
+  flex-shrink: 0;
+  gap: 12px;
+  padding-left: 12px;
+  border-left: 1px solid var(--overlay-divider);
 }
 
-.si-badge {
-  font-size: 18px;
-  font-weight: 700;
+/* Every label in the OSD is the same quiet chip: Now / Timeshift / Catch-up,
+   and the stream readout (resolution, HDR, DRM, fps, codecs, tracks). */
+.osd-now-label,
+.si-badge,
+.si-pill,
+.si-text {
+  flex-shrink: 0;
   padding: 2px 10px;
-  border-radius: 4px;
-  color: #fff;
-  letter-spacing: 0.5px;
-}
-
-.si-badge--uhd { background: #6c4cd6; }
-.si-badge--fhd { background: #2b7de9; }
-.si-badge--hd  { background: #1aa3a3; }
-.si-badge--sd  { background: #5a6472; }
-.si-badge--hdr { background: #c9971c; }
-
-.si-pill {
-  font-size: 18px;
-  font-weight: 600;
-  padding: 2px 10px;
-  border-radius: 4px;
+  border-radius: 999px;
   background: var(--overlay-chip);
   color: var(--text-primary);
-}
-
-.si-text {
-  font-size: 18px;
-  color: var(--text-secondary);
-}
-
-.osd-programme {
-  margin-top: 4px;
-}
-
-.osd-now-label {
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--accent);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  line-height: 1.4;
   text-transform: uppercase;
-  letter-spacing: 2px;
-  margin-bottom: 2px;
+  white-space: nowrap;
 }
 
-.osd-programme-detail {
-  display: flex;
-  align-items: flex-start;
-  gap: 16px;
+/* The time of day sits alone in the screen's top right corner over the
+   picture, shown and hidden with the OSD. */
+.osd-clock {
+  position: absolute;
+  top: 48px;
+  right: 80px;
+  color: #fff;
+  font-size: 36px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.6), 0 0 2px rgba(0, 0, 0, 0.6);
+}
+
+#view-player .osd-clock {
+  pointer-events: none;
 }
 
 .osd-programme-icon {
-  width: 120px;
-  height: 80px;
+  width: 57px;
+  height: 32px;
   object-fit: cover;
-  border-radius: 6px;
+  border-radius: 4px;
   flex-shrink: 0;
 }
 
-.osd-programme-info {
-  flex: 1;
-  min-width: 0;
-}
-
 .osd-programme-title {
-  font-size: 30px;
-  font-weight: 500;
-  margin-bottom: 2px;
-}
-
-.osd-programme-time {
+  flex: 0 1 auto;
+  min-width: 0;
   font-size: 24px;
-  color: var(--text-secondary);
-  display: flex;
-  align-items: center;
-  gap: 16px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .osd-remaining {
+  flex-shrink: 0;
+  font-size: 20px;
   color: var(--text-muted);
-  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .osd-progress-row {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin: 12px 0;
 }
 
 .osd-time-current,
 .osd-time-end {
-  font-size: 22px;
+  font-size: 18px;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
 .osd-time-current {
-  color: var(--accent);
+  color: var(--text-primary);
   font-weight: 600;
 }
 
 .osd-progress {
-  height: 6px;
-  background: var(--bg-tertiary);
-  border-radius: 3px;
+  height: 4px;
+  background: var(--overlay-divider);
+  border-radius: 2px;
   overflow: hidden;
   flex: 1;
 }
 
 .osd-progress-bar {
   height: 100%;
-  background: linear-gradient(90deg, var(--accent), var(--accent-dim));
-  border-radius: 3px;
+  background: var(--accent);
+  border-radius: 2px;
   transition: width 1s linear;
 }
 
 .osd-progress[data-seekbar] {
   cursor: pointer;
   height: 36px;
-  padding: 15px 0;
+  padding: 16px 0;
   background-clip: content-box;
   overflow: visible;
 }
@@ -313,47 +329,55 @@
   box-shadow: 0 0 8px var(--accent-glow);
 }
 
-/* Live DVR (timeshift) row: play/pause + "behind live" offset + Go-to-Live. The
-   play/pause button (.osd-dvr-btn) is also used in the catch-up progress row. */
-.osd-dvr-btn {
+/* The focused seek bar: a thicker track and a ringed, larger thumb instead of
+   the box ring. */
+.osd-progress[data-seekbar].focused {
+  padding: 14px 0;
+}
+
+/* Glass controls over the picture are tinted at rest, so focus is stronger. */
+.osd-btn.focused,
+.osd-vod-btn.focused,
+.osd-vod-next.focused,
+.osd-dvr-live.focused,
+.osd-actions button.focused {
+  background-image: var(--focus-layer-strong);
+}
+
+.osd-progress[data-seekbar].focused .osd-progress-bar::after {
+  transform: translateY(-50%) scale(1.4);
+  background: #fff;
+}
+
+/* The panel's round icon buttons (play/pause, resync). The border is
+   reserved so the D-pad ring doesn't shift the row. */
+.osd-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
   padding: 0;
-  border: none;
-  background: none;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  background: var(--overlay-chip);
   color: var(--text-primary);
   cursor: pointer;
 }
 
-.osd-dvr-btn svg {
-  width: 28px;
-  height: 28px;
+.osd-btn svg {
+  width: 22px;
+  height: 22px;
   display: block;
 }
 
-/* Resync A/V button — reuses the play/pause icon-button sizing. */
-.osd-resync-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--text-primary);
-  cursor: pointer;
-}
-
-.osd-resync-btn svg {
+.osd-btn--play svg {
   width: 24px;
   height: 24px;
-  display: block;
 }
 
+/* Live DVR (timeshift) row: play/pause + "behind live" offset + Go-to-Live. */
 .osd-dvr-behind {
   min-width: 72px;
 }
@@ -361,19 +385,24 @@
 .osd-dvr-live {
   display: inline-flex;
   align-items: center;
+  flex-shrink: 0;
   gap: 8px;
-  padding: 0;
-  border: none;
-  background: none;
+  height: 40px;
+  padding: 0 12px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: var(--overlay-chip);
   color: var(--text-muted);
   font: inherit;
+  font-size: 18px;
+  font-weight: 600;
   cursor: pointer;
 }
 
 .osd-dvr-live::before {
   content: '';
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: currentColor;
 }
@@ -382,52 +411,11 @@
   color: var(--danger);
 }
 
-.osd-dvr-live.is-live::before {
-  box-shadow: 0 0 8px var(--danger);
-}
-
-.osd-description {
-  font-size: 24px;
-  color: var(--text-secondary);
-  margin-top: 4px;
-  line-height: 1.3;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.osd-next {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 6px;
-  font-size: 24px;
-  color: var(--text-secondary);
-}
-
-.osd-next-label {
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 2px;
-}
-
-.osd-next-title {
-  flex: 1;
-}
-
-.osd-next-time {
-  color: var(--text-muted);
-  margin-left: 8px;
-}
-
 .osd-message {
-  font-size: 26px;
+  font-size: 24px;
   color: var(--warning);
   text-align: center;
-  padding: 20px;
+  padding: 8px 20px;
 }
 
 .osd-next-episode {
@@ -449,13 +437,13 @@
   font-size: 24px;
 }
 
-.osd-next-episode-actions {
+.osd-actions {
   display: flex;
   gap: 16px;
   margin-top: 16px;
 }
 
-.osd-next-episode-actions button {
+.osd-actions button {
   padding: 10px 20px;
   border: 1px solid var(--overlay-chip);
   border-radius: 6px;
@@ -465,10 +453,160 @@
   cursor: pointer;
 }
 
-.osd-next-episode-actions button:first-child {
+.osd-actions button:first-child {
   border-color: var(--accent);
   background: var(--accent);
   color: #fff;
+}
+
+/* Movies and episodes: controls drawn on the video under a bottom scrim, as
+   TV video apps do, rather than in a panel. Bare controls on video are fixed
+   white in either overlay style, so the panel tokens are set to match. */
+.player-osd.osd-vod,
+[data-overlay="frosted"] .player-osd.osd-vod {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 140px 80px calc(40px + 32px * var(--font-scale));
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.55) 42%, rgba(0, 0, 0, 0.88) 100%);
+  backdrop-filter: none;
+  --text-primary: #fff;
+  --text-secondary: rgba(255, 255, 255, 0.8);
+  --text-muted: rgba(255, 255, 255, 0.6);
+  --overlay-divider: rgba(255, 255, 255, 0.3);
+  --overlay-chip: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+
+.osd-vod .osd-channel-name {
+  font-size: 34px;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+}
+
+.osd-vod-progress {
+  margin: 8px 0 14px;
+}
+
+.osd-vod .osd-progress[data-seekbar] {
+  height: 30px;
+  padding: 12px 0;
+}
+
+.osd-vod .osd-progress[data-seekbar].focused {
+  padding: 10px 0;
+}
+
+.osd-vod-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.osd-vod-transport {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.osd-vod-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  backdrop-filter: blur(12px);
+  color: #fff;
+  cursor: pointer;
+  transition: transform 0.12s ease-out, background-color 0.12s ease-out, color 0.12s ease-out;
+}
+
+.osd-vod-btn svg {
+  width: 38px;
+  height: 38px;
+  display: block;
+}
+
+.osd-vod-btn--main {
+  width: 88px;
+  height: 88px;
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.osd-vod-btn--main svg {
+  width: 46px;
+  height: 46px;
+}
+
+.osd-vod-btn--small {
+  width: 56px;
+  height: 56px;
+}
+
+.osd-vod-btn--small svg {
+  width: 26px;
+  height: 26px;
+}
+
+/* A remote key drove this control: it lights at once and fades back. */
+.osd-vod-btn.is-pressed {
+  border-color: #fff;
+  background: #fff;
+  color: #111;
+  transform: scale(0.94);
+  transition: none;
+}
+
+.osd-vod-time {
+  padding-left: 8px;
+  font-size: 24px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.osd-vod-time .osd-time-current {
+  color: #fff;
+  font-weight: 600;
+}
+
+.osd-vod-aside {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.osd-vod-next {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  height: 64px;
+  padding: 0 28px 0 22px;
+  border: 2px solid rgba(255, 255, 255, 0.24);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  font-size: 24px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.osd-vod-skip {
+  padding: 0 28px;
+}
+
+.osd-vod-next svg {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
 }
 
 /* Player sidebar overlay (Magic Remote / left key) */
@@ -643,13 +781,7 @@
 }
 
 .player-sidebar .sidebar-group-item.focused {
-  border-color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.12);
-}
-
-.player-sidebar .sidebar-group-item.active.focused {
-  border-color: var(--accent);
-  background: rgb(var(--accent-rgb) / 0.2);
+  background-image: var(--focus-layer);
 }
 
 .player-sidebar .sidebar-group-icon {
@@ -660,14 +792,21 @@
   justify-content: center;
   flex-shrink: 0;
   font-size: 22px;
-  color: var(--accent);
+  color: var(--text-muted);
   background: transparent;
 }
 
+.player-sidebar .sidebar-group-item.active .sidebar-group-icon {
+  color: var(--accent);
+}
+
+.player-sidebar .sidebar-group-item.focused .sidebar-group-icon {
+  color: #fff;
+}
+
 .player-sidebar .sidebar-group-icon .group-logo {
-  width: 32px;
-  height: 32px;
-  object-fit: contain;
+  width: 28px;
+  height: 28px;
 }
 
 .player-sidebar .sidebar-group-name {
@@ -676,7 +815,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 22px;
+  font-size: 20px;
   color: var(--text-primary);
 }
 
@@ -711,8 +850,8 @@
 
 .player-sidebar .sidebar-search-input.focused,
 .player-sidebar .sidebar-search-input:focus {
-  border-color: var(--accent);
-  background: rgba(255, 255, 255, 0.1);
+  border-color: transparent;
+  background-image: var(--focus-layer);
 }
 
 .player-sidebar .sidebar-tabs {
@@ -747,10 +886,8 @@
 }
 
 .player-sidebar .sidebar-tab.focused {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-  background: rgb(var(--accent-rgb) / 0.16);
-  box-shadow: inset 0 0 0 2px var(--accent);
+  color: var(--text-primary);
+  background-image: var(--focus-layer);
 }
 
 .player-sidebar .sidebar-channel-list {
@@ -791,13 +928,7 @@
 }
 
 .player-sidebar .sidebar-ch-item.focused {
-  background: rgba(255, 255, 255, 0.12);
-  border-color: var(--text-primary);
-}
-
-.player-sidebar .sidebar-ch-item.playing.focused {
-  background: rgb(var(--accent-rgb) / 0.2);
-  border-color: var(--accent);
+  background-image: var(--focus-layer);
 }
 
 .player-sidebar .sidebar-ch-item .ch-num {
@@ -966,13 +1097,11 @@
 }
 
 .player-menu .menu-item.focused {
-  background: rgba(255, 255, 255, 0.12);
-  border-color: var(--text-primary);
+  background-image: var(--focus-layer);
 }
 
 .player-menu .menu-item:hover {
   background: rgba(255, 255, 255, 0.1);
-  border-color: var(--text-muted);
 }
 
 .menu-dot {
@@ -1138,9 +1267,8 @@
 }
 
 .subs-row.focused {
-  background: var(--accent-dim);
-  color: #fff;
-  box-shadow: none !important;
+  background-image: var(--focus-layer);
+  color: var(--text-primary);
 }
 
 .subs-row.focused .subs-count {
@@ -1211,7 +1339,7 @@
 
 .subs-offset-reset.focused,
 .subs-offset-reset:hover {
-  background: var(--accent-dim);
-  border-color: var(--accent);
-  color: #fff;
+  background-image: var(--focus-layer);
+  border-color: transparent;
+  color: var(--text-primary);
 }

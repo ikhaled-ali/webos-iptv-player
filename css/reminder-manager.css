@@ -229,16 +229,12 @@
 .reminder-manager-clear.focused,
 .reminder-manager-remove.focused {
   color: var(--text-primary);
-  background: var(--bg-tertiary);
-  border-color: var(--focus-ring);
-  box-shadow: 0 0 0 4px var(--accent-glow);
+  background-image: var(--focus-layer);
 }
 
 .reminder-manager-clear.focused,
 .reminder-manager-remove.focused {
   color: var(--danger);
-  border-color: var(--danger) !important;
-  box-shadow: 0 0 0 4px rgb(var(--danger-rgb) / 0.18);
 }
 
 .reminder-manager-empty {

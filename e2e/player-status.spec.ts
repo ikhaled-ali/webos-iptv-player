@@ -2,7 +2,7 @@ import { THEMES } from '../src/config/themes';
 import { test, expect, neuterVideo, routePlaylist, seedPlaylist } from './helpers';
 
 for (const overlay of ['dark', 'frosted']) {
-  test(`playback status stays small, white and bottom-left with ${overlay} overlays`, async ({ page }, testInfo) => {
+  test(`playback status stays small, white and bottom-left, never moving the OSD, with ${overlay} overlays`, async ({ page }, testInfo) => {
     await neuterVideo(page);
     await routePlaylist(page);
     await seedPlaylist(page);
@@ -14,6 +14,7 @@ for (const overlay of ['dark', 'frosted']) {
     await expect(page.locator('#view-channels')).toBeVisible();
     await page.keyboard.press('Enter');
     const status = page.locator('.player-status');
+    const osdBottoms: number[] = [];
     await expect(status).toHaveAttribute('data-state', 'loading');
     await page.locator('#video-player').dispatchEvent('playing');
     await expect(status).toBeHidden();
@@ -54,6 +55,7 @@ for (const overlay of ['dark', 'frosted']) {
               textSize: getComputedStyle(element.querySelector('.player-status-text')!).fontSize,
               colors: Array.from(element.children, child => getComputedStyle(child).color),
               osdGap: rect.top - osd.getBoundingClientRect().bottom,
+              osdBottom: innerHeight - osd.getBoundingClientRect().bottom,
             };
           });
           expect(metrics.left).toBe(40);
@@ -66,15 +68,19 @@ for (const overlay of ['dark', 'frosted']) {
           expect(metrics.pointerEvents).toBe('none');
           expect(metrics.textSize).toBe(`${20 * size / 100}px`);
           expect(metrics.colors.every(color => color === 'rgb(255, 255, 255)')).toBe(true);
-          expect(metrics.osdGap).toBeGreaterThanOrEqual(19);
+          expect(metrics.osdGap).toBeGreaterThanOrEqual(11);
+          // The status has its own strip: the OSD sits where it does without one.
+          osdBottoms.push(metrics.osdBottom);
           if (size === 100) {
             await page.screenshot({ path: testInfo.outputPath(`${theme.id}-${overlay}-${state}.png`) });
           }
         }
       }
     }
+    await page.evaluate(() => { document.documentElement.dataset.textSize = '100'; });
     await page.locator('#video-player').dispatchEvent('playing');
     await expect(status).toBeHidden();
-    await expect(page.locator('#player-osd')).toHaveCSS('bottom', '20px');
+    await expect(page.locator('#player-osd')).toHaveCSS('bottom', '68px');
+    expect(osdBottoms.filter((_, i) => i % 3 === 1).every(bottom => bottom === 68)).toBe(true);
   });
 }

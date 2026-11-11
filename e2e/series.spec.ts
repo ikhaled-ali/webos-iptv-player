@@ -1,4 +1,4 @@
-import { test, expect, routeLiveManifest, neuterVideo, SAMPLE_M3U, enterTab } from './helpers';
+import { test, expect, routeLiveManifest, neuterVideo, SAMPLE_M3U, enterTab, openPlayerMenu } from './helpers';
 import { seedXtream } from './fixtures/xtream';
 
 // Seed one Xtream account (enables the tab bar) and stub the player_api.php
@@ -177,15 +177,14 @@ test('episode playback suppresses the live channel sidebar and opens its VOD-onl
   await page.waitForTimeout(200);
   expect(await page.locator('#player-sidebar.visible').count()).toBe(0);
 
-  // Right opens the VOD menu for an episode too, including playback
-  // speed but never the live channel rows or the "Playing:" channel name.
+  // The OSD's menu button opens the VOD menu for an episode too, including
+  // playback speed but never the live channel rows or the "Playing:" name.
   await page.mouse.move(1900, 540);
   await expect(page.locator('#player-menu')).not.toBeVisible();
-  await page.keyboard.press('ArrowRight');
+  await openPlayerMenu(page);
   const menu = page.locator('#player-menu');
-  await expect(menu).toBeVisible();
   await expect(menu).toContainText('Quality');
-  await expect(menu).toContainText('Settings');
+  await expect(menu).not.toContainText('Settings');
   await expect(menu).toContainText('Playback Speed');
   expect(await menu.textContent()).not.toContain('Program Guide');
   expect(await menu.textContent()).not.toContain('Toggle Favorite');
@@ -280,4 +279,57 @@ test('opening the section with the pointer leaves the catalog where it loads', a
   const parked = page.locator('#view-series .focused-parked');
   await expect(parked).toHaveCount(1);
   expect(await parked.getAttribute('data-key')).toBe(await first.getAttribute('data-key'));
+});
+
+test('episode controls: OK pauses and keeps the bar up, Down picks Next episode, OK plays it', async ({ page }) => {
+  await seedSeries(page);
+  await page.route('**/player_api.php*', (route) => {
+    if (!route.request().url().includes('get_series_info')) return route.fallback();
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      episodes: { '1': [
+        { id: 10, title: 'Episode One', season: 1, episode_num: 1, container_extension: 'mp4', info: { duration_secs: 1500 } },
+        { id: 11, title: 'Episode Two', season: 1, episode_num: 2, container_extension: 'mp4', info: { duration_secs: 1500 } },
+      ] },
+    }) });
+  });
+  await routeLiveManifest(page);
+  await neuterVideo(page);
+  await page.goto('/');
+  await enterTab(page, 'series');
+  await page.locator('.catalog-tile[data-item-id="1"]')
+    .evaluate((el) => el.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true })));
+  await page.keyboard.press('Enter');
+  const main = page.locator('#view-series [data-key="continue"]');
+  await expect(main).toContainText('S1E1');
+  await expect(main).toHaveClass(/focused/);
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#view-player')).toBeVisible();
+
+  // A playing element: the neutered one never leaves `paused`.
+  await page.locator('#video-player').evaluate((video) => {
+    const v = video as HTMLVideoElement;
+    let paused = false;
+    Object.defineProperty(v, 'paused', { configurable: true, get: () => paused });
+    v.play = () => { paused = false; return Promise.resolve(); };
+    v.pause = () => { paused = true; };
+    Object.defineProperty(v, 'duration', { configurable: true, value: 1500 });
+    v.dispatchEvent(new Event('loadedmetadata'));
+    v.dispatchEvent(new Event('playing'));
+  });
+  const osd = page.locator('#player-osd');
+  const playPause = osd.locator('[data-playpause]');
+  await expect(playPause).toHaveAttribute('aria-label', 'Pause');
+
+  await page.keyboard.press('Enter');
+  await expect(playPause).toHaveAttribute('aria-label', 'Play');
+  await page.waitForTimeout(5500); // past the controls' auto-hide
+  await expect(osd).toBeVisible();
+
+  await page.keyboard.press('ArrowDown');
+  await expect(playPause).toHaveClass(/focused/);
+  for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowRight'); // forward, resync, menu, next
+  await expect(osd.locator('[data-next-episode]')).toHaveClass(/focused/);
+  await page.keyboard.press('Enter');
+  await expect(osd.locator('.osd-channel-name')).toContainText('S1E2');
+  await expect(osd.locator('[data-next-episode]')).toHaveCount(0);
 });

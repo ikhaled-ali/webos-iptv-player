@@ -86,11 +86,13 @@ export class Sidebar {
   private lastWheelAt = 0;
   private opening = false;
   private readonly channelVirtualizer = new VirtualList({
+    revealMargin: CONFIG.NAVIGATION.REVEAL_MARGIN,
     itemSize: CHANNEL_ROW_STRIDE,
     overscan: CHANNEL_OVERSCAN,
     fallbackViewportSize: FALLBACK_LIST_HEIGHT,
   });
   private readonly groupVirtualizer = new VirtualList({
+    revealMargin: CONFIG.NAVIGATION.REVEAL_MARGIN,
     itemSize: GROUP_ROW_STRIDE,
     overscan: CHANNEL_OVERSCAN,
     fallbackViewportSize: FALLBACK_LIST_HEIGHT,
@@ -1328,7 +1330,7 @@ export class Sidebar {
         if (this.groupScrollFrame !== null) return;
         this.groupScrollFrame = requestAnimationFrame(() => {
           this.groupScrollFrame = null;
-          if (this.isVisible) this.render(false);
+          if (this.isVisible && this.groupVirtualizer.rangeStale()) this.render(false);
         });
         return;
       }
@@ -1339,7 +1341,7 @@ export class Sidebar {
       if (this.scrollFrame !== null) return;
       this.scrollFrame = requestAnimationFrame(() => {
         this.scrollFrame = null;
-        if (this.isVisible) this.render(false);
+        if (this.isVisible && this.channelVirtualizer.rangeStale()) this.render(false);
       });
     }, true);
 

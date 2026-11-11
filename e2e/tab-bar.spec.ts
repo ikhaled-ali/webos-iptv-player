@@ -23,11 +23,24 @@ test('the tab bar is docked (always visible) and offsets the content below it', 
 
   // Always visible on the channels view — no pointer reveal needed.
   await expect(page.locator('.tab-bar')).toBeVisible();
-  await expect(page.locator('.tab-bar-item')).toHaveText(['Live', 'Guide', 'Movies', 'Series', 'Settings', '']);
+  await expect(page.locator('.tab-bar-item')).toHaveText(['Live', 'Guide', 'Movies', 'Series', '', '']);
   // Search is the far-right magnifier icon (no text label).
   await expect(page.locator('.tab-bar-item[data-section="search"] svg')).toBeVisible();
   // Docked → the view sits below the bar (top offset applied via the body class).
   await expect(page.locator('body.tabbar-docked')).toHaveCount(1);
+});
+
+test('the app logo stands alone, on the tabs\' midline', async ({ page }) => {
+  await seedXtream(page);
+  await routeLiveManifest(page);
+  await page.goto('/');
+  await expect(page.locator('#view-channels')).toBeVisible();
+
+  await expect(page.locator('.tab-bar-title')).toHaveCount(0);
+  const logo = (await page.locator('.tab-bar-brand > .app-logo').boundingBox())!;
+  const tab = (await page.locator('.tab-bar-item[data-section="live"]').boundingBox())!;
+  expect(logo.height).toBe(52);
+  expect(Math.abs((logo.y + logo.height / 2) - (tab.y + tab.height / 2))).toBeLessThanOrEqual(2);
 });
 
 test('clicking the Movies tab enters the Movies view', async ({ page }) => {
@@ -171,7 +184,7 @@ test('M3U-only shows a docked bar with Live/Guide/Settings/Search only (no Movie
 
   // The bar is docked, but with the reduced M3U section set.
   await expect(page.locator('.tab-bar')).toBeVisible();
-  await expect(page.locator('.tab-bar-item')).toHaveText(['Live', 'Guide', 'Settings', '']);
+  await expect(page.locator('.tab-bar-item')).toHaveText(['Live', 'Guide', '', '']);
   await expect(page.locator('.tab-bar-item[data-section="movies"]')).toHaveCount(0);
   await expect(page.locator('.tab-bar-item[data-section="series"]')).toHaveCount(0);
   await expect(page.locator('.tab-bar-item[data-section="search"] svg')).toBeVisible();
@@ -194,7 +207,7 @@ test('no playlist or account configured shows Live/Guide/Settings/Search only (n
   await expect(page.locator('.tab-bar')).toBeVisible();
   await expect(page.locator('.tab-bar-item[data-section="movies"]')).toHaveCount(0);
   await expect(page.locator('.tab-bar-item[data-section="series"]')).toHaveCount(0);
-  await expect(page.locator('.tab-bar-item')).toHaveText(['Live', 'Guide', 'Settings', '']);
+  await expect(page.locator('.tab-bar-item')).toHaveText(['Live', 'Guide', '', '']);
   await expect(page.locator('.account-avatar')).toHaveCount(0);
 });
 
@@ -509,7 +522,7 @@ test.describe('hovering content after D-pad Up onto the tab bar', () => {
 
     // Up onto Live, then Right along the bar to Settings.
     await page.keyboard.press('ArrowUp');
-    for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowRight');
+    for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowRight');
     await expect(page.locator('.tab-bar-item[data-section="settings"].focused')).toHaveCount(1);
     await expect(page.locator('#view-settings')).toBeVisible();
     const items = page.locator('#view-settings .settings-nav-item');
@@ -692,7 +705,7 @@ test.describe('switching sections from the bar with the D-pad', () => {
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('ArrowUp');
     await expect(page.locator('.tab-bar-item[data-section="settings"]')).toHaveClass(/\bfocused\b/);
-    for (const section of ['series', 'movies', 'epg', 'live']) {
+    for (const section of ['search', 'series', 'movies', 'epg', 'live']) {
       await page.keyboard.press('ArrowLeft');
       await expect(page.locator(`.tab-bar-item[data-section="${section}"]`)).toHaveClass(/\bfocused\b/);
       await expect(page.locator('.focused:visible')).toHaveCount(1);

@@ -184,7 +184,8 @@ origin, so object-store names do not repeat the `iptv_` prefix.
 | `channel-state` | `subtitle:<channel-key>` | None | Explicit off state or preferred subtitle name/language/CC mode |
 | `channel-state` | `offset:<channel-key>` | None | Subtitle timing adjustment in seconds |
 | `watchlist` | `watch:<account-id>\|<vod-or-series>\|<item-id>` | `scope` | Name, poster, rating, category, extension, and added time; scope is account and content kind |
-| `playback-progress` | `resume:<account-id>\|<vod-or-episode>\|<item-id>` | `expiresAt`, `updatedAt` | Position, duration, title/poster/extension snapshot, optional autoplay queue and Watchlist owner |
+| `playback-progress` | `resume:<account-id>\|<vod-or-episode>\|<item-id>` | `expiresAt`, `updatedAt` | Position, duration, title/poster/extension snapshot, optional autoplay queue, Watchlist owner, sidecar subtitles, subtitle-search metadata, and an up-next flag for the unstarted episode after a finished one; saved every 15 seconds of playback and on pause, background, error, and Back |
+| `playback-progress` | `watched:<account-id>\|<series-id>` | `updatedAt` | Episode ids of one series watched to the end; the newest 200 series per account |
 | `playback-progress` | `catchup:<channel-key>\|<program-start>` | `expiresAt`, `updatedAt` | EPG source URL, program start/stop, title/description/icon snapshot, position, completion, update time, and computed expiry |
 | `recently-watched` | `live:<channel-key>` | `updatedAt` | Channel key and last-confirmed watch time; capped to 30 live entries |
 | `online-sub-picks` | `pick:<account-id>\|<vod-or-episode>\|<item-id>` | None | Provider id, provider result id, display name, language, and subtitle format |

@@ -286,7 +286,7 @@ test.describe('Settings navigation', () => {
         programmeMarquee: getComputedStyle(
           motionFixtures.querySelector('.ch-now-text')!,
         ).animationName,
-        spinner: seconds(getComputedStyle(document.querySelector('.loading-spinner')!)
+        spinner: seconds(getComputedStyle(document.querySelector('.splash-progress-bar')!)
           .animationDuration),
       };
       liveBadge.remove();
@@ -305,7 +305,7 @@ test.describe('Settings navigation', () => {
     expect(durations.groupPicker).toBe('group-picker-nudge');
     expect(durations.channelMarquee).toBe('marquee-bounce');
     expect(durations.programmeMarquee).toBe('marquee-bounce');
-    expect(durations.spinner).toContain(0.8);
+    expect(durations.spinner).toContain(1.2);
 
     await page.reload();
     await expect(page.locator('html')).toHaveAttribute('data-animation', 'essential');

@@ -86,8 +86,9 @@ Settings, player OSD) and match it.
 - **Gutters:** views use an **80px** side gutter (`tab-bar.css`,
   `catalog-view.css`). Keep text and focus targets well inside the edge;
   only full-bleed video and artwork may reach it.
-- **Type:** body is 24px/1.4 in the system/`LG Smart UI` stack — don't add
-  web fonts. Common steps are 18, 20, 22, 24, 26, 28, 32, with a hero size
+- **Type:** body is 24px/1.4 in bundled SF Pro Display (`assets/fonts`,
+  subset to Latin/Greek/Cyrillic, falling back to `LG Smart UI`) — don't add
+  other web fonts. Common steps are 18, 20, 22, 24, 26, 28, 32, with a hero size
   around 56. **Nothing readable below 18px**; reserve 12–16px for badges
   and keycaps. Prefer weight and color (`--text-secondary`,
   `--text-muted`) over adding sizes, and keep weights moderate — 700 reads
@@ -124,15 +125,14 @@ broken.
   to where the user left it (rails, lists, menus).
 - **Styling.** Focus is the **`.focused` class**, not `:focus` or
   `:focus-visible` (Chromium 53, and the remote never moves DOM focus).
-  The base ring lives in `css/navigation.css`: `--focus-ring` border plus an
-  `--accent-glow` shadow. Extend it per component; don't reinvent it, and
-  match the focus color and shape used elsewhere.
-- **One ring, on the visual target.** A card frames its poster, not poster
-  plus caption, with no gap between ring and image; override the global
-  ring so two rings never stack. Underline-style targets (tabs) suppress
-  the global box, and text inputs get no extra accent ring.
-- **Quieter row focus when the row holds its own controls**: a faint tint
-  plus a 3px left accent bar instead of a full border.
+  Focus is **one light tint, everywhere**: the base rule in
+  `css/navigation.css` lays `--focus-layer` over the item's own fill as a
+  `background-image`, so a selected or colored item keeps its color under
+  it. No border, ring, glow, outline, or underline marks focus.
+- **Tint the visual target.** An image (poster, theme swatch) cannot show
+  a background tint: a poster takes it as an overlay, a swatch as a lift
+  in brightness. Glass controls over video are already tinted at rest and
+  use `--focus-layer-strong`.
 - **One unmistakable state.** Focus must differ from rest by more than one
   cue: border color plus glow, or a background change. A subtle color
   shift alone fails at distance.

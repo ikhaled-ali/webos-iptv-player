@@ -1,36 +1,77 @@
+/* SF Pro Display, subset to Latin, Greek, and Cyrillic; other scripts
+   (Chinese) fall through to the TV's own fonts in the stack below. */
+@font-face {
+  font-family: 'SF Pro App';
+  font-style: normal;
+  font-weight: 400;
+  src: url('../assets/fonts/SF-Pro-Display-Regular.woff') format('woff');
+}
+
+@font-face {
+  font-family: 'SF Pro App';
+  font-style: normal;
+  font-weight: 500;
+  src: url('../assets/fonts/SF-Pro-Display-Medium.woff') format('woff');
+}
+
+@font-face {
+  font-family: 'SF Pro App';
+  font-style: normal;
+  font-weight: 600;
+  src: url('../assets/fonts/SF-Pro-Display-Semibold.woff') format('woff');
+}
+
+@font-face {
+  font-family: 'SF Pro App';
+  font-style: normal;
+  font-weight: 700;
+  src: url('../assets/fonts/SF-Pro-Display-Bold.woff') format('woff');
+}
+
 :root {
-  --bg-primary: #0a0a0f;
-  --bg-secondary: #12121a;
-  --bg-tertiary: #1a1a2e;
-  --bg-card: #16213e;
-  --text-primary: #e8e8e8;
-  --text-secondary: #a0a0b0;
-  --text-muted: #666680;
-  --scrollbar-thumb: #666680;
-  --accent: #00d4ff;
-  --accent-dim: #0088aa;
-  --accent-rgb: 0 212 255;
+  --bg-primary: #121012;
+  --bg-secondary: #1b1819;
+  --bg-tertiary: #262223;
+  --bg-card: #2e292a;
+  --text-primary: #f6f2f0;
+  --text-secondary: #a9a09d;
+  --text-muted: #77706e;
+  --scrollbar-thumb: #77706e;
+  --accent: #e5383b;
+  --accent-dim: #b3261e;
+  --accent-rgb: 229 56 59;
   --accent-glow: rgb(var(--accent-rgb) / 0.3);
   --channel-health-healthy: #63d89b;
   --channel-health-suspect: #f3c969;
   --channel-health-unavailable: #ef7b7b;
-  --danger: #ff4757;
-  --danger-rgb: 255 71 87;
+  --danger: #ff3b5c;
+  --danger-rgb: 255 59 92;
   --success: #2ed573;
-  --warning: #ffa502;
-  --warning-rgb: 255 165 2;
+  --warning: #ffc53d;
+  --warning-rgb: 255 197 61;
   --remote-key-red: #e74c3c;
   --remote-key-green: #2ecc71;
   --remote-key-yellow: #f1c40f;
   --remote-key-blue: #3498db;
-  --border: #2a2a3e;
-  --catalog-surface: #14161c;
-  --catalog-control: #23262f;
-  --catalog-focus: #5b8cff;
-  --catalog-focus-rgb: 91 140 255;
-  --catalog-hero-scrim-rgb: 10 10 15;
-  --catalog-sort-selected-bg: #007e9e;
+  --border: #332d2e;
+  --catalog-surface: #1b1819;
+  --catalog-control: #262223;
+  --catalog-focus: #e5383b;
+  --catalog-focus-rgb: 229 56 59;
+  --catalog-hero-scrim-rgb: 18 16 18;
+  --catalog-sort-selected-bg: #a3221b;
   --focus-ring: var(--accent);
+  /* Focus is a light tint on the item, never a border, ring, or underline.
+     The strong one is for glass controls over video, already tinted at rest. */
+  --focus-tint: rgba(255, 255, 255, 0.18);
+  --focus-tint-strong: rgba(255, 255, 255, 0.38);
+  /* The current section in the tab bar: the focus pill, stronger when focused. */
+  --active-tint: var(--focus-tint);
+  --active-tint-focused: var(--focus-tint-strong);
+  /* Laid over the item's own fill as an image, so a selected or colored
+     item keeps its color under the tint. */
+  --focus-layer: linear-gradient(var(--focus-tint), var(--focus-tint));
+  --focus-layer-strong: linear-gradient(var(--focus-tint-strong), var(--focus-tint-strong));
   --radius: 8px;
   --transition: 0.2s ease;
   --font-scale: 1;
@@ -103,6 +144,11 @@
   box-sizing: border-box;
 }
 
+/* Form controls default to the browser's UI font; use the app's. */
+button, input, select, textarea {
+  font-family: inherit;
+}
+
 html[data-animation="essential"] .tab-bar-search-input,
 html[data-animation="essential"] .channel-scroll-thumb,
 html[data-animation="essential"] .epg-mapping-list,
@@ -114,6 +160,8 @@ html[data-animation="essential"] .osd-progress-bar {
 /* Measured on the webOS 4 emulator: list focus transitions roughly halve
    main-thread and raster time when disabled outright. */
 html[data-animation="essential"] .channel-item,
+html[data-animation="essential"] .catalog-poster-wrap,
+html[data-animation="essential"] .catalog-cat,
 html[data-animation="essential"] .player-sidebar .sidebar-ch-item {
   transition: none !important;
 }
@@ -152,7 +200,7 @@ html, body {
   width: 1920px;
   height: 1080px;
   overflow: hidden;
-  font-family: -apple-system, 'LG Smart UI', 'Helvetica Neue', Arial, sans-serif;
+  font-family: 'SF Pro App', -apple-system, 'LG Smart UI', 'Helvetica Neue', Arial, sans-serif;
   font-size: 24px;
   line-height: 1.4;
   color: var(--text-primary);
@@ -195,17 +243,84 @@ h3 {
   gap: 24px;
 }
 
-.loading-spinner {
-  width: 64px;
-  height: 64px;
-  border: 4px solid var(--border);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+/* Boot splash: the app mark settles in, its signal arc pulses, and a slim
+   bar runs under it until the channels are in. Transform and opacity only. */
+.splash-brand {
+  text-align: center;
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
+.splash-logo {
+  display: block;
+  width: 235px;
+  height: 220px;
+  margin: 0 auto;
+  animation: splash-in 560ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.splash-play {
+  animation: splash-fade 360ms ease-out 320ms both;
+}
+
+.splash-arc {
+  animation: splash-signal 1600ms ease-in-out 600ms infinite;
+}
+
+.splash-wordmark {
+  margin-top: 28px;
+  font-size: 44px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--text-primary);
+  animation: splash-rise 480ms cubic-bezier(0.2, 0.8, 0.2, 1) 200ms both;
+}
+
+.splash-progress {
+  position: relative;
+  width: 240px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.splash-progress-bar {
+  width: 40%;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: splash-run 1200ms ease-in-out infinite;
+}
+
+@keyframes splash-in {
+  from { opacity: 0; transform: scale(0.82); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes splash-rise {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes splash-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes splash-signal {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+@keyframes splash-run {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(250%); }
+}
+
+html[data-animation="essential"] .splash-logo,
+html[data-animation="essential"] .splash-play,
+html[data-animation="essential"] .splash-wordmark,
+html[data-animation="essential"] .splash-arc {
+  animation: none;
 }
 
 .loading-text {
@@ -225,8 +340,8 @@ button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggl
     color var(--transition);
 }
 
-button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggle):not(.epg-reminder-entry):not(.parental-row):not(.live-category-row):not(.search-icon):not(.catalog-remove-mark):hover,
-button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggle):not(.epg-reminder-entry):not(.parental-row):not(.live-category-row):not(.search-icon):not(.catalog-remove-mark).focused {
+button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggle):not(.epg-reminder-entry):not(.parental-row):not(.live-category-row):not(.tab-bar-item):not(.catalog-remove-mark):hover,
+button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggle):not(.epg-reminder-entry):not(.parental-row):not(.live-category-row):not(.tab-bar-item):not(.catalog-remove-mark).focused {
   transform: scale(1.03);
 }
 
@@ -293,9 +408,9 @@ button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggl
   padding: 20px 26px 16px;
   /* Same surface as the player OSD (palette in player.css), which it shares the
      screen with; `[data-overlay]` swaps both to frosted at once. */
-  background: rgba(30, 30, 50, 0.75);
+  background: rgba(18, 16, 18, 0.68);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(16px);
+  backdrop-filter: blur(28px) saturate(160%);
   border-radius: var(--radius);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28), 0 0 18px var(--accent-glow);
   text-align: center;
@@ -476,10 +591,10 @@ button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggl
 .reminder-btn.focused,
 .catchup-resume-btn.focused,
 .confirmation-btn.focused {
-  border-color: var(--focus-ring);
-  background: var(--accent-dim);
-  color: #fff;
-  box-shadow: 0 0 12px var(--accent-glow);
+  border-color: transparent;
+  background-image: var(--focus-layer);
+  color: var(--text-primary);
+  box-shadow: none;
 }
 
 .confirmation-title {

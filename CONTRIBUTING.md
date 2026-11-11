@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for helping improve webOS IPTV Player. These rules exist to keep
+Thank you for helping improve iPlayer. These rules exist to keep
 the project, its maintainers, and its users clear of legal and privacy
 risk. They apply to every contribution: code, tests, fixtures, docs,
 screenshots, commit messages, and issues. A pull request that breaks any of

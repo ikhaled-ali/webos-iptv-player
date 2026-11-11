@@ -4,6 +4,24 @@ import type { Action, PlaylistEntry } from '../types';
 import { TabBar, SEARCH_INPUT_MAX_WIDTH } from './tab-bar';
 import { Focus, Tier } from '../navigation/focus-scope';
 
+const clock = vi.hoisted(() => ({
+  time: '20:36',
+  listeners: [] as Array<(time: string) => void>,
+}));
+vi.mock('../utils/clock', () => ({
+  clockTime: () => clock.time,
+  onClockTick: (listener: (time: string) => void) => {
+    clock.listeners.push(listener);
+    return () => {};
+  },
+}));
+
+// A minute turning: every clock subscribed so far hears it.
+function tickClock(time: string): void {
+  clock.time = time;
+  clock.listeners.forEach(listener => listener(time));
+}
+
 let onSwitch: ReturnType<typeof vi.fn>;
 let onEnter: ReturnType<typeof vi.fn>;
 let onSearchQuery: ReturnType<typeof vi.fn>;
@@ -44,21 +62,41 @@ const press = (action: Action) => Focus.owner()?.handle(action) ?? false;
 const items = () => Array.from(document.querySelectorAll('.tab-bar-item')).map((b) => b.textContent || b.getAttribute('aria-label'));
 const focusedLabel = () => {
   Focus.flush();
-  return document.querySelector('.tab-bar-item.focused')?.textContent ?? null;
+  const el = document.querySelector('.tab-bar-item.focused');
+  // An icon tab has no text; its label is its accessible name.
+  return el ? (el.textContent || el.getAttribute('aria-label')) : null;
 };
 
 describe('TabBar', () => {
-  it('renders the app title and the full section set for an Xtream account', () => {
+  it('renders the logo alone and the full section set for an Xtream account', () => {
     expect(bar.shown).toBe(true);
-    expect(document.querySelector('.tab-bar-title')?.textContent).toBe('webOS IPTV Player');
-    expect(items()).toEqual(['Live', 'Guide', 'Movies', 'Series', 'Settings', 'Search']);
+    // The mark stands in for the name, so it carries the name for screen readers.
+    const logo = document.querySelector('.tab-bar-brand > svg.app-logo');
+    expect(logo?.getAttribute('aria-label')).toBe('iPlayer');
+    expect(document.querySelector('.tab-bar-brand')?.children.length).toBe(1);
+    expect(items()).toEqual(['Live', 'Guide', 'Movies', 'Series', 'Search', 'Settings']);
     expect(focusedLabel()).toBe(null); // shown but not focused → no ring
     expect(document.body.classList.contains('tabbar-docked')).toBe(true);
   });
 
-  it('renders only Live/Guide/Settings/Search for an M3U-only account', () => {
+  it('shows the time beside search and keeps it current without taking focus', () => {
+    clock.time = '20:36';
+    const clockEl = () => document.querySelector<HTMLElement>('.tab-bar-clock');
+    bar.setSections(true);
+    expect(clockEl()?.textContent).toBe('20:36');
+    expect(clockEl()?.previousElementSibling?.classList.contains('tab-bar-search')).toBe(true);
+    expect(clockEl()?.hasAttribute('data-focusable')).toBe(false);
+
+    bar.focus();
+    tickClock('20:37');
+    expect(clockEl()?.textContent).toBe('20:37');
+    expect(clockEl()?.getAttribute('datetime')).toBe('20:37');
+    expect(focusedLabel()).toBe('Live');
+  });
+
+  it('renders only Live/Guide/Search/Settings for an M3U-only account', () => {
     bar.setSections(false);
-    expect(items()).toEqual(['Live', 'Guide', 'Settings', 'Search']);
+    expect(items()).toEqual(['Live', 'Guide', 'Search', 'Settings']);
   });
 
   it('focus() puts the ring on the active tab', () => {
@@ -90,11 +128,13 @@ describe('TabBar', () => {
     expect(bar.focused).toBe(true);
   });
 
-  it('right from Live on an M3U account skips to Guide then Settings (no Movies/Series)', () => {
+  it('right from Live on an M3U account skips to Guide then Search and Settings (no Movies/Series)', () => {
     bar.setSections(false);
     bar.focus();
     press('right');
     expect(onSwitch).toHaveBeenLastCalledWith('epg');
+    press('right');
+    expect(onSwitch).toHaveBeenLastCalledWith('search');
     press('right');
     expect(onSwitch).toHaveBeenLastCalledWith('settings');
   });
@@ -302,7 +342,7 @@ describe('TabBar', () => {
     it('keeps the keys in the open account menu', () => {
       bar.setAccounts([{ id: 'a1', name: 'Alpha', url: 'http://host/a', source: 'xtream',
         xtream: { username: 'u', password: 'p' } }], 'a1');
-      bar.setActive('search');
+      bar.setActive('settings');
       bar.focus();
       press('right');
       press('select');
@@ -513,17 +553,17 @@ describe('TabBar inline search', () => {
   });
 
   it('caps the expanded box width so it does not span the whole bar (M3U-only leaves a big gap)', () => {
-    bar.setSections(false); // M3U-only: only Live / Guide / Settings / Search, so the gap is largest
+    bar.setSections(false); // M3U-only: only Live / Guide text tabs, so the gap is largest
     bar.setActive('search');
     bar.focus();
     press('select'); // expands
     const box = document.querySelector<HTMLInputElement>('.tab-bar-search-input')!;
     const icon = document.querySelector<HTMLElement>('.tab-bar-search .search-icon')!;
-    const settings = document.querySelector<HTMLElement>('.tab-bar-item[data-section="settings"]')!;
+    const lastTab = document.querySelector<HTMLElement>('.tab-bar-item[data-section="epg"]')!;
     const rect = (left: number, right: number): DOMRect =>
       ({ left, right, top: 0, bottom: 44, width: right - left, height: 44, x: left, y: 0, toJSON() {} }) as DOMRect;
     icon.getBoundingClientRect = () => rect(1760, 1804);
-    settings.getBoundingClientRect = () => rect(120, 240); // far left → a ~1500px gap the old code would fill
+    lastTab.getBoundingClientRect = () => rect(120, 240); // far left → a ~1500px gap the old code would fill
     (bar as unknown as { setSearchWidth(i: HTMLInputElement): void }).setSearchWidth(box);
     expect(parseInt(box.style.width, 10)).toBe(SEARCH_INPUT_MAX_WIDTH);
   });
@@ -545,12 +585,12 @@ describe('TabBar account switcher', () => {
     expect(avatar()).toBe(null);
   });
 
-  it('Right from Search focuses the avatar without switching sections', () => {
+  it('Right from Settings focuses the avatar without switching sections', () => {
     bar.setAccounts(A, 'a1');
-    bar.setActive('search');
+    bar.setActive('settings');
     bar.focus();
     onSwitch.mockClear();
-    press('right'); // Search -> account
+    press('right'); // Settings -> account
     expect(avatar()?.classList.contains('focused')).toBe(true);
     expect(onSwitch).not.toHaveBeenCalled();
   });
@@ -570,7 +610,7 @@ describe('TabBar account switcher', () => {
 
   it('Right past the avatar wraps back to Live', () => {
     bar.setAccounts(A, 'a1');
-    bar.setActive('search');
+    bar.setActive('settings');
     bar.focus();
     press('right'); // -> account
     press('right'); // wrap -> live
@@ -579,7 +619,7 @@ describe('TabBar account switcher', () => {
 
   it('Select on the avatar opens the menu; Select on a row fires onSelectAccount', () => {
     bar.setAccounts(A, 'a1');
-    bar.setActive('search');
+    bar.setActive('settings');
     bar.focus();
     press('right'); // -> account
     press('select'); // open menu
@@ -634,7 +674,7 @@ describe('TabBar account switcher', () => {
 
     it('logs mode=pointer even when the D-pad already rests on the avatar', () => {
       bar.setAccounts(A, 'a1');
-      bar.setActive('search');
+      bar.setActive('settings');
       bar.focus();
       press('right'); // -> account
       const lines = logLines(() => clickOn(avatar()!));
@@ -730,7 +770,7 @@ describe('TabBar account switcher', () => {
 
   it('logs a D-pad open of the account menu as mode=key', () => {
     bar.setAccounts(A, 'a1');
-    bar.setActive('search');
+    bar.setActive('settings');
     bar.focus();
     press('right');
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -758,7 +798,7 @@ describe('TabBar account switcher', () => {
 
   it('hiding the bar closes an open account menu', () => {
     bar.setAccounts(A, 'a1');
-    bar.setActive('search');
+    bar.setActive('settings');
     bar.focus();
     press('right');
     press('select');
@@ -772,14 +812,14 @@ describe('TabBar account switcher', () => {
 describe('TabBar parental lock', () => {
   const lock = () => { Focus.flush(); return document.querySelector<HTMLElement>('[data-lock-now]'); };
 
-  it('shows Lock now only during an unlock session, between Search and the avatar', () => {
+  it('shows Lock now only during an unlock session, between Settings and the avatar', () => {
     expect(lock()).toBe(null);
     bar.setAccounts([{ id: 'a1', name: 'Alpha', url: 'http://host/a', source: 'xtream',
       xtream: { username: 'u', password: 'p' } }], 'a1');
     bar.setParentalSession(true);
     expect(lock()?.textContent).toBe('Lock now');
 
-    bar.setActive('search');
+    bar.setActive('settings');
     bar.focus();
     onSwitch.mockClear();
     press('right');

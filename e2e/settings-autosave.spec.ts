@@ -89,11 +89,11 @@ test('every theme needs double activation and browsing never previews it', async
 test('remote focus leaves the theme unchanged until two OK presses', async ({ page }) => {
   await page.goto('/');
   await page.locator('[data-settings-target="appearance"]').click();
-  const swatch = page.locator('[data-theme-id="arctic"]');
+  const swatch = page.locator('[data-theme-id="amethyst"]');
   await swatch.evaluate(el => el.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true })));
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'midnight');
   await page.keyboard.press('Enter');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'midnight');
   await page.keyboard.press('Enter');
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'arctic');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'amethyst');
 });

@@ -162,11 +162,13 @@ export class ParentalControls {
   private tab: 'rules' | 'options' = 'rules';
   private readonly confirmationPrompt = new ConfirmationPrompt('prompt.parental');
   private readonly groupVirtualizer = new VirtualList({
+    revealMargin: CONFIG.NAVIGATION.REVEAL_MARGIN,
     itemSize: ROW_STRIDE,
     overscan: LIST_OVERSCAN,
     fallbackViewportSize: FALLBACK_LIST_HEIGHT,
   });
   private readonly itemVirtualizer = new VirtualList({
+    revealMargin: CONFIG.NAVIGATION.REVEAL_MARGIN,
     itemSize: ROW_STRIDE,
     overscan: LIST_OVERSCAN,
     fallbackViewportSize: FALLBACK_LIST_HEIGHT,

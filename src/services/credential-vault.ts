@@ -1,10 +1,12 @@
 import { isLunaAvailable, lunaRequest, type LunaResponse } from './luna';
+import { createLogger } from '../utils/logger';
 import { decodeBytes, encodeBytes, sealValue, unsealValue, utf8, type SealedValue } from './credential-codec';
 
 export { encodeBytes, type SealedValue } from './credential-codec';
 
 interface KeyResponse extends LunaResponse { handle?: string; iv?: string; output?: string; sdkVersion?: string }
 const KEY_NAME = 'iptv-storage-v1';
+const log = createLogger('Vault');
 let key: CryptoKey | null = null;
 let indexKey: CryptoKey | null = null;
 let serviceKey: string | null = null;
@@ -22,7 +24,7 @@ function keyRequest(method: string, parameters: Record<string, unknown>, uri = '
       onFailure: response => {
         clearTimeout(timer);
         const error = new Error('Protected key request failed');
-        Object.assign(error, { code: response.errorCode });
+        Object.assign(error, { code: response.errorCode, missing: /^Service does not exist/.test(response.errorText ?? '') });
         reject(error);
       },
     });
@@ -89,6 +91,23 @@ async function browserDataKey(db: IDBDatabase): Promise<Uint8Array<ArrayBuffer>>
   await saveKey(db, 'browser-v1', { wrapping, iv: encodeBytes(iv), data: encodeBytes(new Uint8Array(output)) });
   return raw;
 }
+// False only when the hub says the key manager does not exist at all, as in
+// LG's desktop Simulator; any other failure still fails closed.
+async function generateHardwareKey(): Promise<boolean> {
+  try {
+    // webOS 25 accepts mac_length on begin, but rejects it during generation.
+    await keyRequest('generateKey', { name: KEY_NAME, params: { type: 'AES', size: 256,
+      mode: ['GCM'], purpose: ['encrypt', 'decrypt'], padding: ['None'] } });
+  } catch (error) {
+    if ((error as { missing?: boolean }).missing) {
+      log.warn('Protected key service missing; using the browser key', 'event=vault.keymanager.missing');
+      return false;
+    }
+    if ((error as { code?: number }).code !== -10002) throw error;
+  }
+  return true;
+}
+
 async function initialize(): Promise<void> {
   if (typeof crypto === 'undefined' || !crypto.subtle) throw new Error('Secure storage unavailable');
   const db = await keyStore();
@@ -104,14 +123,7 @@ async function initialize(): Promise<void> {
       hardware = !Number.isFinite(sdk) || sdk >= 9;
     }
     if (wrapped) raw = decodeBytes((await hardwareCrypt(wrapped.data, wrapped)).data);
-    else if (hardware) {
-      try {
-        // webOS 25 accepts mac_length on begin, but rejects it during generation.
-        await keyRequest('generateKey', { name: KEY_NAME, params: { type: 'AES', size: 256,
-          mode: ['GCM'], purpose: ['encrypt', 'decrypt'], padding: ['None'] } });
-      } catch (error) {
-        if ((error as { code?: number }).code !== -10002) throw error;
-      }
+    else if (hardware && await generateHardwareKey()) {
       // Preserve the data key when a TV upgrades from an older webOS version.
       raw = await storedKey(db, 'browser-v1') ? await browserDataKey(db) : crypto.getRandomValues(new Uint8Array(32));
       const sealed = await hardwareCrypt(encodeBytes(raw));
@@ -119,7 +131,10 @@ async function initialize(): Promise<void> {
         throw new Error('Protected key verification failed');
       }
       await saveKey(db, 'hardware-v1', sealed);
-    } else raw = await browserDataKey(db);
+    } else {
+      hardware = false;
+      raw = await browserDataKey(db);
+    }
     if (hardware || wrapped) {
       await new Promise<void>((resolve, reject) => {
         const tx = db.transaction('keys', 'readwrite');

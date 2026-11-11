@@ -224,7 +224,10 @@ export class LivePreview {
       return;
     }
     const wasShowing = this.isShowing;
+    const hadPreview = channelView.classList.contains('has-live-preview');
     channelView.classList.toggle('has-live-preview', shouldShow);
+    // The preview column narrows the channel grid, so it reflows its columns.
+    if (shouldShow !== hadPreview) this.options.channelList.relayout();
     if (shouldShow && state) this.show(state);
     else this.hidePreview(currentView, state, wasShowing);
   }

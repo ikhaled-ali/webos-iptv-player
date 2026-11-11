@@ -1,4 +1,4 @@
-import { test, expect, routeLiveManifest, neuterVideo, SAMPLE_M3U, enterTab, type Page } from './helpers';
+import { test, expect, routeLiveManifest, neuterVideo, SAMPLE_M3U, enterTab, type Page, openPlayerMenu } from './helpers';
 import { seedXtream } from './fixtures/xtream';
 
 // A minimal ASS body with one dialogue active from t=0, so assjs renders it as
@@ -336,15 +336,14 @@ test('VOD playback suppresses the live channel sidebar and opens its VOD-only me
   await page.waitForTimeout(200);
   expect(await page.locator('#player-sidebar.visible').count()).toBe(0);
 
-  // Right opens the VOD menu with playback speed, but never the live
-  // channel rows or the "Playing:" channel name.
+  // The OSD's menu button opens the VOD menu with playback speed, but never
+  // the live channel rows or the "Playing:" channel name.
   await page.mouse.move(1900, 540);
   await expect(page.locator('#player-menu')).not.toBeVisible();
-  await page.keyboard.press('ArrowRight');
+  await openPlayerMenu(page);
   const menu = page.locator('#player-menu');
-  await expect(menu).toBeVisible();
   await expect(menu).toContainText('Quality');
-  await expect(menu).toContainText('Settings');
+  await expect(menu).not.toContainText('Settings');
   await expect(menu).toContainText('Playback Speed');
   expect(await menu.textContent()).not.toContain('Program Guide');
   expect(await menu.textContent()).not.toContain('Toggle Favorite');
@@ -357,6 +356,10 @@ test('VOD playback suppresses the live channel sidebar and opens its VOD-only me
     Object.defineProperty(element, 'duration', { configurable: true, value: 3600 });
     element.currentTime = 120;
   });
+  // Right only brings the ring to the bar; on the bar Right/Left seek.
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('#player-osd [data-key="seek"]')).toHaveClass(/focused/);
+  expect(await video.evaluate((element: HTMLVideoElement) => element.currentTime)).toBe(120);
   await page.keyboard.press('ArrowRight');
   await expect(menu).not.toBeVisible();
   expect(await video.evaluate((element: HTMLVideoElement) => element.currentTime)).toBe(130);
@@ -365,8 +368,7 @@ test('VOD playback suppresses the live channel sidebar and opens its VOD-only me
   await video.evaluate(element => {
     Object.defineProperty(element, 'duration', { configurable: true, value: NaN });
   });
-  await page.keyboard.press('ArrowRight');
-  await expect(menu).toBeVisible();
+  await openPlayerMenu(page);
 
   await menu.locator('[data-menu-action="__speed_open__"]').click();
   await menu.locator('[data-playback-rate="1.5"]').click();
@@ -404,11 +406,9 @@ test('a VOD sidecar subtitle creates its application track when selected', async
   // Open the right-edge menu into the Subtitles sub-menu; the sidecar is listed.
   await page.mouse.move(1900, 540);
   await expect(page.locator('#player-menu')).not.toBeVisible();
-  await page.keyboard.press('ArrowRight');
+  await openPlayerMenu(page);
   const menu = page.locator('#player-menu');
-  await expect(menu).toBeVisible();
-  await page.keyboard.press('ArrowDown'); // Title Info -> Settings
-  await page.keyboard.press('ArrowDown'); // Settings -> Playback Speed
+  await page.keyboard.press('ArrowDown'); // Quality -> Playback Speed
   await page.keyboard.press('ArrowDown'); // Playback Speed -> Subtitles
   await page.keyboard.press('Enter');     // open the Subtitles sub-menu
   await expect(menu).toContainText('Track 1');
@@ -452,11 +452,9 @@ test('a VOD ASS sidecar renders through the assjs overlay when selected', async 
   // (it never becomes a native <track>, so this proves the synthetic-option path).
   await page.mouse.move(1900, 540);
   await expect(page.locator('#player-menu')).not.toBeVisible();
-  await page.keyboard.press('ArrowRight');
+  await openPlayerMenu(page);
   const menu = page.locator('#player-menu');
-  await expect(menu).toBeVisible();
-  await page.keyboard.press('ArrowDown'); // Title Info -> Settings
-  await page.keyboard.press('ArrowDown'); // Settings -> Playback Speed
+  await page.keyboard.press('ArrowDown'); // Quality -> Playback Speed
   await page.keyboard.press('ArrowDown'); // Playback Speed -> Subtitles
   await page.keyboard.press('Enter');     // open the Subtitles sub-menu
   await expect(menu).toContainText('ASS 1');

@@ -111,6 +111,7 @@ describe('LivePreview', () => {
       restoreFocus: actions.onReturn,
       highlightEntryPoint: actions.onHighlightEntryPoint,
       render: vi.fn(),
+      relayout: vi.fn(),
       handleBack: vi.fn(() => false),
       setPlaying: actions.onSetPlaying,
     } as unknown as ChannelList;

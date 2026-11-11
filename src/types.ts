@@ -613,6 +613,19 @@ export interface ResumeEntry {
   watchlistOwner?: WatchlistOwner;
   /** Catalog category at save time, so parental rules apply from the Continue rail. */
   categoryId?: string;
+  /** Sidecar subtitles and subtitle-search metadata, so a resume from the Continue rail matches the detail page. */
+  subtitles?: SidecarSubtitle[];
+  searchMeta?: SearchMeta;
+  /** The episode after a finished one, not started yet (position 0). */
+  upNext?: boolean;
+}
+
+/** Episodes of one series watched to the end, for the series detail's watched marks. */
+export interface WatchedEpisodes {
+  accountId: string;
+  seriesId: string;
+  episodeIds: string[];
+  updatedAt: number;
 }
 
 // Structured metadata for online subtitle search (passed from Xtream catalog to player).

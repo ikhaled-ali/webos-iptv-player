@@ -13,73 +13,52 @@
  * are converted to legacy-compatible colors at build time.
  */
 
-/* Midnight — the default. Mirrors main.css :root so an explicit
-   data-theme="midnight" (and the Midnight swatch) resolve correctly on any
-   element, not just the unset root. Keep in sync with main.css :root. */
+/* Midnight — the default, with a red accent. Mirrors main.css :root so an
+   explicit data-theme="midnight" (and the Midnight swatch) resolve correctly
+   on any element, not just the unset root. Keep in sync with main.css :root. */
 [data-theme="midnight"] {
-  --bg-primary: #0a0a0f;
-  --catalog-hero-scrim-rgb: 10 10 15;
-  --bg-secondary: #12121a;
-  --bg-tertiary: #1a1a2e;
-  --bg-card: #16213e;
-  --text-primary: #e8e8e8;
-  --text-secondary: #a0a0b0;
-  --text-muted: #666680;
-  --accent: #00d4ff;
-  --accent-dim: #0088aa;
-  --catalog-sort-selected-bg: #007e9e;
-  --accent-rgb: 0 212 255;
+  --bg-primary: #121012;
+  --catalog-hero-scrim-rgb: 18 16 18;
+  --bg-secondary: #1b1819;
+  --bg-tertiary: #262223;
+  --bg-card: #2e292a;
+  --text-primary: #f6f2f0;
+  --text-secondary: #a9a09d;
+  --text-muted: #77706e;
+  --accent: #e5383b;
+  --accent-dim: #b3261e;
+  --catalog-sort-selected-bg: #a3221b;
+  --accent-rgb: 229 56 59;
   --accent-glow: rgb(var(--accent-rgb) / 0.3);
-  --danger: #ff4757;
-  --danger-rgb: 255 71 87;
+  --danger: #ff3b5c;
+  --danger-rgb: 255 59 92;
   --success: #2ed573;
-  --warning: #ffa502;
-  --warning-rgb: 255 165 2;
-  --border: #2a2a3e;
+  --warning: #ffc53d;
+  --warning-rgb: 255 197 61;
+  --border: #332d2e;
 }
 
+/* Ember — Midnight's surfaces with an orange accent. */
 [data-theme="ember"] {
-  --bg-primary: #14110f;
-  --catalog-hero-scrim-rgb: 20 17 15;
-  --bg-secondary: #1c1815;
-  --bg-tertiary: #241e19;
-  --bg-card: #26201b;
-  --text-primary: #f0e9e2;
-  --text-secondary: #c2b6aa;
-  --text-muted: #7a6f64;
-  --accent: #ff8c42;
-  --accent-dim: #b35a1e;
-  --catalog-sort-selected-bg: var(--accent-dim);
-  --accent-rgb: 255 140 66;
+  --bg-primary: #121012;
+  --catalog-hero-scrim-rgb: 18 16 18;
+  --bg-secondary: #1b1819;
+  --bg-tertiary: #262223;
+  --bg-card: #2e292a;
+  --text-primary: #f6f2f0;
+  --text-secondary: #a9a09d;
+  --text-muted: #77706e;
+  --accent: #ff6a3d;
+  --accent-dim: #c4471f;
+  --catalog-sort-selected-bg: #b8431f;
+  --accent-rgb: 255 106 61;
   --accent-glow: rgb(var(--accent-rgb) / 0.3);
-  --danger: #ff5a5f;
-  --danger-rgb: 255 90 95;
-  --success: #4cd07d;
-  --warning: #ffb703;
-  --warning-rgb: 255 183 3;
-  --border: #362e27;
-}
-
-[data-theme="emerald"] {
-  --bg-primary: #0a1410;
-  --catalog-hero-scrim-rgb: 10 20 16;
-  --bg-secondary: #0f1c17;
-  --bg-tertiary: #12241d;
-  --bg-card: #14261f;
-  --text-primary: #e6efe9;
-  --text-secondary: #a8c2b5;
-  --text-muted: #5f7a6d;
-  --accent: #35e0c5;
-  --accent-dim: #1c9a86;
-  --catalog-sort-selected-bg: #188372;
-  --accent-rgb: 53 224 197;
-  --accent-glow: rgb(var(--accent-rgb) / 0.3);
-  --danger: #ff6b6b;
-  --danger-rgb: 255 107 107;
-  --success: #4cd07d;
-  --warning: #ffcf56;
-  --warning-rgb: 255 207 86;
-  --border: #21362d;
+  --danger: #ff3b5c;
+  --danger-rgb: 255 59 92;
+  --success: #2ed573;
+  --warning: #ffc53d;
+  --warning-rgb: 255 197 61;
+  --border: #332d2e;
 }
 
 [data-theme="amethyst"] {
@@ -104,298 +83,16 @@
   --border: #2c2140;
 }
 
-/* Daylight — our light theme. */
-[data-theme="daylight"] {
-  --bg-primary: #f6f7f9;
-  --catalog-hero-scrim-rgb: 246 247 249;
-  --bg-secondary: #eceef2;
-  --bg-tertiary: #e2e6ec;
-  --bg-card: #ffffff;
-  --text-primary: #1f2430;
-  --text-secondary: #4a5160;
-  --text-muted: #8a91a0;
-  --accent: #2f6bff;
-  --accent-dim: #1f57e6;
-  --catalog-sort-selected-bg: var(--accent-dim);
-  --accent-rgb: 47 107 255;
-  --accent-glow: rgb(var(--accent-rgb) / 0.22);
-  --danger: #e5484d;
-  --danger-rgb: 229 72 77;
-  --success: #2ea043;
-  --warning: #d9820b;
-  --warning-rgb: 217 130 11;
-  --border: #dfe3ea;
-}
-
-[data-theme="plum-night"] {
-  --bg-primary: #282a36;
-  --catalog-hero-scrim-rgb: 40 42 54;
-  --bg-secondary: #21222c;
-  --bg-tertiary: #2d2f3c;
-  --bg-card: #343746;
-  --text-primary: #f8f8f2;
-  --text-secondary: #c8c8c2;
-  --text-muted: #6272a4;
-  --accent: #bd93f9;
-  --accent-dim: #7d5bbe;
-  --catalog-sort-selected-bg: var(--accent-dim);
-  --accent-rgb: 189 147 249;
-  --accent-glow: rgb(var(--accent-rgb) / 0.3);
-  --danger: #ff5555;
-  --danger-rgb: 255 85 85;
-  --success: #50fa7b;
-  --warning: #f1fa8c;
-  --warning-rgb: 241 250 140;
-  --border: #44475a;
-}
-
-[data-theme="arctic"] {
-  --bg-primary: #2e3440;
-  --catalog-hero-scrim-rgb: 46 52 64;
-  --bg-secondary: #272c36;
-  --bg-tertiary: #353b48;
-  --bg-card: #3b4252;
-  --text-primary: #eceff4;
-  --text-secondary: #d8dee9;
-  --text-muted: #7b88a1;
-  --accent: #88c0d0;
-  --accent-dim: #5e81ac;
-  --catalog-sort-selected-bg: #56779e;
-  --accent-rgb: 136 192 208;
-  --accent-glow: rgb(var(--accent-rgb) / 0.3);
-  --danger: #bf616a;
-  --danger-rgb: 191 97 106;
-  --success: #a3be8c;
-  --warning: #ebcb8b;
-  --warning-rgb: 235 203 139;
-  --border: #434c5e;
-}
-
-[data-theme="ocean-dark"] {
-  --bg-primary: #002b36;
-  --catalog-hero-scrim-rgb: 0 43 54;
-  --bg-secondary: #00252e;
-  --bg-tertiary: #052f39;
-  --bg-card: #073642;
-  --text-primary: #93a1a1;
-  --text-secondary: #839496;
-  --text-muted: #586e75;
-  --accent: #268bd2;
-  --accent-dim: #1a6699;
-  --catalog-sort-selected-bg: var(--accent-dim);
-  --accent-rgb: 38 139 210;
-  --accent-glow: rgb(var(--accent-rgb) / 0.3);
-  --danger: #dc322f;
-  --danger-rgb: 220 50 47;
-  --success: #859900;
-  --warning: #b58900;
-  --warning-rgb: 181 137 0;
-  --border: #0e4b59;
-}
-
-[data-theme="vintage-amber"] {
-  --bg-primary: #282828;
-  --catalog-hero-scrim-rgb: 40 40 40;
-  --bg-secondary: #1d2021;
-  --bg-tertiary: #32302f;
-  --bg-card: #3c3836;
-  --text-primary: #ebdbb2;
-  --text-secondary: #d5c4a1;
-  --text-muted: #928374;
-  --accent: #fe8019;
-  --accent-dim: #d65d0e;
-  --catalog-sort-selected-bg: #c1540d;
-  --accent-rgb: 254 128 25;
-  --accent-glow: rgb(var(--accent-rgb) / 0.3);
-  --danger: #fb4934;
-  --danger-rgb: 251 73 52;
-  --success: #b8bb26;
-  --warning: #fabd2f;
-  --warning-rgb: 250 189 47;
-  --border: #504945;
-}
-
-[data-theme="pastel-mocha"] {
-  --bg-primary: #1e1e2e;
-  --catalog-hero-scrim-rgb: 30 30 46;
-  --bg-secondary: #181825;
-  --bg-tertiary: #292c3c;
-  --bg-card: #313244;
-  --text-primary: #cdd6f4;
-  --text-secondary: #bac2de;
-  --text-muted: #6c7086;
-  --accent: #cba6f7;
-  --accent-dim: #7847d1;
-  --catalog-sort-selected-bg: var(--accent-dim);
-  --accent-rgb: 203 166 247;
-  --accent-glow: rgb(var(--accent-rgb) / 0.3);
-  --danger: #f38ba8;
-  --danger-rgb: 243 139 168;
-  --success: #a6e3a1;
-  --warning: #f9e2af;
-  --warning-rgb: 249 226 175;
-  --border: #45475a;
-}
-
-[data-theme="neon-night"] {
-  --bg-primary: #1a1b26;
-  --catalog-hero-scrim-rgb: 26 27 38;
-  --bg-secondary: #16161e;
-  --bg-tertiary: #1f2233;
-  --bg-card: #24283b;
-  --text-primary: #c0caf5;
-  --text-secondary: #a9b1d6;
-  --text-muted: #565f89;
-  --accent: #7aa2f7;
-  --accent-dim: #3d59a1;
-  --catalog-sort-selected-bg: var(--accent-dim);
-  --accent-rgb: 122 162 247;
-  --accent-glow: rgb(var(--accent-rgb) / 0.3);
-  --danger: #f7768e;
-  --danger-rgb: 247 118 142;
-  --success: #9ece6a;
-  --warning: #e0af68;
-  --warning-rgb: 224 175 104;
-  --border: #292e42;
-}
-
-/* Pastel Latte — light. */
-[data-theme="pastel-latte"] {
-  --bg-primary: #eff1f5;
-  --catalog-hero-scrim-rgb: 239 241 245;
-  --bg-secondary: #e6e9ef;
-  --bg-tertiary: #dce0e8;
-  --bg-card: #ffffff;
-  --text-primary: #4c4f69;
-  --text-secondary: #5c5f77;
-  --text-muted: #8c8fa1;
-  --accent: #8839ef;
-  --accent-dim: #7a2fd8;
-  --catalog-sort-selected-bg: var(--accent-dim);
-  --accent-rgb: 136 57 239;
-  --accent-glow: rgb(var(--accent-rgb) / 0.22);
-  --danger: #d20f39;
-  --danger-rgb: 210 15 57;
-  --success: #40a02b;
-  --warning: #df8e1d;
-  --warning-rgb: 223 142 29;
-  --border: #ccd0da;
-}
-
-/* Paper Light — light. */
-[data-theme="paper-light"] {
-  --bg-primary: #fdf6e3;
-  --catalog-hero-scrim-rgb: 253 246 227;
-  --bg-secondary: #eee8d5;
-  --bg-tertiary: #e6dfc8;
-  --bg-card: #fdf6e3;
-  --text-primary: #586e75;
-  --text-secondary: #657b83;
-  --text-muted: #93a1a1;
-  --accent: #268bd2;
-  --accent-dim: #1a6699;
-  --catalog-sort-selected-bg: var(--accent-dim);
-  --accent-rgb: 38 139 210;
-  --accent-glow: rgb(var(--accent-rgb) / 0.22);
-  --danger: #dc322f;
-  --danger-rgb: 220 50 47;
-  --success: #859900;
-  --warning: #b58900;
-  --warning-rgb: 181 137 0;
-  --border: #ded8c5;
-}
-
-/* Burgundy — layered wine reds with a restrained rose-gold accent. */
-[data-theme="burgundy"] {
-  --bg-primary: #140b10;
-  --catalog-hero-scrim-rgb: 20 11 16;
-  --bg-secondary: #1d0e15;
-  --bg-tertiary: #29131c;
-  --bg-card: #351923;
-  --text-primary: #f6e9eb;
-  --text-secondary: #ceb5bb;
-  --text-muted: #8c6d76;
-  --accent: #c67883;
-  --accent-dim: #914452;
-  --catalog-sort-selected-bg: var(--accent-dim);
-  --accent-rgb: 198 120 131;
-  --accent-glow: rgb(var(--accent-rgb) / 0.3);
-  --danger: #f05b6e;
-  --danger-rgb: 240 91 110;
-  --success: #6fba8c;
-  --warning: #d6a65d;
-  --warning-rgb: 214 166 93;
-  --border: #4a2732;
-}
-
-/* Cobalt Slate — cool graphite surfaces with a clear cobalt-blue focus. */
-[data-theme="cobalt-slate"] {
-  --bg-primary: #282c34;
-  --catalog-hero-scrim-rgb: 40 44 52;
-  --bg-secondary: #21252b;
-  --bg-tertiary: #2c313a;
-  --bg-card: #3a3f4b;
-  --text-primary: #abb2bf;
-  --text-secondary: #9da5b4;
-  --text-muted: #5c6370;
-  --accent: #61afef;
-  --accent-dim: #3e8ed0;
-  --catalog-sort-selected-bg: #3579b1;
-  --accent-rgb: 97 175 239;
-  --accent-glow: rgb(var(--accent-rgb) / 0.3);
-  --danger: #e06c75;
-  --danger-rgb: 224 108 117;
-  --success: #98c379;
-  --warning: #e5c07b;
-  --warning-rgb: 229 192 123;
-  --border: #3e4451;
-}
-
-/* Scrollbars follow muted text on dark themes. Light themes use a softer
-   midpoint so a persistent native scrollbar does not become a dark divider. */
 [data-theme="midnight"],
 [data-theme="ember"],
-[data-theme="emerald"],
-[data-theme="amethyst"],
-[data-theme="plum-night"],
-[data-theme="arctic"],
-[data-theme="ocean-dark"],
-[data-theme="vintage-amber"],
-[data-theme="pastel-mocha"],
-[data-theme="neon-night"],
-[data-theme="burgundy"],
-[data-theme="cobalt-slate"] {
+[data-theme="amethyst"] {
   --scrollbar-thumb: var(--text-muted);
 }
 
-[data-theme="daylight"] {
-  --scrollbar-thumb: #afb5c0;
-}
-
-[data-theme="pastel-latte"] {
-  --scrollbar-thumb: #a9adba;
-}
-
-[data-theme="paper-light"] {
-  --scrollbar-thumb: #b0b3a9;
-}
-
 /* Non-default themes map catalog chrome onto their own palette. Midnight keeps
-   the original catalog colors declared in main.css. */
+   the catalog colors declared in main.css. */
 [data-theme="ember"],
-[data-theme="emerald"],
-[data-theme="amethyst"],
-[data-theme="daylight"],
-[data-theme="plum-night"],
-[data-theme="arctic"],
-[data-theme="ocean-dark"],
-[data-theme="vintage-amber"],
-[data-theme="pastel-mocha"],
-[data-theme="neon-night"],
-[data-theme="pastel-latte"],
-[data-theme="paper-light"],
-[data-theme="burgundy"],
-[data-theme="cobalt-slate"] {
+[data-theme="amethyst"] {
   --catalog-surface: var(--bg-card);
   --catalog-control: var(--bg-tertiary);
   --catalog-focus: var(--accent);

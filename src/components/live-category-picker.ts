@@ -1,3 +1,4 @@
+import { CONFIG } from '../config';
 import type { Action, PlaylistEntry, XtreamLiveCategoryFilter, XtreamLiveCategorySnapshot } from '../types';
 import { html, raw, type Safe } from '../utils/dom';
 import { morph } from '../utils/morph';
@@ -97,6 +98,7 @@ export class LiveCategoryPicker {
   private controller: AbortController | null = null;
   private entries: ListEntry[] = [];
   private readonly virtualizer = new VirtualList({
+    revealMargin: CONFIG.NAVIGATION.REVEAL_MARGIN,
     overscan: LIST_OVERSCAN,
     fallbackViewportSize: FALLBACK_LIST_HEIGHT,
   });

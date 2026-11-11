@@ -14,19 +14,7 @@ export const DEFAULT_THEME = 'midnight';
 export const THEMES: ThemeMeta[] = [
   { id: 'midnight', name: 'Midnight', isLight: false },
   { id: 'ember', name: 'Ember', isLight: false },
-  { id: 'emerald', name: 'Emerald', isLight: false },
   { id: 'amethyst', name: 'Amethyst', isLight: false },
-  { id: 'daylight', name: 'Daylight', isLight: true },
-  { id: 'plum-night', name: 'Plum Night', isLight: false },
-  { id: 'arctic', name: 'Arctic', isLight: false },
-  { id: 'ocean-dark', name: 'Ocean Dark', isLight: false },
-  { id: 'vintage-amber', name: 'Vintage Amber', isLight: false },
-  { id: 'pastel-mocha', name: 'Pastel Mocha', isLight: false },
-  { id: 'neon-night', name: 'Neon Night', isLight: false },
-  { id: 'pastel-latte', name: 'Pastel Latte', isLight: true },
-  { id: 'paper-light', name: 'Paper Light', isLight: true },
-  { id: 'burgundy', name: 'Burgundy', isLight: false },
-  { id: 'cobalt-slate', name: 'Cobalt Slate', isLight: false },
 ];
 
 export function isValidTheme(id: string | null | undefined): id is string {

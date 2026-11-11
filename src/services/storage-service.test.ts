@@ -379,8 +379,8 @@ describe('StorageService', () => {
 
   it('defaults the theme to midnight and round-trips a selection', () => {
     expect(StorageService.getTheme()).toBe('midnight');
-    StorageService.setTheme('arctic');
-    expect(StorageService.getTheme()).toBe('arctic');
+    StorageService.setTheme('amethyst');
+    expect(StorageService.getTheme()).toBe('amethyst');
   });
 
   it('defaults the overlay style to dark and round-trips a selection', () => {
@@ -960,6 +960,71 @@ describe('StorageService resume store', () => {
     expect(ids('x2', 'vod')).toEqual(['10']);
     expect(StorageService.isWatchlisted('x1', 'vod', '10')).toBe(true);
     expect(StorageService.getRecentlyWatchedLive().map(e => e.channelKey)).toEqual(['ch1']);
+  });
+
+  it('counts the last 5% of a long title as finished, not only the last 30 seconds', () => {
+    StorageService.setResume(resume({ position: 5600, duration: 6000 }));
+    expect(StorageService.getResume('x1', 'vod', '10')?.position).toBe(5600);
+    StorageService.setResume(resume({ position: 5750, duration: 6000 })); // credits
+    expect(StorageService.getResume('x1', 'vod', '10')).toBeNull();
+  });
+
+  it('keeps an up-next episode listed before it has a position', () => {
+    StorageService.setResume(resume({ kind: 'episode', itemId: 'e2', position: 0, duration: 0, upNext: true }));
+    expect(StorageService.getResume('x1', 'episode', 'e2')).toMatchObject({ position: 0, upNext: true });
+  });
+
+  it('keeps an up-next episode listed through a start too short to count', () => {
+    StorageService.setResume(resume({ accountId: 'u1', kind: 'episode', itemId: 'e5', position: 0, duration: 0, upNext: true, updatedAt: 1000 }));
+    StorageService.setResume(resume({ accountId: 'u1', kind: 'episode', itemId: 'e5', position: 8, duration: 1800, updatedAt: 2000 }));
+    expect(StorageService.getResume('u1', 'episode', 'e5')).toMatchObject({ position: 0, upNext: true, updatedAt: 2000 });
+
+    StorageService.setResume(resume({ accountId: 'u1', kind: 'episode', itemId: 'e5', position: 120, duration: 1800, updatedAt: 3000 }));
+    const started = StorageService.getResume('u1', 'episode', 'e5');
+    expect(started).toMatchObject({ position: 120 });
+    expect(started?.upNext).toBeUndefined();
+
+    // A real (non-up-next) entry rewound below the minimum is still cleared.
+    StorageService.setResume(resume({ accountId: 'u1', kind: 'episode', itemId: 'e5', position: 8, duration: 1800 }));
+    expect(StorageService.getResume('u1', 'episode', 'e5')).toBeNull();
+  });
+
+  it('lists and clears one series\' episode resume points together', () => {
+    const owner = (itemId: string) => ({ kind: 'series' as const, itemId });
+    StorageService.setResume(resume({ accountId: 'a1', kind: 'episode', itemId: 'e1', watchlistOwner: owner('s1'), updatedAt: 1000 }));
+    StorageService.setResume(resume({ accountId: 'a1', kind: 'episode', itemId: 'e2', watchlistOwner: owner('s1'), updatedAt: 2000 }));
+    StorageService.setResume(resume({ accountId: 'a1', kind: 'episode', itemId: 'f1', watchlistOwner: owner('s2'), updatedAt: 3000 }));
+    StorageService.setResume(resume({ accountId: 'a2', kind: 'episode', itemId: 'e1', watchlistOwner: owner('s1') }));
+
+    expect(StorageService.getSeriesResumeList('a1', 's1').map(e => e.itemId)).toEqual(['e2', 'e1']);
+    StorageService.clearSeriesResume('a1', 's1');
+    expect(ids('a1', 'episode')).toEqual(['f1']);
+    expect(ids('a2', 'episode')).toEqual(['e1']);
+  });
+
+  it('remembers watched episodes per series once each, keeping the newest series', () => {
+    StorageService.markEpisodeWatched('w1', 's1', 'e1');
+    StorageService.markEpisodeWatched('w1', 's1', 'e2');
+    StorageService.markEpisodeWatched('w1', 's1', 'e1');
+    StorageService.markEpisodeWatched('w1', 's2', 'f1');
+    expect(StorageService.getWatchedEpisodes('w1', 's1')).toEqual(['e1', 'e2']);
+    expect(StorageService.getWatchedEpisodes('w1', 's2')).toEqual(['f1']);
+    expect(StorageService.getWatchedEpisodes('w2', 's1')).toEqual([]);
+
+    vi.useFakeTimers();
+    try {
+      for (let i = 0; i < CONFIG.XTREAM.WATCHED_MAX_SERIES; i++) {
+        vi.setSystemTime(10_000 + i);
+        StorageService.markEpisodeWatched('w3', `s${i}`, 'e1');
+      }
+      vi.setSystemTime(90_000);
+      StorageService.markEpisodeWatched('w3', 'new', 'e1');
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(StorageService.getWatchedEpisodes('w3', 's0')).toEqual([]);
+    expect(StorageService.getWatchedEpisodes('w3', 's1')).toEqual(['e1']);
+    expect(StorageService.getWatchedEpisodes('w3', 'new')).toEqual(['e1']);
   });
 
   it('stores and reads a picked online subtitle', () => {

@@ -6,6 +6,24 @@ import type { Channel, Programme } from '../types';
 import type { DvrState } from '../utils/dvr';
 import { PlayerOsd, type PlayerOsdOptions, type PlayerOsdSnapshot } from './player-osd';
 
+const clock = vi.hoisted(() => ({
+  time: '20:36',
+  listeners: [] as Array<(time: string) => void>,
+}));
+vi.mock('../utils/clock', () => ({
+  clockTime: () => clock.time,
+  onClockTick: (listener: (time: string) => void) => {
+    clock.listeners.push(listener);
+    return () => {};
+  },
+}));
+
+// A minute turning: every clock subscribed so far hears it.
+function tickClock(time: string): void {
+  clock.time = time;
+  clock.listeners.forEach(listener => listener(time));
+}
+
 const CHANNEL: Channel = {
   id: 'ch1',
   name: 'Alpha',
@@ -39,10 +57,11 @@ function snapshot(overrides: Partial<PlayerOsdSnapshot> = {}): PlayerOsdSnapshot
     channelNumber: 1,
     catchup: null,
     vodTitle: null,
+    vodHasNext: false,
+    vodInIntro: false,
     upNextSeconds: 0,
     dvr: null,
     nowPlaying: null,
-    upcoming: null,
     streamInfo: null,
     ...overrides,
   };
@@ -69,7 +88,7 @@ describe('PlayerOsd', () => {
     vi.useFakeTimers();
     localStorage.clear();
     container = document.createElement('div');
-    container.innerHTML = '<div id="player-osd"></div>';
+    container.innerHTML = '<div id="player-osd"></div><time class="osd-clock hidden"></time>';
     document.body.appendChild(container);
     state = snapshot();
     callbacks = {
@@ -82,6 +101,11 @@ describe('PlayerOsd', () => {
       onResync: vi.fn(),
       onPlayNext: vi.fn(),
       onCancelNext: vi.fn(),
+      onSeekStep: vi.fn(),
+      onNextEpisode: vi.fn(),
+      onSkipIntro: vi.fn(),
+      onOpenMenu: vi.fn(),
+      onSurfaceClick: vi.fn(),
     };
     osd = new PlayerOsd(container, callbacks);
   });
@@ -119,6 +143,25 @@ describe('PlayerOsd', () => {
     expect(container.querySelector('#player-osd')?.classList.contains('hidden')).toBe(true);
   });
 
+  it('keeps the time current only while the OSD is up', () => {
+    clock.time = '20:36';
+    const clockEl = container.querySelector('.osd-clock') as HTMLElement;
+    expect(clockEl.classList.contains('hidden')).toBe(true);
+
+    osd.show();
+    expect(clockEl.textContent).toBe('20:36');
+    expect(clockEl.closest('#player-osd')).toBeNull();
+    tickClock('20:37');
+    expect(clockEl.textContent).toBe('20:37');
+
+    osd.hide();
+    tickClock('20:38');
+    expect(clockEl.classList.contains('hidden')).toBe(true);
+    expect(clockEl.textContent).toBe('20:37');
+    osd.show();
+    expect(clockEl.textContent).toBe('20:38');
+  });
+
   it('uses the configured auto-hide timeout', () => {
     StorageService.setPlayerOsdTimeoutMs(3000);
     osd.show();
@@ -132,7 +175,6 @@ describe('PlayerOsd', () => {
     state = snapshot({
       playback: playback(120, 30),
       nowPlaying: PROGRAMME,
-      upcoming: { ...PROGRAMME, title: 'Programme 2' },
       streamInfo: {
         resolution: { tier: 'hd', label: 'Info 1' },
         hdr: 'HDR',
@@ -147,13 +189,13 @@ describe('PlayerOsd', () => {
     osd.show();
     expect(container.textContent).toContain('Alpha');
     expect(container.textContent).toContain('Programme 1');
-    expect(container.textContent).toContain('Programme 2');
     expect(container.textContent).toContain('Info 1');
     expect(container.textContent).toContain('HDR');
     expect(container.textContent).toContain('PlayReady');
     expect(container.textContent).toContain('30fps');
     expect(container.textContent).toContain('Codec 1');
     expect(container.textContent).toContain('Audio Track: Track 1');
+    expect(container.querySelector('[data-menu]')).toBeNull(); // Blue opens it on live
 
     state = snapshot({
       playback: playback(120, 30),
@@ -169,11 +211,13 @@ describe('PlayerOsd', () => {
     expect(container.textContent).toContain('Programme 3');
     expect(container.querySelector('[data-seekbar]')).not.toBeNull();
     expect(container.querySelector('[data-resync]')).not.toBeNull();
+    expect(container.querySelector('[data-menu]')).toBeNull();
 
     state = snapshot({ playback: playback(120, 30), channel: null, vodTitle: 'Video 1' });
     osd.render();
     expect(container.querySelector('.osd-channel-name')?.textContent).toContain('Video 1');
     expect(container.querySelector<HTMLElement>('.osd-progress-bar')?.style.width).toBe('25%');
+    expect(container.querySelector('[data-menu]')).not.toBeNull();
 
     state = { ...state, vodTitle: 'Video 2', upNextSeconds: 5 };
     osd.render();
@@ -282,6 +326,88 @@ describe('PlayerOsd', () => {
       clientY: 110,
     }));
     expect(callbacks.onPlayNext).toHaveBeenCalledOnce();
+  });
+
+  it('draws movie controls on the video, and the live panel again for a channel', () => {
+    state = snapshot({ playback: playback(120, 30), channel: null, vodTitle: 'Video 1' });
+    osd.show();
+    const root = container.querySelector('#player-osd')!;
+    expect(root.classList.contains('osd-vod')).toBe(true);
+    expect(root.querySelector('[data-rewind]')?.getAttribute('aria-label')).toBe('Rewind');
+    expect(root.querySelector('[data-playpause]')?.getAttribute('aria-label')).toBe('Pause');
+    expect(root.querySelector('[data-forward]')?.getAttribute('aria-label')).toBe('Fast forward');
+    expect(root.querySelector('[data-forward] text')?.textContent).toBe(String(CONFIG.PLAYER.SEEK_STEP));
+    expect(root.querySelector('.osd-vod-time')?.textContent).toBe('0:30 / 2:00');
+    expect(root.querySelector('[data-next-episode]')).toBeNull();
+
+    state = { ...state, vodHasNext: true };
+    osd.render();
+    expect(root.querySelector('[data-next-episode]')?.textContent).toContain('Next episode');
+
+    state = snapshot();
+    osd.render();
+    expect(root.classList.contains('osd-vod')).toBe(false);
+  });
+
+  it('lets the pointer pick rewind, fast forward and Next episode', () => {
+    state = snapshot({ playback: playback(120, 30), channel: null, vodTitle: 'Video 1', vodHasNext: true });
+    osd.show();
+    const click = (selector: string, left: number) => {
+      const el = container.querySelector(selector) as HTMLElement;
+      el.getBoundingClientRect = () => rect(left, 100, 60, 60);
+      container.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: left + 10, clientY: 110 }));
+    };
+    click('[data-rewind]', 0);
+    click('[data-forward]', 200);
+    click('[data-next-episode]', 400);
+    expect(callbacks.onSeekStep).toHaveBeenNthCalledWith(1, -1);
+    expect(callbacks.onSeekStep).toHaveBeenNthCalledWith(2, 1);
+    expect(callbacks.onNextEpisode).toHaveBeenCalledOnce();
+  });
+
+  it('offers Skip intro only inside the intro, by pointer and by key', () => {
+    state = snapshot({ playback: playback(120, 30), channel: null, vodTitle: 'Video 1' });
+    osd.show();
+    expect(container.querySelector('[data-skip-intro]')).toBeNull();
+
+    state = { ...state, vodInIntro: true };
+    osd.refreshProgress();
+    const button = container.querySelector('[data-skip-intro]') as HTMLElement;
+    expect(button).not.toBeNull();
+    button.getBoundingClientRect = () => rect(400, 100, 160, 60);
+    container.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 410, clientY: 110 }));
+    expect(callbacks.onSkipIntro).toHaveBeenCalledOnce();
+
+    expect(osd.focusControl('skipintro')).toBe(true);
+    osd.handleKey('select');
+    expect(callbacks.onSkipIntro).toHaveBeenCalledTimes(2);
+
+    state = { ...state, vodInIntro: false };
+    osd.refreshProgress();
+    expect(container.querySelector('[data-skip-intro]')).toBeNull();
+    expect(osd.focusedControl()).toBeNull();
+  });
+
+  it('shows the clock outside the OSD panel, with the OSD', () => {
+    const clockEl = container.querySelector('.osd-clock') as HTMLElement;
+    expect(clockEl.parentElement).toBe(container);
+    for (const vodTitle of ['Video 1', null]) {
+      state = snapshot({ playback: playback(120, 30), vodTitle });
+      osd.show();
+      expect(clockEl.classList.contains('hidden')).toBe(false);
+      expect(clockEl.textContent).toBe('20:36');
+      osd.hide();
+      expect(clockEl.classList.contains('hidden')).toBe(true);
+    }
+  });
+
+  it('lights a control a remote key drove, then lets it go', () => {
+    state = snapshot({ playback: playback(120, 30), channel: null, vodTitle: 'Video 1' });
+    osd.show();
+    osd.flash('rewind');
+    expect(container.querySelector('[data-rewind]')?.classList.contains('is-pressed')).toBe(true);
+    vi.advanceTimersByTime(300);
+    expect(container.querySelector('[data-rewind]')?.classList.contains('is-pressed')).toBe(false);
   });
 
   it('reuses keyed programme icons and removes failed URLs until cleared', () => {

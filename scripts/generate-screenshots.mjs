@@ -783,6 +783,9 @@ async function setupPage(page, {
     await page.route('**/stream/**', (r) => r.abort());
   }
   await page.route('http://127.0.0.1:8890/**', (r) => r.abort());
+  // Fixed synthetic weather, so screenshots never show where they were taken.
+  await page.route('https://get.geojs.io/**', fulfill(JSON.stringify({ latitude: '0', longitude: '0', country_code: 'l1' }), 'application/json'));
+  await page.route('https://api.open-meteo.com/**', fulfill(JSON.stringify({ current: { temperature_2m: 21, weather_code: 2, is_day: 1 } }), 'application/json'));
 
   if (upload) {
     await page.route(`http://127.0.0.1:${UPLOAD_PORT}/info`, fulfill(JSON.stringify(SERVICE_INFO), 'application/json'));

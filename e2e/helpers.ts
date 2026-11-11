@@ -45,6 +45,12 @@ export async function stubUploadService(page: Page): Promise<void> {
   await page.route('http://127.0.0.1:8890/**', (route) => route.abort());
 }
 
+/** Keep tests off the live weather lookups; the bar then shows no weather. */
+export async function stubWeather(page: Page): Promise<void> {
+  await page.route('https://get.geojs.io/**', (route) => route.abort());
+  await page.route('https://api.open-meteo.com/**', (route) => route.abort());
+}
+
 /** Serve an M3U body for the configured playlist URL (glob-matched by filename). */
 export async function routePlaylist(page: Page, body = SAMPLE_M3U): Promise<void> {
   await page.route('**/playlist.m3u', (route) =>
@@ -151,6 +157,7 @@ export const test = base.extend({
     }
     await installKeymanagerMock(page);
     await stubUploadService(page);
+    await stubWeather(page);
     const ringFailures = await auditRings(page, process.env.RING_AUDIT,
       `${testInfo.project.name} › ${testInfo.titlePath.slice(1).join(' › ')}`);
     await use(page);
@@ -275,3 +282,25 @@ function installRingAudit(recordNone: boolean): void {
 // cannot run there; the behavior they observe is covered by the `chromium`
 // project.
 export const isChromium53 = (): boolean => test.info().project.name === 'chromium-53-simulation';
+
+/** Opens the player menu as a remote does: Blue on live, which has no menu
+ *  button; on VOD, the ring along the OSD controls to the menu button, then
+ *  OK. */
+export async function openPlayerMenu(page: Page): Promise<void> {
+  if (await page.locator('#player-osd.osd-vod').count() === 0) {
+    await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 406, bubbles: true })));
+    await expect(page.locator('#player-menu')).toBeVisible();
+    return;
+  }
+  const focused = () => page.locator('#player-osd .focused')
+    .evaluateAll((els) => els[0]?.getAttribute('data-key') ?? null);
+  for (let i = 0; i < 12; i++) {
+    const key = await focused();
+    if (key === 'menu') break;
+    // Off the bar first: Left/Right on it seek.
+    await page.keyboard.press(key === 'seek' ? 'ArrowDown' : 'ArrowRight');
+  }
+  await expect(page.locator('#player-osd [data-key="menu"]')).toHaveClass(/focused/);
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#player-menu')).toBeVisible();
+}

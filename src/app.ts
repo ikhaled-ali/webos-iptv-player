@@ -48,6 +48,7 @@ import {
 import { setDisplayTz } from './utils/time';
 import { initTheme, applyTheme, applyOverlayStyle, applyTextSize } from './services/theme-service';
 import { applyAnimationMode } from './services/motion-service';
+import { startWeather } from './services/weather-service';
 import { channelKey } from './utils/channel';
 import { isSourceEnabled } from './utils/playlist';
 import { truncate } from './utils/text';
@@ -268,6 +269,10 @@ class App {
       (idx, catchup, scope) => this.playChannel(idx, catchup, scope),
       () => this.player.getCurrentCatchupStart(),
     );
+    this.player.setMenuOpener(() => {
+      this.sidebar.hide();
+      this.menu.show();
+    });
     this.menu = new PlayerMenu(
       this.views.player,
       () => this.player.getCurrentChannel(),
@@ -389,6 +394,7 @@ class App {
       onLockNow: () => ParentalControlService.lock('lock-now'),
     });
     this.tabBar.init();
+    startWeather((weather) => this.tabBar.setWeather(weather));
 
     KeyHandler.init();
     KeyHandler.setHandler((action, event) => {
@@ -1661,7 +1667,7 @@ class App {
     }
     if (action === 'number') hideNumberEntry();
 
-    const playbackKeys = !owner || owner.id === 'view.player'
+    const playbackKeys = !owner || owner.id === 'view.player' || owner.id === 'player.controls'
       || owner.id === 'player.menu' || owner.id === 'player.sidebar';
     if (currentView === 'player' && playbackKeys
         && (action === 'red' || action === 'green' || action === 'yellow')) {
@@ -1673,6 +1679,16 @@ class App {
       }
       this.menu.hide();
       this.player.handleAction(action);
+      return;
+    }
+    // Live has no menu button in its OSD: Blue opens and closes the menu.
+    if (currentView === 'player' && playbackKeys && action === 'blue' && !this.player.isVod()) {
+      this.sidebar.hide();
+      if (this.menu.visible) this.menu.hide();
+      else {
+        this.player.hideOSD();
+        this.menu.show();
+      }
       return;
     }
 
@@ -1788,33 +1804,23 @@ class App {
         break;
       case 'player':
         if (this.player.isVod()) {
-          // The seek controls keep Left/Right while visible; otherwise Right
-          // opens the VOD menu, and Left closes it.
+          // The menu opens from the OSD's menu button; Left closes it.
           if (this.menu.visible) {
             if (action === 'up' || action === 'down' || action === 'select') this.menu.handleAction(action);
             else if (action === 'left') this.menu.hide();
-          } else if (action === 'right' && !this.player.canSeek()) {
-            this.menu.show();
           } else {
             this.player.handleAction(action, event);
           }
           break;
         }
-        // While the OSD is up on seekable catch-up, Left/Right seek instead of
-        // opening the sidebar/menu (which stay reachable once the OSD hides).
-        if ((action === 'left' || action === 'right')
-            && !this.sidebar.visible && !this.menu.visible && this.player.canSeek()) {
-          this.player.handleAction(action, event);
-          break;
-        }
-        if (action === 'left') {
-          if (this.menu.visible) this.menu.hide();
-          else if (this.sidebar.visible) this.sidebar.handleAction(action);
-          else this.sidebar.show();
-        } else if (action === 'right') {
+        // Left/Right belong to the OSD while it shows a seek bar or holds the
+        // ring; otherwise Left opens the sidebar. The menu opens only from the
+        // OSD's menu button.
+        if (action === 'left' || action === 'right') {
           if (this.sidebar.visible) this.sidebar.handleAction(action);
           else if (this.menu.visible) this.menu.hide();
-          else this.menu.show();
+          else if (action === 'left' && !this.player.canSeek() && !this.player.osdHasFocus()) this.sidebar.show();
+          else this.player.handleAction(action, event);
         } else if (this.sidebar.visible && (
           action === 'up' || action === 'down' ||
           action === 'channel_up' || action === 'channel_down' ||

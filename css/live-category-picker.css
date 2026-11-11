@@ -178,9 +178,7 @@
 }
 
 .live-category-row.focused {
-  outline: 3px solid var(--focus-ring);
-  outline-offset: -3px;
-  background: var(--bg-tertiary);
+  background-image: var(--focus-layer);
 }
 
 .live-category-row > span:not(.favorite-checkbox) {

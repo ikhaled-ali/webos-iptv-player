@@ -47,6 +47,17 @@ describe('VirtualList', () => {
     expect(list.scrollOffset).toBe(0);
   });
 
+  it('keeps a margin between a revealed item and the viewport edges', () => {
+    const list = createList();
+
+    expect(list.ensureVisible(3, 300, 20)).toBe(true);
+    expect(list.scrollOffset).toBe(120);
+    expect(list.ensureVisible(1, 300, 20)).toBe(true);
+    expect(list.scrollOffset).toBe(80);
+    expect(list.ensureVisible(0, 300, 20)).toBe(true);
+    expect(list.scrollOffset).toBe(0);
+  });
+
   it('centers an item and clamps offsets at the start', () => {
     const list = createList();
 

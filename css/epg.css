@@ -63,7 +63,7 @@
 .epg-reminder-entry:hover,
 .epg-reminder-entry.focused {
   color: var(--text-primary);
-  background: rgb(var(--accent-rgb) / 0.14);
+  background-image: var(--focus-layer);
 }
 
 .epg-legend-dot {
@@ -120,11 +120,8 @@
 }
 
 .epg-playlist-tabs .playlist-tab.focused {
-  color: var(--accent);
-  border-color: transparent !important;
-  border-bottom-color: var(--accent) !important;
-  background: rgb(var(--accent-rgb) / 0.14);
-  box-shadow: inset 0 0 0 1px var(--accent-dim) !important;
+  color: var(--text-primary);
+  background-image: var(--focus-layer);
 }
 
 .epg-channel-pane-header {
@@ -189,9 +186,7 @@
 
 .epg-filter-control.focused {
   color: var(--text-primary);
-  border-color: var(--accent);
-  background: rgb(var(--accent-rgb) / 0.14);
-  outline: 1px solid var(--accent);
+  background-image: var(--focus-layer);
 }
 
 .epg-group-button-label {
@@ -285,8 +280,7 @@
 
 .epg-group-option.focused {
   color: var(--text-primary);
-  border-color: var(--accent);
-  background: rgb(var(--accent-rgb) / 0.16);
+  background-image: var(--focus-layer);
 }
 
 .epg-group-option-label {
@@ -319,20 +313,17 @@
 }
 
 .epg-search-wrap.focused {
-  color: var(--accent);
-  border-color: var(--accent);
-  background: rgb(var(--accent-rgb) / 0.1);
-  outline: 1px solid var(--accent);
+  color: var(--text-primary);
+  background-image: var(--focus-layer);
 }
 
 /* Kept in its own rule: Chromium 53 (webOS 4) drops an entire rule whose
    selector list holds a pseudo-class it cannot parse, so pairing this with
    `.focused` above would take the D-pad focus styling down with it. */
 .epg-search-wrap:focus-within {
-  color: var(--accent);
-  border-color: var(--accent);
-  background: rgb(var(--accent-rgb) / 0.1);
-  outline: 1px solid var(--accent);
+  color: var(--text-primary);
+  border-color: transparent;
+  background-image: var(--focus-layer);
 }
 
 .epg-search-icon {
@@ -409,9 +400,7 @@
 }
 
 .epg-channel-item.focused {
-  background: rgb(var(--accent-rgb) / 0.2);
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
+  background-image: var(--focus-layer);
 }
 
 .epg-ch-num {
@@ -529,8 +518,7 @@
 }
 
 .epg-date-item.focused {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  background-image: var(--focus-layer);
 }
 
 .epg-programmes-pane {
@@ -586,9 +574,7 @@
 .epg-programme-item.state-live .epg-prog-time { color: var(--live); }
 
 .epg-programme-item.focused {
-  background: rgb(var(--accent-rgb) / 0.2);
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
+  background-image: var(--focus-layer);
 }
 .epg-programme-item.focused .epg-prog-title { color: var(--text-primary); }
 .epg-programme-item.focused .epg-prog-desc { opacity: 1; }

@@ -32,7 +32,6 @@
  * rule is both more specific and linked later — so on a gap-less engine it
  * replaces the gap instead of adding to it. Restate the sums.
  */
-html.q-no-flex-gap .tab-bar-inner > .tab-bar-account { margin-left: 52px; }
 html.q-no-flex-gap .epg-prog-title > .epg-bell-glyph { margin-left: 18px; }
 html.q-no-flex-gap .settings-field > .settings-item-hint { margin-top: 14px; }
 html.q-no-flex-gap .live-preview-favorite { margin-right: 20px; }
@@ -51,7 +50,15 @@ html.q-no-flex-gap .parental-header .parental-account,
 html.q-no-flex-gap .parental-row strong,
 html.q-no-flex-gap .player-sidebar .sidebar-picker-arrow,
 html.q-no-flex-gap .player-menu .menu-item-value,
+html.q-no-flex-gap .osd-channel > .osd-clock,
 html.q-no-flex-gap .tab-bar-search { margin-left: auto; }
+
+/* The tab bar's pulls into its 48px gap (tab-bar.css). */
+html.q-no-flex-gap .tab-bar-inner > .tab-bar-icon { margin-left: 37px; }
+html.q-no-flex-gap .tab-bar-inner > .tab-bar-lock,
+html.q-no-flex-gap .tab-bar-inner > .tab-bar-clock,
+html.q-no-flex-gap .tab-bar-inner > .tab-bar-weather,
+html.q-no-flex-gap .tab-bar-inner > .tab-bar-account { margin-left: 20px; }
 
 /*
  * The All categories rail shares .catalog-rail-track but is a block, not a

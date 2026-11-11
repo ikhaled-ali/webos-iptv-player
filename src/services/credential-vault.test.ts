@@ -160,6 +160,31 @@ describe('protected credential persistence', () => {
     expect(localStorage.getItem('iptv_sealed_credentials_v2')).toBeNull();
   });
 
+  it('uses the browser key when the key manager service does not exist, as in the Simulator', async () => {
+    class SimulatorBridge extends Bridge {
+      call(uri: string, payload: string): void {
+        if (uri.indexOf('keymanager3') >= 0) {
+          Promise.resolve().then(() => this.onservicecallback?.(JSON.stringify({ returnValue: false, errorCode: -1,
+            errorText: 'Service does not exist: com.webos.service.keymanager3.' })));
+        } else super.call(uri, payload);
+      }
+    }
+    Object.defineProperty(window, 'PalmServiceBridge', { configurable: true, value: SimulatorBridge });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    localStorage.setItem('iptv_playlists', JSON.stringify([{ url: URL }]));
+    let local = await import('./secure-local');
+    await local.initSecureLocal();
+    expect(local.localValue('iptv_playlists')).toContain(SECRET);
+    await local.flushSecureLocal();
+    expect(JSON.stringify(localStorage)).not.toContain(SECRET);
+    expect(warn.mock.calls.some(args => args.join(' ').includes('event=vault.keymanager.missing'))).toBe(true);
+    vi.resetModules();
+    local = await import('./secure-local');
+    await local.initSecureLocal();
+    expect(local.localValue('iptv_playlists')).toContain(SECRET);
+    warn.mockRestore();
+  });
+
   it('rejects tampering and context swaps and uses a fresh nonce for every write', async () => {
     const vault = await import('./credential-vault');
     await vault.initCredentialVault();

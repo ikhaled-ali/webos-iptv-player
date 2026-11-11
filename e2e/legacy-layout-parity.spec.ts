@@ -1,5 +1,5 @@
 import { writeProtectedLocal, installKeymanagerMock, readProtected } from './protected-storage';
-import { enterTab, test, expect, isChromium53, neuterVideo, routeLiveManifest, routePlaylist, type Page } from './helpers';
+import { enterTab, test, expect, isChromium53, neuterVideo, routeLiveManifest, routePlaylist, type Page, openPlayerMenu } from './helpers';
 import { type Browser } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { findGappedLooseText, measureLooseText, newLegacyPage, pixelDiff } from './pixel-parity';
@@ -322,8 +322,7 @@ const M3U_SCREENS: Screen[] = [
     name: 'player-menu',
     budget: 0.001,
     go: async (p) => {
-      await p.keyboard.press('ArrowRight');
-      await expect(p.locator('#player-menu')).toBeVisible();
+      await openPlayerMenu(p);
     },
   },
   {
@@ -646,8 +645,7 @@ const XTREAM_SCREENS: Screen[] = [
     name: 'vod-menu',
     budget: 0.001,
     go: async (p) => {
-      await p.keyboard.press('ArrowRight');
-      await expect(p.locator('#player-menu')).toBeVisible();
+      await openPlayerMenu(p);
     },
   },
   {

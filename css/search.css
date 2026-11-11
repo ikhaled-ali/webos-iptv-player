@@ -28,7 +28,7 @@
   border-radius: 12px;
   outline: none;
 }
-.search-input.focused { border-color: var(--accent, #3ea6ff); }
+.search-input.focused { background-image: var(--focus-layer); }
 .search-results { display: block; }
 .search-empty { margin-top: 40px; }
 
@@ -99,6 +99,7 @@
 /* Channel results carry 16:9-ish logos, not portrait posters — use a landscape
    box and contain the logo so it isn't cropped. */
 .search-channel-tile .catalog-poster-wrap { height: 124px; }
+.search-channel-tile.catalog-tile::before { height: 124px; }
 .search-channel-tile .catalog-poster { object-fit: contain; }
 
 /* M3U-only Search: a vertical list of channel rows (Xtream uses the poster
@@ -119,8 +120,7 @@
   cursor: pointer;
 }
 .search-channel-row.focused {
-  background: var(--bg-tertiary);
-  border-color: var(--focus-ring);
+  background-image: var(--focus-layer);
 }
 .search-row-logo {
   width: 84px;
@@ -161,8 +161,7 @@
   cursor: pointer;
 }
 .search-program-row.focused {
-  border-color: var(--focus-ring);
-  background: var(--bg-tertiary);
+  background-image: var(--focus-layer);
 }
 .search-program-time {
   width: 150px;
@@ -302,10 +301,6 @@
   margin-right: 8px;
 }
 .search-history-clear.focused {
-  color: #fff;
-  background: var(--danger);
-  border-color: var(--danger) !important;
-  box-shadow:
-    0 0 0 3px rgb(var(--danger-rgb) / 0.24),
-    0 0 20px rgb(var(--danger-rgb) / 0.35);
+  color: var(--danger);
+  background-image: var(--focus-layer);
 }

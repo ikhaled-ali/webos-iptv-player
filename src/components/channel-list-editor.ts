@@ -75,6 +75,7 @@ export class ChannelListEditor {
   private epgFocusPosition = -1;
   private epgKeyboardVisible = false;
   private readonly epgVirtualizer = new VirtualList({
+    revealMargin: CONFIG.NAVIGATION.REVEAL_MARGIN,
     itemSize: EPG_OPTION_HEIGHT,
     overscan: EPG_OVERSCAN,
     fallbackViewportSize: EPG_VIEWPORT_HEIGHT,

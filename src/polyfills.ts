@@ -41,7 +41,16 @@ export function scrollIntoViewFallback(
     ancestor = ancestor.parentElement
   ) {
     const style = getComputedStyle(ancestor);
-    const item = element.getBoundingClientRect();
+    const rect = element.getBoundingClientRect();
+    // Native scrollIntoView keeps the element's scroll-margin clear; the
+    // stylesheets mirror it in --reveal-margin, which Chromium 53 can read.
+    const margin = parseFloat(getComputedStyle(element).getPropertyValue('--reveal-margin')) || 0;
+    const item = {
+      top: rect.top - margin,
+      bottom: rect.bottom + margin,
+      left: rect.left - margin,
+      right: rect.right + margin,
+    };
     const viewport = ancestor.getBoundingClientRect();
 
     if (

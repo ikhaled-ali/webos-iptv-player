@@ -146,7 +146,7 @@ describe('PlayerMenu', () => {
   it('renders the action items and the playing channel name on show', () => {
     menu.show();
     expect(menu.visible).toBe(true);
-    expect(items().map(i => i.dataset.menuAction)).toEqual(['red', 'green', 'yellow', 'blue']);
+    expect(items().map(i => i.dataset.menuAction)).toEqual(['red', 'green', 'yellow']);
     expect(el.textContent).toContain('Alpha');
     expect(items()[0].classList.contains('focused')).toBe(true);
   });
@@ -287,9 +287,9 @@ describe('PlayerMenu', () => {
     beforeEach(() => menu.show());
 
     it('clicking an item emits its action and hides', () => {
-      el.querySelector<HTMLElement>('[data-menu-action="blue"]')!
+      el.querySelector<HTMLElement>('[data-menu-action="green"]')!
         .dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      expect(onAction).toHaveBeenCalledWith('blue');
+      expect(onAction).toHaveBeenCalledWith('green');
       expect(menu.visible).toBe(false);
     });
 
@@ -695,7 +695,7 @@ describe('PlayerMenu', () => {
   describe('VOD mode (no channel)', () => {
     beforeEach(() => getCurrentChannel.mockReturnValue(null));
 
-    it('keeps the Quality and Settings color rows in VOD mode', () => {
+    it('keeps the Quality color row in VOD mode, without Settings', () => {
       audioTracks = [
         { index: 0, label: 'Track 1', active: true, available: true },
         { index: 1, label: 'Track 2', active: false, available: true },
@@ -706,27 +706,23 @@ describe('PlayerMenu', () => {
       expect(actions).not.toContain('red');   // Program Guide — no EPG for VOD
       expect(actions).not.toContain('green');  // Toggle Favorite — channels only
       expect(actions).toContain('yellow');
-      expect(actions).toContain('blue');       // Settings
+      expect(actions).not.toContain('blue');   // Settings — the Blue key opens it
       expect(el.textContent).toContain('Quality');
-      expect(el.textContent).toContain('Settings');
+      expect(el.textContent).not.toContain('Settings');
       expect(el.textContent).toContain('Audio Track');
       expect(el.textContent).toContain('Subtitles');
       expect(el.textContent).not.toContain('Playing:'); // no channel name
     });
 
-    it('still shows Info and Settings even without any tracks', () => {
+    it('still shows Quality even without any tracks', () => {
       menu.show();
-      expect(items().map(i => i.dataset.menuAction)).toEqual(['yellow', 'blue']);
+      expect(items().map(i => i.dataset.menuAction)).toEqual(['yellow']);
     });
 
-    it('selecting Info or Settings emits the color action to the host', () => {
+    it('selecting Quality emits the color action to the host', () => {
       menu.show();
-      menu.handleAction('select'); // Info (first row)
+      menu.handleAction('select');
       expect(onAction).toHaveBeenCalledWith('yellow');
-      menu.show();
-      menu.handleAction('down');
-      menu.handleAction('select'); // Settings (second row)
-      expect(onAction).toHaveBeenCalledWith('blue');
     });
   });
 });

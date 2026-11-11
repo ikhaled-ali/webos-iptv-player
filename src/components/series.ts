@@ -1,5 +1,6 @@
+import { CONFIG } from '../config';
 import type { Action, PlaylistEntry, SeriesCategory, SeriesItem, SeriesInfo, Episode, ResumeEntry, ResumeKind, VodQueueItem, WatchlistEntry } from '../types';
-import { html, raw, Safe } from '../utils/dom';
+import { html, raw, Safe, visibleHeight } from '../utils/dom';
 import { morph } from '../utils/morph';
 import { StorageService } from '../services/storage-service';
 import { loadSeriesCategories, loadSeries, loadSeriesInfo } from '../services/xtream-catalog';
@@ -40,6 +41,7 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
   private measuredEpisodes = new Set<number>();
   private detailController: AbortController | null = null;
   private readonly episodeVirtualizer = new VirtualList({
+    revealMargin: CONFIG.NAVIGATION.REVEAL_MARGIN,
     overscan: EPISODE_OVERSCAN,
     fallbackViewportSize: EPISODE_VIEWPORT_FALLBACK,
   });
@@ -101,11 +103,6 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
     return entry ? this.watchlistEntryToSeries(entry) : null;
   }
 
-  protected heroFallback(): SeriesItem | null {
-    const entry = this.visibleWatchlist('series')[0];
-    return entry ? this.watchlistEntryToSeries(entry) : null;
-  }
-
   private watchlistEntryToSeries(entry: WatchlistEntry): SeriesItem {
     return {
       accountId: entry.accountId,
@@ -120,6 +117,7 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
   protected selectExtra(el: HTMLElement): boolean {
     if (el.dataset.action === 'watchlist') { this.toggleWatchlist(); return true; }
     if (el.dataset.resumeEpisode !== undefined) { this.playResume(el.dataset.resumeEpisode); return true; }
+    if (el.dataset.playEpisode !== undefined) { this.playEpisode(el.dataset.playEpisode); return true; }
     if (el.dataset.season !== undefined) { this.selectSeason(Number(el.dataset.season)); return true; }
     if (el.dataset.episodeId !== undefined) { this.playEpisode(el.dataset.episodeId); return true; }
     return false;
@@ -167,7 +165,13 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
     }
     if (this.mode === 'detail' && this.currentSeries === series) {
       this.detailLoading = false;
-      this.selectedSeason = this.currentInfo?.seasons[0] ?? 0;
+      // Open on the season of the episode the main button plays, with that
+      // button focused unless the user already moved off the loading screen.
+      const target = this.continueTarget();
+      this.selectedSeason = (target && this.seasonListing(target.episode.id))
+        ?? this.currentInfo?.seasons[0] ?? 0;
+      const key = this.focusedKey();
+      if (target && (key === null || key === 'watchlist')) this.focusScope.track(null);
       this.renderDetail();
     }
   }
@@ -178,6 +182,17 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
     this.episodeSource = null;
     this.episodeVirtualizer.setScrollOffset(0);
     this.renderDetail();
+  }
+
+  // The season group an episode is listed under, which a provider may number
+  // differently from the episode's own season field.
+  private seasonListing(episodeId: string): number | null {
+    const info = this.currentInfo;
+    if (!info) return null;
+    for (const season of info.seasons) {
+      if ((info.episodesBySeason[season] ?? []).some((e) => e.id === episodeId)) return season;
+    }
+    return null;
   }
 
   private findEpisode(episodeId: string): Episode | null {
@@ -191,7 +206,7 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
   }
 
   private episodeLabel(series: SeriesItem, ep: Episode): string {
-    const code = `S${ep.season}E${ep.episode}`;
+    const code = episodeCode(ep);
     return ep.title ? `${series.name} — ${code} — ${ep.title}` : `${series.name} — ${code}`;
   }
 
@@ -212,13 +227,49 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
     };
   }
 
-  private episodesAfter(episodeId: string, series: SeriesItem): VodQueueItem[] {
+  private allEpisodes(): Episode[] {
     const info = this.currentInfo;
     if (!info) return [];
-    const episodes = info.seasons.reduce<Episode[]>(
+    return info.seasons.reduce<Episode[]>(
       (all, season) => all.concat(info.episodesBySeason[season] ?? []), []);
+  }
+
+  private episodesAfter(episodeId: string, series: SeriesItem): VodQueueItem[] {
+    const episodes = this.allEpisodes();
     const index = episodes.findIndex((ep) => ep.id === episodeId);
     return index < 0 ? [] : episodes.slice(index + 1).map((ep) => this.episodePlayback(series, ep));
+  }
+
+  // The episode the detail's main button plays: the series' latest Continue
+  // Watching episode, else the one after the last watched, else the first.
+  private continueTarget(): { episode: Episode; resume: ResumeEntry | null } | null {
+    const series = this.currentSeries;
+    const a = this.account;
+    const episodes = this.allEpisodes();
+    if (!series || !a || !episodes.length) return null;
+    const byId: Record<string, Episode> = {};
+    for (const ep of episodes) byId[ep.id] = ep;
+    const latest = StorageService.getSeriesResumeList(a.id, series.seriesId)
+      .find(entry => !!byId[entry.itemId]);
+    if (latest) return { episode: byId[latest.itemId], resume: latest };
+    const watched = StorageService.getWatchedEpisodes(a.id, series.seriesId);
+    let last = -1;
+    episodes.forEach((ep, index) => { if (watched.indexOf(ep.id) >= 0) last = index; });
+    return { episode: episodes[last + 1] ?? episodes[0], resume: null };
+  }
+
+  private continueButton(): Safe | '' {
+    const target = this.continueTarget();
+    if (!target) return '';
+    const resume = !!target.resume && !target.resume.upNext;
+    return html`
+      <button class="detail-btn detail-btn-primary" data-focusable data-key="continue"
+              data-play-episode="${target.episode.id}">
+        <span class="detail-btn-icon">${raw(PLAY_ICON)}</span>
+        <span>${t(resume ? 'common.resume' : 'catalog.play')}</span>
+        <span class="detail-btn-code">${episodeCode(target.episode)}</span>
+      </button>
+    `;
   }
 
   private playEpisode(episodeId: string): void {
@@ -256,7 +307,8 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
       categoryId: r.categoryId,
       parentalItemId: r.watchlistOwner?.itemId,
       resumeSecs: r.position,
-      subtitles: [],
+      subtitles: r.subtitles ?? [],
+      searchMeta: r.searchMeta,
       episodeQueue: r.episodeQueue,
       watchlistOwner: r.watchlistOwner,
     });
@@ -273,8 +325,10 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
     `;
   }
 
-  private episodeRow(accountId: string, ep: Episode): Safe {
+  private episodeRow(accountId: string, ep: Episode, watched: string[]): Safe {
     const saved = StorageService.getResume(accountId, 'episode', ep.id);
+    // An up-next entry has no position yet; it isn't a resume point.
+    const started = saved && !saved.upNext ? saved : null;
     const mins = ep.durationSecs > 0 ? t('catalog.minutes', { count: Math.floor(ep.durationSecs / 60) }) : '';
     return html`
       <div class="episode-row" data-focusable data-key="ep:${ep.id}" data-episode-id="${ep.id}">
@@ -283,11 +337,16 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
           <div class="episode-title">
             <span class="episode-num">E${ep.episode}</span>
             <span class="episode-name">${ep.title}</span>
-            ${saved ? html`<span class="episode-resume">${t('common.resume')}</span>` : ''}
+            ${started
+              ? html`<span class="episode-resume">${t('common.resume')}</span>`
+              : watched.indexOf(ep.id) >= 0
+                ? html`<span class="episode-watched">${t('epg.watched')}</span>`
+                : ''}
           </div>
           ${mins ? html`<div class="episode-meta">${mins}</div>` : ''}
           ${ep.plot ? html`<p class="episode-plot">${ep.plot}</p>` : ''}
         </div>
+        ${started ? this.progressBar(started.position, started.duration) : ''}
       </div>
     `;
   }
@@ -313,6 +372,7 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
     }
     const focusedKey = this.focusedKey();
     const watchlisted = StorageService.isWatchlisted(a.id, 'series', series.seriesId);
+    const watched = StorageService.getWatchedEpisodes(a.id, series.seriesId);
     const previousScroller = this.layer('detail').querySelector<HTMLElement>('.series-detail');
     const previousEpisodes = this.layer('detail').querySelector<HTMLElement>('.series-episodes');
     this.episodeVirtualizer.setLeadingSize(
@@ -321,7 +381,7 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
     if (restoreFocus && previousScroller) {
       this.episodeVirtualizer.setScrollOffset(previousScroller.scrollTop);
     }
-    const episodeViewport = previousScroller?.clientHeight || EPISODE_VIEWPORT_FALLBACK;
+    const episodeViewport = (previousScroller && visibleHeight(previousScroller)) || EPISODE_VIEWPORT_FALLBACK;
     const focusedEpisodeIndex = focusedKey === null ? -1 : this.episodeIndexOf(focusedKey);
     if (restoreFocus && focusedEpisodeIndex >= 0) this.episodeFocusIndex = focusedEpisodeIndex;
     this.episodeFocusIndex = Math.max(0, Math.min(this.episodeFocusIndex, episodes.length - 1));
@@ -341,6 +401,7 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
             ${info?.cast ? html`<div class="detail-cast"><span class="detail-label">${t('catalog.cast')}</span> ${info.cast}</div>` : ''}
             ${info?.director ? html`<div class="detail-cast"><span class="detail-label">${t('catalog.director')}</span> ${info.director}</div>` : ''}
             <div class="detail-actions">
+              ${this.detailLoading ? '' : this.continueButton()}
               <button class="detail-btn" data-focusable data-key="watchlist" data-action="watchlist">
                 <span class="detail-btn-icon">${raw(watchlistIcon(watchlisted))}</span>
                 <span>${t(watchlisted ? 'catalog.removeWatchlist' : 'catalog.addWatchlist')}</span>
@@ -376,7 +437,7 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
                            data-key="episode-cell:${ep.id}"
                            data-episode-index="${index}"
                            style="top:${this.episodeVirtualizer.getItemOffset(index)}px">
-                        ${this.episodeRow(a.id, ep)}
+                        ${this.episodeRow(a.id, ep, watched)}
                       </div>
                     `;
                   })}
@@ -437,7 +498,7 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
       return undefined;
     }
     const list = this.layer('detail').querySelector<HTMLElement>('.series-detail');
-    const viewport = list?.clientHeight || EPISODE_VIEWPORT_FALLBACK;
+    const viewport = (list && visibleHeight(list)) || EPISODE_VIEWPORT_FALLBACK;
     this.episodeFocusIndex = index;
     this.episodeVirtualizer.ensureVisible(index, viewport);
     if (instant) this.instantEpisodeScroll = true;
@@ -503,4 +564,8 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
       : list.offsetTop - scroller.offsetTop;
     return Math.max(0, top);
   }
+}
+
+function episodeCode(ep: Pick<Episode, 'season' | 'episode'>): string {
+  return `S${ep.season}E${ep.episode}`;
 }

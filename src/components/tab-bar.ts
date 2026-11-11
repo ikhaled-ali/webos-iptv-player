@@ -1,8 +1,12 @@
 import type { Action, PlaylistEntry } from '../types';
-import { html, raw } from '../utils/dom';
+import { html, raw, type Safe } from '../utils/dom';
 import { morph } from '../utils/morph';
-import { CONFIG } from '../config';
-import { SEARCH_ICON, UNLOCK_ICON } from './icons';
+import { clockTime, onClockTick } from '../utils/clock';
+import {
+  APP_LOGO, SEARCH_ICON, SETTINGS_ICON, UNLOCK_ICON,
+  TAB_GUIDE_ICON, TAB_LIVE_ICON, TAB_MOVIES_ICON, TAB_SERIES_ICON, weatherIcon,
+} from './icons';
+import type { Weather } from '../services/weather-service';
 import { AccountSwitcher, type AccountMenuCloseReason } from './account-switcher';
 
 // `outside` is narrowed to a click on focusable content, which takes input and
@@ -31,12 +35,19 @@ export const SECTIONS = [
   { id: 'epg', labelKey: 'nav.epg', view: 'epg', xtreamOnly: false },
   { id: 'movies', labelKey: 'nav.movies', view: 'movies', xtreamOnly: true },
   { id: 'series', labelKey: 'nav.series', view: 'series', xtreamOnly: true },
-  { id: 'settings', labelKey: 'nav.settings', view: 'settings', xtreamOnly: false },
   { id: 'search', labelKey: 'nav.search', view: 'search', xtreamOnly: false },
+  { id: 'settings', labelKey: 'nav.settings', view: 'settings', xtreamOnly: false },
 ] as const;
 
 export type Section = typeof SECTIONS[number]['id'];
 type SectionDef = typeof SECTIONS[number];
+
+const TAB_ICONS: Partial<Record<Section, string>> = {
+  live: TAB_LIVE_ICON,
+  epg: TAB_GUIDE_ICON,
+  movies: TAB_MOVIES_ICON,
+  series: TAB_SERIES_ICON,
+};
 
 // Xtream accounts get the full set; M3U-only accounts have no VOD/series catalog,
 // so they see Live, Guide, Settings and Search only.
@@ -80,6 +91,7 @@ interface TabBarHandlers {
 // Search tab expands an inline input instead of switching.
 export class TabBar {
   private el: HTMLElement | null = null;
+  private weather: Weather | null = null;
   private handlers: TabBarHandlers;
   private sections: readonly SectionDef[] = FULL_SECTIONS;
   private hasXtream = true;
@@ -476,14 +488,15 @@ export class TabBar {
     this.handlers.onSearchClose();
   }
 
-  // Slide the input out from the magnifier toward the Settings tab.
+  // Slide the input out from the magnifier toward the last text tab.
   private setSearchWidth(input: HTMLInputElement): void {
     const icon = this.el?.querySelector<HTMLElement>('.tab-bar-search .search-icon');
-    const settings = this.el?.querySelector<HTMLElement>('.tab-bar-item[data-section="settings"]');
+    const tabs = this.el?.querySelectorAll<HTMLElement>('.tab-bar-inner > .tab-bar-item:not(.tab-bar-icon)[data-section]');
+    const lastTab = tabs && tabs.length ? tabs[tabs.length - 1] : null;
     if (!icon) return;
     const iconLeft = icon.getBoundingClientRect().left;
-    const settingsRight = settings ? settings.getBoundingClientRect().right : (this.el!.getBoundingClientRect().left + 96);
-    const gap = Math.max(160, Math.round(iconLeft - settingsRight - 24));
+    const tabsRight = lastTab ? lastTab.getBoundingClientRect().right : (this.el!.getBoundingClientRect().left + 96);
+    const gap = Math.max(160, Math.round(iconLeft - tabsRight - 24));
     input.style.width = `${Math.min(SEARCH_INPUT_MAX_WIDTH, gap)}px`;
   }
 
@@ -501,25 +514,50 @@ export class TabBar {
     // global click handler skips this subtree (covers the account switcher slot).
     this.el.setAttribute('data-self-activate', '');
     document.body.appendChild(this.el);
+    onClockTick(time => this.setClock(time));
+  }
+
+  setWeather(weather: Weather): void {
+    this.weather = weather;
+    const slot = this.el?.querySelector<HTMLElement>('.tab-bar-weather');
+    if (slot) morph(slot, this.weatherContent());
+  }
+
+  private weatherContent(): Safe {
+    const w = this.weather;
+    if (!w) return html``;
+    return html`<span class="tab-bar-weather-icon">${raw(weatherIcon(w.condition, w.isDay))}</span><span class="tab-bar-weather-temp">${String(w.temperature)}°</span>`;
+  }
+
+  // Only the clock's text changes each minute; the bar itself stays put.
+  private setClock(time: string): void {
+    const clock = this.el?.querySelector<HTMLElement>('.tab-bar-clock');
+    if (!clock) return;
+    clock.setAttribute('datetime', time);
+    morph(clock, html`${time}`);
   }
 
   private render(): void {
     if (!this.el) return;
     morph(this.el, html`
       <div class="tab-bar-inner" data-nav-container>
-        <span class="tab-bar-title">${CONFIG.APP_NAME}</span>
-        ${this.sections.filter((s) => s.id !== 'search').map((s) => {
+        <span class="tab-bar-brand">${raw(APP_LOGO)}</span>
+        ${this.sections.filter((s) => s.id !== 'search' && s.id !== 'settings').map((s) => {
           const activeCls = s.id === this.active ? 'active' : '';
           return html`
-          <button class="tab-bar-item ${activeCls}"
-                  data-key="${s.id}" data-section="${s.id}" aria-label="${t(s.labelKey)}">${t(s.labelKey)}</button>
+          <button class="tab-bar-item tab-bar-tab ${activeCls}"
+                  data-key="${s.id}" data-section="${s.id}" aria-label="${t(s.labelKey)}"><span class="tab-bar-tab-icon">${raw(TAB_ICONS[s.id] ?? '')}</span><span class="tab-bar-tab-label">${t(s.labelKey)}</span></button>
         `;
         })}
         <div class="tab-bar-search ${this.searchExpanded ? 'expanded' : ''}" data-key="search-slot" data-morph-preserve></div>
+        <button class="tab-bar-item tab-bar-icon ${this.active === 'settings' ? 'active' : ''}"
+                data-key="settings" data-section="settings" aria-label="${t('nav.settings')}">${raw(SETTINGS_ICON)}</button>
         ${this.lockShown ? html`
           <button class="tab-bar-item tab-bar-lock"
                   data-key="lock-now" data-lock-now>${raw(UNLOCK_ICON)}<span>${t('parental.lockNow')}</span></button>
         ` : ''}
+        <time class="tab-bar-clock" data-key="clock" datetime="${clockTime()}">${clockTime()}</time>
+        <span class="tab-bar-weather" data-key="weather">${this.weatherContent()}</span>
         <div class="tab-bar-account" data-key="account-slot" data-morph-preserve></div>
       </div>
     `);
@@ -542,7 +580,7 @@ export class TabBar {
       input.className = 'tab-bar-search-input';
       input.setAttribute('aria-label', t('common.search'));
       const btn = document.createElement('button');
-      btn.className = 'tab-bar-item search-icon';
+      btn.className = 'tab-bar-item tab-bar-icon search-icon';
       btn.dataset.key = 'search';
       btn.dataset.section = 'search';
       btn.setAttribute('aria-label', t('common.search'));

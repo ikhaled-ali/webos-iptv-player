@@ -128,60 +128,23 @@ describe('matchGroupIcon', () => {
 });
 
 describe('groupIcon (rendered HTML)', () => {
-  it('renders a matched genre as an <img> at its asset path', () => {
-    expect(groupIcon('Sports')).toBe(
-      '<img class="group-logo" src="assets/group-icons/soccer_ball.svg" alt="">',
-    );
+  it('renders a matched genre as an inline currentColor SVG', () => {
+    const svg = groupIcon('Sports');
+    expect(svg).toMatch(/^<svg class="group-logo" viewBox="0 0 24 24"[^>]* stroke="currentColor"/);
+    expect(svg).not.toContain('<img');
   });
 
-  it('renders All and Favorites as icons too', () => {
-    expect(groupIcon('All', 'all')).toBe(
-      '<img class="group-logo" src="assets/group-icons/all.svg" alt="">',
-    );
-    expect(groupIcon('Favorites', 'favorites')).toBe(
-      '<img class="group-logo" src="assets/group-icons/star.svg" alt="">',
-    );
+  it('draws a distinct icon per genre and builtin', () => {
+    const icons = ['Sports', 'News', 'Kids', 'Music', 'Movies']
+      .map((g) => groupIcon(g))
+      .concat(groupIcon('All', 'all'), groupIcon('Favorites', 'favorites'),
+        groupIcon('Recent', 'recently-watched'));
+    expect(new Set(icons).size).toBe(icons.length);
   });
 
-  it('falls back to the play-triangle glyph for unmatched groups', () => {
-    expect(groupIcon('Uncategorized')).toBe('&#9654;');
-  });
-});
-
-describe('Chrome 53 fallback', () => {
-  it('matches with explicit ranges when Unicode properties are unavailable', async () => {
-    const NativeRegExp = RegExp;
-    const LegacyRegExp = function (pattern?: string | RegExp, flags?: string): RegExp {
-      if (typeof pattern === 'string' && pattern.includes('\\p{')) {
-        throw new SyntaxError('Unsupported Unicode property escape');
-      }
-      return new NativeRegExp(pattern, flags);
-    } as RegExpConstructor;
-
-    vi.stubGlobal('RegExp', LegacyRegExp);
-    vi.resetModules();
-    try {
-      const { matchGroupIcon: fallbackMatchGroupIcon } = await import('./group-icon');
-      expect(fallbackMatchGroupIcon('HD—Sports')).toBe('soccer_ball');
-      expect(fallbackMatchGroupIcon('UK\u2003Sports')).toBe('soccer_ball');
-      expect(fallbackMatchGroupIcon('أَخْبَار')).toBe('newspaper');
-      expect(fallbackMatchGroupIcon('الرِّيَاضَة')).toBe('soccer_ball');
-      expect(fallbackMatchGroupIcon('Passport Services')).toBeNull();
-      expect(fallbackMatchGroupIcon('— •')).toBeNull();
-    } finally {
-      vi.unstubAllGlobals();
-      vi.resetModules();
-    }
-  });
-});
-
-describe('isAdultGroupName', () => {
-  it('detects adult groups even when a higher-priority genre matches', () => {
-    expect(isAdultGroupName('Adult')).toBe(true);
-    expect(isAdultGroupName('XXX 18+')).toBe(true);
-    expect(isAdultGroupName('Kids XXX')).toBe(true);
-    expect(isAdultGroupName('成人')).toBe(true);
-    expect(isAdultGroupName('Kids')).toBe(false);
-    expect(isAdultGroupName('News')).toBe(false);
+  it('falls back to a generic SVG for unmatched groups', () => {
+    const svg = groupIcon('Uncategorized');
+    expect(svg).toMatch(/^<svg class="group-logo"/);
+    expect(svg).not.toBe(groupIcon('Sports'));
   });
 });

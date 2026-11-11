@@ -1,4 +1,5 @@
 import * as esbuild from 'esbuild';
+import { createHash } from 'crypto';
 import { cpSync, readFileSync, writeFileSync, readdirSync, rmSync, mkdirSync } from 'fs';
 import {
   LEGACY_JS_BANNER,
@@ -49,7 +50,6 @@ if (outputIndexHtml === indexHtml) {
   throw new Error('Build could not find the preview library marker in index.html.');
 }
 writeFileSync('dist/index.html', outputIndexHtml);
-cpSync('appinfo.json', 'dist/appinfo.json');
 rmSync('dist/resources', { recursive: true, force: true });
 cpSync('resources', 'dist/resources', { recursive: true });
 // Refresh the flex-`gap` fallback; see its header for the cascade rationale.
@@ -58,10 +58,22 @@ const sourceStylesheets = linkedStylesheets(indexHtml, readdirSync('css'), GENER
 writeFileSync(`css/${GENERATED_STYLESHEET}`, generateFlexGapFallback(sourceStylesheets));
 cpSync('css', 'dist/css', { recursive: true });
 transformStylesheets('dist/css');
-cpSync('assets/icon80.png', 'dist/icon.png');
-cpSync('assets/icon130.png', 'dist/largeIcon.png');
-cpSync('assets/group-icons', 'dist/assets/group-icons', { recursive: true });
+// The TV launcher caches an app's icon by path, so a new icon only shows
+// under a new file name: name each after its content.
+const iconHash = createHash('sha1')
+  .update(readFileSync('assets/icon80.png'))
+  .update(readFileSync('assets/icon130.png'))
+  .digest('hex').slice(0, 8);
+const icon = `icon-${iconHash}.png`;
+const largeIcon = `largeIcon-${iconHash}.png`;
+for (const file of readdirSync('dist')) {
+  if (/^(icon|largeIcon)(-[0-9a-f]+)?\.png$/.test(file)) rmSync(`dist/${file}`);
+}
+cpSync('assets/icon80.png', `dist/${icon}`);
+cpSync('assets/icon130.png', `dist/${largeIcon}`);
+writeFileSync('dist/appinfo.json', JSON.stringify({ ...appinfo, icon, largeIcon }, null, 2) + '\n');
 cpSync('assets/icons', 'dist/assets/icons', { recursive: true });
+cpSync('assets/fonts', 'dist/assets/fonts', { recursive: true });
 
 // Main app bundle — playback libraries remain separate. Shaka is shipped as a
 // lazy TV bundle for Widevine and is also used by the desktop preview.

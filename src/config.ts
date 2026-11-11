@@ -1,6 +1,6 @@
 export const CONFIG = {
   APP_ID: __APP_ID__ as string,
-  APP_NAME: 'webOS IPTV Player',
+  APP_NAME: 'iPlayer',
   VERSION: __APP_VERSION__ as string,
 
   STORAGE_PREFIX: 'iptv_',
@@ -26,6 +26,9 @@ export const CONFIG = {
   REMINDER_SCAN_INTERVAL: 30 * 1000,
   CHANNEL_SCROLLBAR_HIDE_MS: 900,
   NAVIGATION: {
+    // Room kept between a focused item and its scroller's edges, so a D-pad
+    // move never leaves focus flush with (or grown past) the edge.
+    REVEAL_MARGIN: 40,
     // Treat fast successive focus changes as held-key navigation. The repeat
     // interval measured on LG remotes is around 80 ms; leave room for load.
     FOCUS_REPEAT_WINDOW_MS: 180,
@@ -92,6 +95,8 @@ export const CONFIG = {
     SUBTITLE_OFFSET_MAX: 60,    // max |offset| the adjuster allows (seconds)
     SUBTITLE_SEARCH_TIMEOUT: 8000, // ms one online provider may take before the merged search gives up on it
     UP_NEXT_COUNTDOWN: 10,      // seconds before the queued episode/movie starts automatically
+    VOD_CHECKPOINT_INTERVAL: 15 * 1000, // ms between movie/episode resume-point saves during playback
+    VOD_RETRY_INTERVAL_MS: 3000, // in-place reload interval while a movie/episode shows an error
   },
 
   EPG: {
@@ -122,9 +127,11 @@ export const CONFIG = {
     RAIL_ITEMS: 20,                      // posters shown per rail before the "all categories" drill-in
     RESUME_MIN_SECS: 15,                 // below this, treat as "start over" (don't store a resume point)
     RESUME_FINISH_PAD: 30,               // within this of the end = finished (clear the resume point)
+    RESUME_FINISH_FRACTION: 0.05,        // or within this share of the duration, so end credits count as finished
     RESUME_MAX_ITEMS: 50,                // Continue Watching entries per account and kind
     ARCHIVE_TTL_MS: 10 * 60 * 1000,      // per-channel get_simple_data_table freshness
     WATCHLIST_MAX_ITEMS: 200,            // per account and content type
+    WATCHED_MAX_SERIES: 200,             // series with watched-episode marks kept per account
   },
 
   // Catch-up (time-shift) resume and history store tuning.

@@ -9,9 +9,8 @@
 // first. Author keywords lowercase + accent-free (Latin) or in native script
 // (non-Latin); adding a language is a one-line edit to GROUP_ICON_RULES below.
 //
-// Icons are Twemoji artwork (https://github.com/jdecked/twemoji), licensed
-// under CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/); assets live
-// in assets/group-icons/ and assets/icons/.
+// Icons are flat inline outline SVGs drawn with `currentColor`, so they take
+// the theme's accent from `.group-icon`.
 
 import {
   containsArabicOrHan,
@@ -19,8 +18,6 @@ import {
   splitLetterNumberPlusTokens,
   stripDiacritics,
 } from '../utils/unicode-text';
-
-const GROUP_ICON_DIR = 'assets/group-icons';
 
 interface IconRule {
   icon: string;
@@ -152,20 +149,39 @@ export function isAdultGroupName(group: string): boolean {
   return ADULT_KEYWORDS.some(keyword => keywordHits(keyword, folded, tokens));
 }
 
-function iconImg(name: string): string {
-  return `<img class="group-logo" src="${GROUP_ICON_DIR}/${name}.svg" alt="">`;
+// One 24px grid, 1.8 stroke, round caps: a single family across categories.
+const GROUP_ICON_PATHS: Record<string, string> = {
+  all: '<rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/>',
+  star: '<path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/>',
+  three_oclock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/>',
+  teddy_bear: '<circle cx="12" cy="13.5" r="6.5"/><path d="M7.4 8.9A2.5 2.5 0 1 1 10.3 7.2M13.7 7.2A2.5 2.5 0 1 1 16.6 8.9"/><ellipse cx="12" cy="16.2" rx="2.2" ry="1.6"/><circle cx="9.7" cy="12.4" r=".9" fill="currentColor" stroke="none"/><circle cx="14.3" cy="12.4" r=".9" fill="currentColor" stroke="none"/>',
+  soccer_ball: '<circle cx="12" cy="12" r="8.5"/><path d="M12 8.6l3.2 2.3-1.2 3.8h-4l-1.2-3.8zM12 8.6V3.5M15.2 10.9l4.9-1.6M14 14.7l3 4.1M10 14.7l-3 4.1M8.8 10.9L3.9 9.3"/>',
+  gaming: '<path d="M7.2 7.5h9.6a4.8 4.8 0 0 1 4.7 5.8l-.8 3.9a2.4 2.4 0 0 1-4.2 1L14.6 16H9.4l-1.9 2.2a2.4 2.4 0 0 1-4.2-1l-.8-3.9a4.8 4.8 0 0 1 4.7-5.8z"/><path d="M8 10.5v3.4M6.3 12.2h3.4"/><circle cx="15.6" cy="11" r=".9" fill="currentColor" stroke="none"/><circle cx="17.6" cy="13.2" r=".9" fill="currentColor" stroke="none"/>',
+  newspaper: '<path d="M4 5.5h12.5V18a2 2 0 0 0 2 2H6a2 2 0 0 1-2-2zM16.5 9.5H20V18a2 2 0 0 1-2 2"/><path d="M7 9h6.5M7 12.5h6.5M7 16h4"/>',
+  musical_note: '<path d="M9 17.5V5.5l11-2v12"/><circle cx="6.5" cy="17.5" r="2.5"/><circle cx="17.5" cy="15.5" r="2.5"/>',
+  cooking: '<path d="M7 17v-3.2a3.7 3.7 0 0 1 .6-7.3 4.8 4.8 0 0 1 8.8 0 3.7 3.7 0 0 1 .6 7.3V17zM7 20.5h10"/>',
+  shopping: '<path d="M5 8h14l-1 12.5H6zM9 8V6.5a3 3 0 0 1 6 0V8"/>',
+  no_one_under_eighteen: '<circle cx="12" cy="12" r="8.5"/><text x="12" y="14.6" font-size="7.4" font-weight="700" text-anchor="middle" fill="currentColor" stroke="none">18+</text>',
+  world_map: '<circle cx="12" cy="12" r="8.5"/><ellipse cx="12" cy="12" rx="3.8" ry="8.5"/><path d="M3.5 12h17"/>',
+  church: '<path d="M12 2.5v4M10.3 4.2h3.4M7 20.5v-7.5l5-4 5 4v7.5M3.5 20.5h17M7 14.5l-3 1.6v4.4M17 14.5l3 1.6v4.4M10.5 20.5v-3a1.5 1.5 0 0 1 3 0v3"/>',
+  clapper_board: '<path d="M4 10.5h16V19a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 19zM3.7 7.2l15-3.2.7 3.3-15 3.2zM8.6 6.2l2.4 2.8M13.4 5.1l2.4 2.8"/>',
+  television: '<rect x="2.5" y="6.5" width="19" height="13" rx="2"/><path d="M8 3l4 3.5L16 3"/>',
+  entertainment: '<path d="M10.5 4l1.7 4.8L17 10.5l-4.8 1.7L10.5 17l-1.7-4.8L4 10.5l4.8-1.7zM18 14.5v5M15.5 17h5"/>',
+  other: '<circle cx="12" cy="12" r="8.5"/><path d="M10.2 8.6v6.8l5.4-3.4z" fill="currentColor"/>',
+};
+
+function iconSvg(name: string): string {
+  return `<svg class="group-logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${GROUP_ICON_PATHS[name] ?? GROUP_ICON_PATHS.other}</svg>`;
 }
 
 /**
- * Render the group-list icon as an HTML string: a matched `<img>`
- * pointing at its asset path, the dedicated All/Favorites icons, or a generic
- * play-triangle icon for unmatched groups. (Inserted via the caller's `raw()`
- * helper.)
+ * Render the group-list icon as trusted SVG markup for the caller's `raw()`:
+ * the matched genre, the All/Favorites/Recently watched icons, or a generic
+ * play icon for unmatched groups.
  */
 export function groupIcon(group: string, builtin?: 'all' | 'favorites' | 'recently-watched'): string {
-  if (builtin === 'all') return iconImg('all');
-  if (builtin === 'favorites') return iconImg('star');
-  if (builtin === 'recently-watched') return iconImg('three_oclock');
-  const icon = matchGroupIcon(group);
-  return icon ? iconImg(icon) : '&#9654;'; // fallback for unmatched groups
+  if (builtin === 'all') return iconSvg('all');
+  if (builtin === 'favorites') return iconSvg('star');
+  if (builtin === 'recently-watched') return iconSvg('three_oclock');
+  return iconSvg(matchGroupIcon(group) ?? 'other');
 }

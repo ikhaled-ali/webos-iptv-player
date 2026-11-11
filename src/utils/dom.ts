@@ -71,6 +71,18 @@ function supportsPreventScroll(): boolean {
   return read;
 }
 
+// The strip at the top of a scroller that sits under the frosted tab bar,
+// declared as its scroll-padding-top (0 where content stops below the bar).
+export function scrollInsetTop(el: Element): number {
+  const inset = parseFloat(getComputedStyle(el).getPropertyValue('scroll-padding-top'));
+  return isFinite(inset) ? inset : 0;
+}
+
+// A scroller's height below the bar: the part that can show a focused row.
+export function visibleHeight(el: HTMLElement): number {
+  return el.clientHeight - scrollInsetTop(el);
+}
+
 export function focusWithoutScroll(el: HTMLElement): void {
   if (supportsPreventScroll()) {
     // eslint-disable-next-line webos-compat/unsupported-patterns -- feature-detected above

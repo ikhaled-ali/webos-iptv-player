@@ -2,7 +2,7 @@
   "packages": [
     {
       "id": "com.lennylxx.iptv",
-      "title": "webOS IPTV Player",
+      "title": "iPlayer",
       "iconUri": "https://raw.githubusercontent.com/lennylxx/webos-iptv-player/main/assets/icon130.png",
       "manifestUrl": "https://github.com/lennylxx/webos-iptv-player/releases/latest/download/com.lennylxx.iptv.manifest.json",
       "fullDescriptionUrl": "https://lennylxx.github.io/webos-iptv-player/",

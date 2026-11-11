@@ -175,7 +175,7 @@ export class AccountSwitcher {
     const painted = !this.scope;
     morph(this.slot, html`
       <button class="account-avatar" data-key="account-avatar"
-              aria-label="${t('nav.switchAccount')}" style="background:${avatarColor(active.name)}">${firstLetter(active.name)}</button>
+              aria-label="${t('nav.switchAccount')}">${firstLetter(active.name)}</button>
       ${this.open ? html`
         <div class="account-menu" data-nav-container>
           ${this.accounts.map((a, i) => html`

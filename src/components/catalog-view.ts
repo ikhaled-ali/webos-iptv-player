@@ -11,7 +11,7 @@ import { SpatialNav, isFocusMove } from '../navigation/spatial-nav';
 import { Focus, type FocusScope, type Via } from '../navigation/focus-scope';
 import { FocusRing, ringShown } from '../navigation/focus-ring';
 import { InputMode } from '../navigation/input-mode';
-import { html, raw, Safe, withInstantScroll } from '../utils/dom';
+import { html, raw, Safe, scrollInsetTop, visibleHeight, withInstantScroll } from '../utils/dom';
 import { categoryLockBadge, lockBadge } from './parental-badge';
 import { SORT_ASCENDING_ICON, SORT_DESCENDING_ICON, SEE_ALL_ICON, REMOVE_ICON, CHECK_ICON, TRASH_ICON, PENCIL_ICON } from './icons';
 import { ConfirmationPrompt } from './confirmation-prompt';
@@ -20,6 +20,7 @@ import { showToast } from './toast';
 import { dropdown, toggleDropdown, closeDropdown, commitDropdownOption } from './dropdown';
 import { morph } from '../utils/morph';
 import { StorageService } from '../services/storage-service';
+import { latestPerSeries, resumeSeriesId } from '../utils/vod-progress';
 import {
   catalogParentalRequest,
   isResumeConcealed,
@@ -27,7 +28,7 @@ import {
   ParentalControlService,
 } from '../services/parental-control';
 import { CONFIG } from '../config';
-import { getLocale, t, tp } from '../i18n';
+import { getLocale, t } from '../i18n';
 import { VirtualGrid } from '../utils/virtual-grid';
 import { VirtualList } from '../utils/virtual-list';
 import { VirtualScrollGuard } from '../utils/virtual-scroll';
@@ -65,7 +66,7 @@ const CATEGORY_RAIL_STRIDE = 320;
 const CATEGORY_RAIL_VIEWPORT = 1760;
 
 // Matches the rail track's padding and its end spacer in catalog-view.css.
-const RAIL_EDGE_GUTTER = 12;
+const RAIL_EDGE_GUTTER = CONFIG.NAVIGATION.REVEAL_MARGIN;
 
 export interface CatalogHandlers {
   onRevealTabBar: () => void;
@@ -122,7 +123,7 @@ function isScroller(overflow: string): boolean {
 }
 
 // Shared browse/grid/detail machinery for the Xtream catalog sections (Movies,
-// Series): a hero + poster rails browse view, a per-category poster grid, and a
+// Series): a poster rails browse view, a per-category poster grid, and a
 // detail screen. One focus scope holds the focused tile or button across all
 // modes, and a SpatialNav only picks the next one geometrically. Up at the top
 // row hands off to the tab bar; Back walks detail -> grid -> browse -> Live.
@@ -131,6 +132,7 @@ function isScroller(overflow: string): boolean {
 // positions, and focused tile exactly as they were.
 // Subclasses supply the catalog loaders, item accessors, and the detail
 // rendering / playback specifics.
+
 export abstract class CatalogView<C extends { id: string; name: string }, I extends CatalogSortItem> {
   protected nav: SpatialNav;
   protected account: PlaylistEntry | null = null;
@@ -152,6 +154,7 @@ export abstract class CatalogView<C extends { id: string; name: string }, I exte
   private gridReturnKey: string | null = null;
   // The browse tile that opened a grid or detail, refocused on Back.
   private readonly gridVirtualizer = new VirtualGrid({
+    revealMargin: CONFIG.NAVIGATION.REVEAL_MARGIN,
     columnStride: CATALOG_GRID_COLUMN_STRIDE,
     rowStride: CATALOG_GRID_ROW_STRIDE,
     overscanRows: CATALOG_GRID_OVERSCAN_ROWS,
@@ -160,6 +163,7 @@ export abstract class CatalogView<C extends { id: string; name: string }, I exte
   });
   private gridScrollFrame: number | null = null;
   private readonly categoryVirtualizer = new VirtualList({
+    revealMargin: CONFIG.NAVIGATION.REVEAL_MARGIN,
     itemSize: CATEGORY_RAIL_STRIDE,
     overscan: 4,
     fallbackViewportSize: CATEGORY_RAIL_VIEWPORT,
@@ -258,7 +262,7 @@ export abstract class CatalogView<C extends { id: string; name: string }, I exte
       if (this.gridScrollFrame !== null) return;
       this.gridScrollFrame = requestAnimationFrame(() => {
         this.gridScrollFrame = null;
-        if (this.mode === 'grid') this.renderGrid(false, true);
+        if (this.mode === 'grid' && this.gridVirtualizer.rangeStale()) this.renderGrid(false, true);
       });
     }, true);
   }
@@ -266,7 +270,7 @@ export abstract class CatalogView<C extends { id: string; name: string }, I exte
   // --- subclass configuration ---
   // The focus scope's prefix, e.g. 'movies'; a method, as the constructor reads it.
   protected abstract scopeName(): string;
-  protected abstract readonly kicker: string;             // hero/grid label, e.g. 'Movies'
+  protected abstract readonly kicker: string;             // section label, e.g. 'Movies'
   protected abstract readonly resumeKind: ResumeKind;     // which resume entries this section owns
   protected abstract readonly emptyMessage: string;       // no catalog on the account
   protected abstract readonly gridEmptyMessage: string;   // empty category grid
@@ -302,8 +306,6 @@ export abstract class CatalogView<C extends { id: string; name: string }, I exte
   protected abstract collectionEntries(kind: CollectionKind): CollectionEntry[];
   // A tile id that isn't in a loaded category (Continue/Watchlist); default none.
   protected fallbackItem(_id: string): I | null { return null; }
-  // Hero when no rail item exists (Movies falls back to a resumed item); default none.
-  protected heroFallback(): I | null { return null; }
 
   // The active mode's layer; hidden layers keep their DOM but never take focus.
   protected layer(mode: Mode = this.mode): HTMLElement {
@@ -487,8 +489,10 @@ export abstract class CatalogView<C extends { id: string; name: string }, I exte
       }
       if (!isScroller(style.overflowY) || n.scrollHeight <= n.clientHeight) continue;
       const box = n.getBoundingClientRect();
-      const top = box.top + n.clientTop;
-      const bottom = top + n.clientHeight;
+      const margin = CONFIG.NAVIGATION.REVEAL_MARGIN;
+      const top = box.top + n.clientTop + scrollInsetTop(n) + margin;
+      // The scroller's own bottom edge: the inset only shortens it from the top.
+      const bottom = box.top + n.clientTop + n.clientHeight - margin;
       let delta = 0;
       if (r.top < top) delta = r.top - top;
       else if (r.bottom > bottom) delta = Math.min(r.bottom - bottom, r.top - top);
@@ -1032,7 +1036,10 @@ export abstract class CatalogView<C extends { id: string; name: string }, I exte
     const account = this.account;
     if (!account) return;
     if (kind === 'continue') {
-      StorageService.clearResume(account.id, this.resumeKind, id);
+      const entry = this.resume.find(item => item.itemId === id);
+      const series = entry ? resumeSeriesId(entry) : null;
+      if (series) StorageService.clearSeriesResume(account.id, series);
+      else StorageService.clearResume(account.id, this.resumeKind, id);
       this.resume = this.visibleResume(account.id);
     } else {
       StorageService.removeWatchlist(account.id, this.parentalKind, id);
@@ -1084,11 +1091,6 @@ export abstract class CatalogView<C extends { id: string; name: string }, I exte
     return t(kind === 'continue' ? 'catalog.continueWatching' : 'common.watchlist');
   }
 
-  private collectionCount(kind: CollectionKind, count: number): string {
-    return kind === 'continue' && this.resumeKind === 'episode'
-      ? tp('catalog.episodeCount', count) : this.itemCount(count);
-  }
-
   private collectionRail(kind: CollectionKind): Safe | '' {
     const entries = this.collectionEntries(kind);
     if (!entries.length) return '';
@@ -1110,7 +1112,7 @@ export abstract class CatalogView<C extends { id: string; name: string }, I exte
               <div class="catalog-poster-wrap catalog-see-all-card">
                 ${raw(SEE_ALL_ICON)}
                 <div class="catalog-see-all-label">${t('catalog.seeAll')}</div>
-                <div class="catalog-see-all-count">${this.collectionCount(kind, entries.length)}</div>
+                <div class="catalog-see-all-count">${this.itemCount(entries.length)}</div>
               </div>
             </div>
           ` : ''}
@@ -1132,29 +1134,14 @@ export abstract class CatalogView<C extends { id: string; name: string }, I exte
     return html`<div class="catalog-progress"><div class="catalog-progress-fill" style="width:${percent}%"></div></div>`;
   }
 
-  // SpatialNav picked `el`: hand it to the scope, and keep the browse hero
-  // (title + backdrop) in sync with the focused item tile. Category tiles and
-  // non-browse modes leave the hero unchanged.
+  // SpatialNav picked `el`: hand it to the scope.
   private onFocusChanged(el: HTMLElement | null): void {
     if (this.mode === 'browse' && !el?.closest('.catalog-sort')) this.browseSortReturn = null;
     this.request(el ? this.keyFor(el) : null, this.pickVia);
     const gridCell = el?.closest<HTMLElement>('[data-grid-index]');
     if (this.mode === 'grid' && gridCell?.dataset.gridIndex !== undefined) {
       this.gridFocusIndex = parseInt(gridCell.dataset.gridIndex, 10);
-      return;
     }
-    const categoryCell = el?.closest<HTMLElement>('[data-category-virtual-index]');
-    if (this.mode === 'browse' && categoryCell) return;
-    if (this.mode !== 'browse' || !el) return;
-    if (el.dataset.resumeEpisode !== undefined) {
-      const entry = this.resume.find(entry => entry.itemId === el.dataset.resumeEpisode);
-      if (entry) this.updateHero(entry.name, entry.poster);
-      return;
-    }
-    const id = el.dataset.itemId;
-    if (id === undefined) return;
-    const item = this.findItem(el.dataset.categoryId ?? '', id);
-    if (item) this.updateHero(this.itemName(item), this.itemPoster(item));
   }
 
   // A tile flush with the rail's scrollport would clip its focus ring; keep a
@@ -1183,17 +1170,6 @@ export abstract class CatalogView<C extends { id: string; name: string }, I exte
       track.scrollLeft = target;
     }
     return true;
-  }
-
-  private updateHero(name: string, poster: string): void {
-    const hero = this.layers.browse.querySelector<HTMLElement>('.catalog-hero');
-    if (!hero) return;
-    const title = this.layers.browse.querySelector<HTMLElement>('.catalog-hero-title');
-    if (title) title.textContent = name; // textContent escapes untrusted names
-    // Poster sits inside a CSS url('…') string; percent-encode the characters
-    // that could break out of it (matches renderBrowse's heroBg).
-    const bg = poster ? poster.replace(/["'()\\\s]/g, encodeURIComponent) : '';
-    hero.style.backgroundImage = bg ? `url('${bg}')` : 'none';
   }
 
   // Concealed titles are dropped at load, so every rail, grid, and hero built
@@ -1258,9 +1234,10 @@ export abstract class CatalogView<C extends { id: string; name: string }, I exte
       ? `[data-sort-direction="${direction}"]` : '.catalog-sort .dropdown-trigger'), this.placementVia());
   }
 
+  // Series list one tile per show: its most recently watched episode.
   private visibleResume(accountId: string): ResumeEntry[] {
-    return StorageService.getResumeList(accountId)
-      .filter(entry => entry.kind === this.resumeKind && !isResumeConcealed(entry));
+    return latestPerSeries(StorageService.getResumeList(accountId)
+      .filter(entry => entry.kind === this.resumeKind && !isResumeConcealed(entry)));
   }
 
   protected visibleWatchlist(kind: WatchlistKind): WatchlistEntry[] {
@@ -1324,7 +1301,7 @@ export abstract class CatalogView<C extends { id: string; name: string }, I exte
 
   protected posterCell(name: string, poster: string): Safe {
     return poster
-      ? html`<img class="catalog-poster" src="${poster}" alt="" loading="lazy" onerror="this.style.display='none'">`
+      ? html`<img class="catalog-poster" src="${poster}" alt="" loading="lazy" decoding="async" onerror="this.style.display='none'">`
       : html`<div class="catalog-poster catalog-poster-empty">${name.charAt(0)}</div>`;
   }
 
@@ -1439,14 +1416,9 @@ export abstract class CatalogView<C extends { id: string; name: string }, I exte
     this.showLayer('browse');
     const browse = this.layers.browse;
     this.resume = this.visibleResume(this.account!.id);
-    const hero = this.railGroups[0]?.items[0] ?? this.heroFallback();
     const continueRail = this.collectionRail('continue');
     const watchlistRail = this.collectionRail('watchlist');
     const hasContent = this.categories.length > 0 || !!continueRail || !!watchlistRail;
-    // A poster URL sits inside a CSS url('…') string, where the html escaper's
-    // entity encoding is decoded before CSS parses it; percent-encode the
-    // characters that could break out of the string.
-    const heroBg = hero ? this.itemPoster(hero).replace(/["'()\\\s]/g, encodeURIComponent) : '';
     // Once some categories have no rail, "All Categories" lists every category,
     // rails included, so it is the one complete index of the catalog.
     const moreCats = this.categories.length > this.railGroups.length ? this.categories : [];
@@ -1463,15 +1435,7 @@ export abstract class CatalogView<C extends { id: string; name: string }, I exte
         ${!hasContent
           ? html`<p class="catalog-hint catalog-empty">${this.emptyMessage}</p>`
           : html`
-            <div class="catalog-hero" style="background-image: url('${heroBg}')">
-              <div class="catalog-hero-scrim"></div>
-            </div>
-            <div class="catalog-hero-body">
-              <div class="catalog-hero-kicker">${this.kicker}</div>
-              <h1 class="catalog-hero-title">${hero ? this.itemName(hero) : this.kicker}</h1>
-            </div>
             <div class="catalog-rails">
-              <div class="catalog-rails-spacer"></div>
               <div class="catalog-rails-body">
                 ${continueRail}
                 ${watchlistRail}
@@ -1583,7 +1547,7 @@ export abstract class CatalogView<C extends { id: string; name: string }, I exte
       );
     }
     const viewportWidth = previousTrack?.clientWidth || CATALOG_GRID_VIEWPORT_WIDTH;
-    const viewportHeight = previousView?.clientHeight || CATALOG_GRID_VIEWPORT_HEIGHT;
+    const viewportHeight = (previousView && visibleHeight(previousView)) || CATALOG_GRID_VIEWPORT_HEIGHT;
     if (restoreFocus && count) {
       this.gridVirtualizer.ensureVisible(this.gridFocusIndex, viewportWidth, viewportHeight);
     }
@@ -1602,7 +1566,7 @@ export abstract class CatalogView<C extends { id: string; name: string }, I exte
     morph(gridLayer, html`
       <div class="catalog-view catalog-grid${managing ? ' catalog-managing' : ''}" data-nav-container>
         <h1 class="catalog-grid-title">${kind ? html`
-          ${this.collectionTitle(kind)} <span class="catalog-grid-count">${this.collectionCount(kind, count)}</span>
+          ${this.collectionTitle(kind)} <span class="catalog-grid-count">${this.itemCount(count)}</span>
         ` : cat ? cat.name : this.kicker}</h1>
         ${kind ? this.collectionActions(actionWidth) : this.sortControls()}
         ${count === 0
@@ -1660,7 +1624,7 @@ export abstract class CatalogView<C extends { id: string; name: string }, I exte
     );
     if (next === this.gridFocusIndex) return false;
     this.gridFocusIndex = next;
-    const viewportHeight = view?.clientHeight || CATALOG_GRID_VIEWPORT_HEIGHT;
+    const viewportHeight = (view && visibleHeight(view)) || CATALOG_GRID_VIEWPORT_HEIGHT;
     // Measured against the window's recorded offset, as revealGridIndex is,
     // which a smooth scroll still moves once the guard's frames pass.
     const scrolled = this.gridVirtualizer.ensureVisible(next, viewportWidth, viewportHeight);

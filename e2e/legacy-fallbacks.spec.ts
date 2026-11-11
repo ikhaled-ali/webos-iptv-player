@@ -1,6 +1,6 @@
 import {
   enterTab, test, expect, isChromium53, neuterVideo, routeLiveManifest, routePlaylist,
-  seedPlaylist, type Page, SAMPLE_M3U,
+  seedPlaylist, type Page, SAMPLE_M3U, openPlayerMenu,
 } from './helpers';
 import { POLYFILLED_APIS } from '../scripts/polyfilled-apis.mjs';
 import { seedXtream } from './fixtures/xtream';
@@ -139,15 +139,15 @@ test('the loading view keeps its spacing before the quirks are measured', async 
   // The paint before app.js runs: no script, so no q-* class yet.
   await page.route('**/js/app.js', (route) => route.abort());
   await page.goto('/');
-  // Layout offsets, since the spinning spinner's bounding box grows. A
+  // Layout offsets, since the animated splash's bounding boxes move. A
   // string, because without app.js the simulation lacks the polyfills
   // Playwright needs to return an object.
   const spacing = JSON.parse(await page.evaluate(() => {
-    const spinner = document.querySelector<HTMLElement>('.loading-spinner')!;
+    const progress = document.querySelector<HTMLElement>('.splash-progress')!;
     const text = document.querySelector<HTMLElement>('.loading-text')!;
     return JSON.stringify({
       quirks: document.documentElement.className,
-      gap: text.offsetTop - spinner.offsetTop - spinner.offsetHeight,
+      gap: text.offsetTop - progress.offsetTop - progress.offsetHeight,
     });
   }));
   expect(spacing).toEqual({ quirks: '', gap: 24 });
@@ -304,8 +304,7 @@ test('no flex-gap container separates an element from loose text', async ({ page
   await expect(page.locator('#player-osd')).toBeVisible();
   await collect();
 
-  await page.keyboard.press('ArrowRight');
-  await expect(page.locator('#player-menu')).toBeVisible();
+  await openPlayerMenu(page);
   await collect();
 
   await page.keyboard.press('ArrowLeft');
@@ -357,8 +356,7 @@ test('no flex-gap container separates an element from loose text in the catalog'
 
   await page.mouse.move(1900, 540);
   await expect(page.locator('#player-menu')).not.toBeVisible();
-  await page.keyboard.press('ArrowRight');
-  await expect(page.locator('#player-menu')).toBeVisible();
+  await openPlayerMenu(page);
   await page.locator('[data-menu-action="__subs_open__"]').click();
   const search = page.locator('[data-menu-action="__subs_search__"]');
   await expect(search).toBeVisible();

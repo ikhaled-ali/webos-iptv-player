@@ -55,7 +55,7 @@ for (const section of ['movies', 'series'] as const) {
       const grid = layer(page, section);
       await expect(grid.locator('.catalog-grid-title')).toContainText('30');
       if (section === 'series' && collection === 'continue') {
-        await expect(grid.locator('.catalog-grid-count')).toHaveText('30 episodes');
+        await expect(grid.locator('.catalog-grid-count')).toHaveText('30 series');
       }
       await expect(grid.locator('.catalog-sort')).toHaveCount(0);
       await grid.locator('[data-collection-action="manage"]').click();

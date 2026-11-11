@@ -65,9 +65,7 @@
 
 .settings-nav-item.focused {
   color: var(--text-primary);
-  background: var(--bg-tertiary);
-  border-color: var(--focus-ring);
-  box-shadow: 0 0 0 3px var(--accent-glow);
+  background-image: var(--focus-layer);
 }
 
 .settings-nav-item.active.focused {
@@ -229,8 +227,7 @@
 
 /* The row of the focused control, while Settings shows its focus. */
 #view-settings[data-ring-owner=""] .settings-advanced-row.is-current {
-  background: rgb(var(--accent-rgb) / 0.06);
-  box-shadow: inset 3px 0 var(--accent);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .settings-advanced-row + .settings-advanced-row {
@@ -547,8 +544,7 @@
 }
 
 .dropdown-option.focused {
-  background: var(--bg-tertiary);
-  box-shadow: none !important;
+  background-image: var(--focus-layer);
 }
 
 .settings-input {
@@ -1187,9 +1183,10 @@
   color: var(--accent);
 }
 
+/* A swatch is a picture of a theme, so its tint is a lift in brightness. */
 .theme-swatch.focused {
-  border-color: var(--focus-ring);
-  box-shadow: 0 0 0 3px var(--accent-glow), 0 0 16px var(--accent-glow);
+  filter: brightness(1.35);
+  transform: scale(1.04);
 }
 
 /* The Live categories card button: the summary keeps the button's own text

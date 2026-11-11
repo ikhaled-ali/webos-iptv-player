@@ -25,8 +25,8 @@ vi.mock('../services/storage-service', () => ({
     setLastChannel: vi.fn(), setLastChannelKey: vi.fn(),
     getSubtitlePref: vi.fn(), setSubtitlePref: vi.fn(),
     getAudioPref: vi.fn(), setAudioPref: vi.fn(),
-    setResume: vi.fn(), clearResume: vi.fn(),
-    removeWatchlist: vi.fn(),
+    setResume: vi.fn(), clearResume: vi.fn(), getResume: vi.fn(() => null),
+    removeWatchlist: vi.fn(), markEpisodeWatched: vi.fn(),
     getPickedOnlineSub: vi.fn(), setPickedOnlineSub: vi.fn(),
     setCatchupProgress: vi.fn(), getCatchupProgress: vi.fn(), clearCatchupProgress: vi.fn(),
     touchRecentlyWatchedLive: vi.fn(),
@@ -349,7 +349,14 @@ describe('Player catch-up seeking', () => {
     expect(player.canSeek()).toBe(true);
   });
 
-  it('Right seeks forward by the step, Left back; the bar + label follow', () => {
+  it('the first Right only brings the ring to the bar, without seeking', () => {
+    player.handleAction('right');
+    expect(video.currentTime).toBe(0);
+    expect(container.querySelector('[data-seekbar]')!.classList.contains('focused')).toBe(true);
+  });
+
+  it('Right on the focused bar seeks forward by the step, Left back; the bar + label follow', () => {
+    player.handleAction('right'); // ring to the bar
     player.handleAction('right');
     expect(video.currentTime).toBe(30);
     expect(bar().style.width).toBe('25%');
@@ -369,6 +376,7 @@ describe('Player catch-up seeking', () => {
     player.init(video);
     player.play(0, CATCHUP);
 
+    player.handleAction('right'); // ring to the bar
     player.handleAction('right');
     expect(asyncVideo.requestedTime()).toBe(30);
     expect(elapsed()).toBe('0:30');
@@ -392,6 +400,7 @@ describe('Player catch-up seeking', () => {
   });
 
   it('clamps seeks to [0, duration]', () => {
+    player.handleAction('left'); // ring to the bar
     player.handleAction('left'); // 0 - 30 → 0
     expect(video.currentTime).toBe(0);
     for (let i = 0; i < 5; i++) player.handleAction('right'); // 150 → clamp 120
@@ -427,8 +436,8 @@ describe('Player catch-up seeking', () => {
   it('a d-pad press clears the cursor so OK pauses instead of seeking', () => {
     stubBar();
     container.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 250, clientY: 18 }));
-    player.handleAction('right'); // d-pad seek clears the tracked cursor
-    expect(video.currentTime).toBe(30);
+    player.handleAction('right'); // a d-pad press clears the tracked cursor
+    expect(video.currentTime).toBe(0);
     player.handleAction('select');
     expect(video.paused).toBe(true); // paused (cursor cleared), not seeked to the stale pointer
   });
@@ -475,8 +484,7 @@ describe('Player catch-up pause/play', () => {
   });
 
   it('resyncAV seeks backward by RESYNC_SEEK_BACK to force a pipeline re-lock', () => {
-    player.handleAction('right'); // → 30
-    player.handleAction('right'); // → 60
+    player.seekBy(60);
     player.resyncAV();
     expect(video.currentTime).toBe(60 - CONFIG.PLAYER.RESYNC_SEEK_BACK);
   });
@@ -488,8 +496,7 @@ describe('Player catch-up pause/play', () => {
   });
 
   it('resyncAV debounces while a resync is already in flight', () => {
-    player.handleAction('right'); // → 30
-    player.handleAction('right'); // → 60
+    player.seekBy(60);
     player.resyncAV();            // → 59.5, now resyncing
     expect(video.currentTime).toBe(60 - CONFIG.PLAYER.RESYNC_SEEK_BACK);
     video.currentTime = 100;      // pretend playback advanced
@@ -506,12 +513,37 @@ describe('Player catch-up pause/play', () => {
   });
 
   it('a pointer click on the resync control seeks backward', () => {
-    player.handleAction('right'); // → 30
-    player.handleAction('right'); // → 60
+    player.seekBy(60);
     const btn = container.querySelector('[data-resync]') as HTMLElement;
     btn.getBoundingClientRect = () => ({ left: 900, right: 932, width: 32, top: 0, bottom: 32 }) as DOMRect;
     container.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 916, clientY: 16 }));
     expect(video.currentTime).toBe(60 - CONFIG.PLAYER.RESYNC_SEEK_BACK);
+  });
+});
+
+describe('Player OSD menu button', () => {
+  it('opens the player menu with OK from the ring, taking the OSD down', () => {
+    const open = vi.fn();
+    player.setMenuOpener(open);
+    player.play(0, CATCHUP);
+    player.handleAction('left'); // ring to the bar
+    player.handleAction('down'); // play/pause
+    player.handleAction('right'); // resync
+    player.handleAction('right'); // menu
+    expect(container.querySelector('[data-menu]')!.classList.contains('focused')).toBe(true);
+    player.handleAction('select');
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('#player-osd')!.classList.contains('hidden')).toBe(true);
+  });
+
+  it('opens the player menu on a pointer click', () => {
+    const open = vi.fn();
+    player.setMenuOpener(open);
+    player.play(0, CATCHUP);
+    const btn = container.querySelector('[data-menu]') as HTMLElement;
+    btn.getBoundingClientRect = () => ({ left: 950, right: 994, width: 44, top: 0, bottom: 44 }) as DOMRect;
+    container.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 970, clientY: 20 }));
+    expect(open).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1044,13 +1076,16 @@ describe('Player live DVR', () => {
     expect(container.querySelector('[data-resync]')).toBeNull();
   });
 
-  it('Left rewinds by the step, moving the bar', () => {
+  it('Left on the focused bar rewinds by the step, moving the bar', () => {
+    player.handleAction('left'); // ring to the bar
+    expect(live.currentTime).toBe(60);
     player.handleAction('left'); // 60 - 30 = 30
     expect(live.currentTime).toBe(30);
     expect((container.querySelector('.osd-progress-bar') as HTMLElement).style.width).toBe('50%');
   });
 
   it('Right near the live edge snaps to the edge (end - pad)', () => {
+    player.handleAction('right'); // ring to the bar
     player.handleAction('right'); // 60 + 30 → clamp 60 → snap 60 - PAD
     expect(live.currentTime).toBe(60 - PAD);
   });
@@ -1108,6 +1143,17 @@ describe('Player live DVR', () => {
     btn.getBoundingClientRect = () => ({ left: 500, right: 560, width: 60, top: 0, bottom: 32 }) as DOMRect;
     container.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 530, clientY: 16 }));
     expect(live.currentTime).toBe(60 - PAD);
+  });
+
+  it('keeps the DVR bar when the window later shrinks under the floor or empties', () => {
+    setWindow(55, 60); // 5s < DVR_MIN_WINDOW
+    live.dispatchEvent(new Event('timeupdate'));
+    expect(container.querySelector('[data-seekbar]')).not.toBeNull();
+
+    setWindow(60, 60);
+    live.dispatchEvent(new Event('timeupdate'));
+    expect(container.querySelector('[data-seekbar]')).not.toBeNull();
+    expect(container.querySelector('[data-golive]')).not.toBeNull();
   });
 
   it('reveals the DVR bar once the window becomes available, without reopening the OSD', () => {
@@ -1204,7 +1250,44 @@ describe('Player VOD mode', () => {
     document.body.appendChild(container);
     player = new Player(container, () => {});
   });
-  afterEach(() => { container.remove(); });
+  let holding: { mockRestore(): void } | null = null;
+  afterEach(() => {
+    container.remove();
+    holding?.mockRestore();
+    holding = null;
+  });
+
+  // A real, replaceable <video> with writable timing, so a reconnect can swap it.
+  // The prebuffer hold is off so `playing` counts as playback.
+  function mediaVideo(duration: number): HTMLVideoElement {
+    holding ??= vi.spyOn(PlayerPipeline.prototype, 'isPrebuffering').mockReturnValue(false);
+    HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+    HTMLMediaElement.prototype.pause = vi.fn();
+    HTMLMediaElement.prototype.load = vi.fn();
+    const v = container.querySelector('video') ?? document.createElement('video');
+    Object.defineProperty(v, 'duration', { value: duration, configurable: true, writable: true });
+    Object.defineProperty(v, 'currentTime', { value: 0, configurable: true, writable: true });
+    if (!v.parentNode) container.appendChild(v);
+    return v;
+  }
+  const currentVideo = () => container.querySelector('video')!;
+  const vodFailed = () => container.querySelector('.player-status')?.getAttribute('data-state') === 'error';
+  const statusText = () => container.querySelector('.player-status')?.textContent ?? '';
+  function playTo(video: HTMLVideoElement, seconds: number): void {
+    video.dispatchEvent(new Event('playing'));
+    video.currentTime = seconds;
+    video.dispatchEvent(new Event('timeupdate'));
+  }
+  // A failed element reports position 0, as webOS does after a decode error.
+  function fail(video: HTMLVideoElement): void {
+    Object.defineProperty(video, 'error', { value: { code: 2, message: '' }, configurable: true });
+    video.currentTime = 0;
+    video.dispatchEvent(new Event('error'));
+  }
+  function endPlayback(video: HTMLVideoElement): void {
+    Object.defineProperty(video, 'currentTime', { value: video.duration, configurable: true, writable: true });
+    video.dispatchEvent(new Event('ended'));
+  }
 
   it('defers VOD playback until the authorizer runs the action', () => {
     let deferred: (() => void) | null = null;
@@ -1427,7 +1510,7 @@ describe('Player VOD mode', () => {
     const r = req();
     vi.mocked(StorageService.removeWatchlist).mockClear();
     player.playVod(r);
-    video.dispatchEvent(new Event('ended'));
+    endPlayback(video);
     expect(StorageService.clearResume).toHaveBeenCalledWith('x1', 'vod', '10');
     expect(StorageService.removeWatchlist).toHaveBeenCalledWith('x1', 'vod', '10');
     expect(r.onBack).toHaveBeenCalled();
@@ -1448,7 +1531,7 @@ describe('Player VOD mode', () => {
     player.playVod(req({ watchlistQueue: [next] }));
     vi.mocked(probeMedia).mockClear();
 
-    video.dispatchEvent(new Event('ended'));
+    endPlayback(video);
     expect(container.textContent).toContain('Starts in 10 seconds');
     expect(container.textContent).toContain('Movie Two');
 
@@ -1480,7 +1563,7 @@ describe('Player VOD mode', () => {
     };
     const r = req({ watchlistQueue: [next] });
     player.playVod(r);
-    video.dispatchEvent(new Event('ended'));
+    endPlayback(video);
     vi.mocked(r.onBack).mockClear();
     locked = true;
 
@@ -1514,7 +1597,7 @@ describe('Player VOD mode', () => {
       poster: '', accountId: 'x1', itemId: 'e2', subtitles: [], ...series,
     };
     player.playVod(req({ itemId: 'e1', episodeQueue: [next], ...series }));
-    video.dispatchEvent(new Event('ended'));
+    endPlayback(video);
     locked = true;
     authorize.mockClear();
 
@@ -1538,7 +1621,7 @@ describe('Player VOD mode', () => {
     };
     player.playVod(req({ watchlistQueue: [next] }));
 
-    video.dispatchEvent(new Event('ended'));
+    endPlayback(video);
     expect(player.getPlaybackRateState().available).toBe(false);
 
     await vi.advanceTimersByTimeAsync(10_000);
@@ -1560,7 +1643,7 @@ describe('Player VOD mode', () => {
     player.playVod(req({ itemId: 'e1', kind: 'episode', episodeQueue: [next] }));
     vi.mocked(probeMedia).mockClear();
 
-    video.dispatchEvent(new Event('ended'));
+    endPlayback(video);
     expect(container.textContent).toContain('Starts in 10 seconds');
     expect(container.textContent).toContain('Series One — S1E2');
 
@@ -1579,7 +1662,7 @@ describe('Player VOD mode', () => {
       episodeQueue: [],
       watchlistOwner: { kind: 'series', itemId: 's1' },
     }));
-    video.dispatchEvent(new Event('ended'));
+    endPlayback(video);
     expect(StorageService.removeWatchlist).toHaveBeenCalledWith('x1', 'series', 's1');
   });
 
@@ -1602,7 +1685,7 @@ describe('Player VOD mode', () => {
         watchlistOwner: { kind: 'series', itemId: 's1' },
       }],
     }));
-    video.dispatchEvent(new Event('ended'));
+    endPlayback(video);
     expect(StorageService.removeWatchlist).not.toHaveBeenCalled();
   });
 
@@ -1623,7 +1706,7 @@ describe('Player VOD mode', () => {
       }],
     });
     player.playVod(r);
-    video.dispatchEvent(new Event('ended'));
+    endPlayback(video);
     player.handleAction('back');
 
     expect(r.onBack).toHaveBeenCalledTimes(1);
@@ -1640,20 +1723,474 @@ describe('Player VOD mode', () => {
     expect(player.isVod()).toBe(true);
   });
 
-  it('routes a playback error to onBack, not a channel change', () => {
-    const video = fakeVideo(3600);
+  it('keeps a title that fails to start on screen with its error and no Retry / Back, not a channel change', () => {
+    const video = mediaVideo(3600);
     player.init(video);
     const r = req();
     player.playVod(r);
     playlistMock.channels = [{}, {}]; // non-empty so a stray channelUp would fire
     playlistMock.getByIndex.mockClear();
-    vi.mocked(showToast).mockClear();
-    video.dispatchEvent(new Event('error'));
-    vi.advanceTimersByTime(3000); // let any (unwanted) channelUp timer run
-    expect(r.onBack).toHaveBeenCalled();
-    expect(player.isVod()).toBe(false);
+    fail(video);
+    expect(vodFailed()).toBe(true);
+    expect(statusText()).toContain('Playback error.');
+    expect(container.querySelector('[data-vod-retry], [data-vod-exit]')).toBeNull();
+
+    vi.advanceTimersByTime(30_000); // ten retries, each failing again
+    expect(r.onBack).not.toHaveBeenCalled();
+    expect(player.isVod()).toBe(true);
+    expect(vodFailed()).toBe(true);
     expect(playlistMock.getByIndex).not.toHaveBeenCalled(); // no channel playback
-    expect(showToast).toHaveBeenCalled();
+
+    player.handleAction('stop');
+    expect(r.onBack).toHaveBeenCalledTimes(1);
+    expect(player.isVod()).toBe(false);
+  });
+
+  it('saves the position reached before an error, not the 0 the failed element reports', () => {
+    const video = mediaVideo(3600);
+    player.init(video);
+    const r = req({ resumeSecs: 600 });
+    player.playVod(r);
+    video.dispatchEvent(new Event('loadedmetadata'));
+    playTo(video, 1200);
+    vi.mocked(StorageService.setResume).mockClear();
+
+    fail(video);
+
+    expect(StorageService.setResume).toHaveBeenCalledWith(expect.objectContaining({ itemId: '10', position: 1200 }));
+    expect(r.onBack).not.toHaveBeenCalled();
+    player.handleAction('stop');
+    expect(StorageService.setResume).toHaveBeenLastCalledWith(expect.objectContaining({ position: 1200 }));
+    expect(StorageService.clearResume).not.toHaveBeenCalled();
+  });
+
+  it('saves the position of a resumed title whose resume seek never applied', () => {
+    const video = mediaVideo(NaN); // no duration at loadedmetadata, so no resume seek
+    player.init(video);
+    const r = req({ resumeSecs: 600 });
+    player.playVod(r);
+    video.dispatchEvent(new Event('loadedmetadata'));
+    expect(video.currentTime).toBe(0);
+    vi.mocked(StorageService.setResume).mockClear();
+    player.handleAction('pause');
+    expect(StorageService.setResume).not.toHaveBeenCalled(); // still at 0: keep the stored point
+    player.handleAction('play');
+
+    video.duration = 3600; // known later, as some progressive streams report it
+    video.currentTime = 40;
+    player.handleAction('back');
+
+    expect(StorageService.setResume).toHaveBeenLastCalledWith(expect.objectContaining({ position: 40, duration: 3600 }));
+  });
+
+  it('retries a failed title every few seconds at its last position, keeping the error up until it plays', () => {
+    const video = mediaVideo(3600);
+    player.init(video);
+    player.playVod(req());
+    video.dispatchEvent(new Event('loadedmetadata'));
+    playTo(video, 1200);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    fail(video);
+
+    expect(vodFailed()).toBe(true);
+    expect(container.querySelector('[data-vod-retry]')).toBeNull();
+    video.dispatchEvent(new Event('pause')); // the failed element stopping
+    expect(vodFailed()).toBe(true);
+    const line = warn.mock.calls.map(args => args.join(' '))
+      .find(l => l.includes('event=playback.vod.error'));
+    expect(line).toContain('position=1200');
+    warn.mockRestore();
+    vi.advanceTimersByTime(CONFIG.PLAYER.VOD_RETRY_INTERVAL_MS - 1);
+    expect(currentVideo()).toBe(video);
+    vi.advanceTimersByTime(1);
+
+    const fresh = mediaVideo(3600);
+    expect(fresh).not.toBe(video);
+    expect(vodFailed()).toBe(true); // still up while the reload loads
+    fresh.dispatchEvent(new Event('loadedmetadata'));
+    expect(fresh.currentTime).toBe(1200);
+    expect(player.isVod()).toBe(true);
+    fresh.dispatchEvent(new Event('playing'));
+    expect(vodFailed()).toBe(false);
+  });
+
+  it('keeps retrying a title that keeps failing, with no limit', () => {
+    const video = mediaVideo(3600);
+    player.init(video);
+    const r = req();
+    player.playVod(r);
+    video.dispatchEvent(new Event('loadedmetadata'));
+    playTo(video, 1200);
+    for (let attempt = 1; attempt <= 10; attempt++) {
+      const failing = currentVideo();
+      fail(failing);
+      expect(vodFailed()).toBe(true);
+      vi.advanceTimersByTime(CONFIG.PLAYER.VOD_RETRY_INTERVAL_MS);
+      expect(currentVideo()).not.toBe(failing);
+    }
+    expect(container.querySelector('[data-vod-retry], [data-vod-exit]')).toBeNull();
+    expect(r.onBack).not.toHaveBeenCalled();
+
+    const fresh = mediaVideo(3600);
+    fresh.dispatchEvent(new Event('loadedmetadata'));
+    expect(fresh.currentTime).toBe(1200);
+  });
+
+  it('keeps sidecar subtitles across a reconnect', () => {
+    const video = mediaVideo(3600);
+    player.init(video);
+    player.playVod(req({ subtitles: [{ id: 's1', name: 'Track 1', lang: 'l1', url: 'http://host/a.srt' }] }));
+    video.dispatchEvent(new Event('loadedmetadata'));
+    const labels = () => player.getSubtitleTracks().map(track => track.label).join(',');
+    expect(labels()).toContain('Track 1');
+    playTo(video, 1200);
+
+    fail(video);
+    vi.advanceTimersByTime(CONFIG.PLAYER.VOD_RETRY_INTERVAL_MS);
+
+    expect(currentVideo()).not.toBe(video);
+    expect(labels()).toContain('Track 1');
+  });
+
+  it('saves a failed title and drops its error and retry when a channel replaces it', () => {
+    const video = mediaVideo(3600);
+    player.init(video);
+    player.playVod(req({ resumeSecs: 1200 }));
+    video.dispatchEvent(new Event('loadedmetadata'));
+    fail(video);
+    expect(vodFailed()).toBe(true);
+    vi.mocked(StorageService.setResume).mockClear();
+
+    player.play(0);
+    vi.advanceTimersByTime(CONFIG.PLAYER.VOD_RETRY_INTERVAL_MS);
+
+    expect(StorageService.setResume).toHaveBeenCalledWith(expect.objectContaining({ itemId: '10', position: 1200 }));
+    expect(player.isVod()).toBe(false);
+    expect(vodFailed()).toBe(false);
+    // The live OSD auto-hides again (it stays up only while paused).
+    Object.defineProperty(currentVideo(), 'paused', { value: false, configurable: true });
+    player.showOSD();
+    vi.advanceTimersByTime(5000);
+    expect(container.querySelector('#player-osd')!.classList.contains('hidden')).toBe(true);
+  });
+
+  it('plays and pauses with OK while the controls are hidden, and a pause keeps them up', () => {
+    const video = fakeVideo(3600);
+    player.init(video);
+    player.playVod(req());
+    player.hideOSD();
+    const osdShown = () => !container.querySelector('#player-osd')!.classList.contains('hidden');
+
+    player.handleAction('select');
+    expect(video.paused).toBe(true);
+    expect(osdShown()).toBe(true);
+    expect(container.querySelector('[data-playpause]')?.getAttribute('aria-label')).toBe('Play');
+    vi.advanceTimersByTime(30_000);
+    expect(osdShown()).toBe(true);
+
+    player.handleAction('select');
+    expect(video.paused).toBe(false);
+    expect(container.querySelector('[data-playpause]')?.getAttribute('aria-label')).toBe('Pause');
+    vi.advanceTimersByTime(5000);
+    expect(osdShown()).toBe(false);
+  });
+
+  it('seeks with the remote\'s rewind and fast-forward keys and lights their button', () => {
+    const video = fakeVideo(3600);
+    player.init(video);
+    player.playVod(req());
+    video.currentTime = 600;
+    player.hideOSD();
+
+    player.handleAction('fast_forward');
+    expect(video.currentTime).toBe(600 + CONFIG.PLAYER.SEEK_STEP);
+    expect(container.querySelector('[data-forward]')?.classList.contains('is-pressed')).toBe(true);
+    vi.advanceTimersByTime(300);
+    expect(container.querySelector('[data-forward]')?.classList.contains('is-pressed')).toBe(false);
+
+    player.handleAction('rewind');
+    player.handleAction('rewind');
+    expect(video.currentTime).toBe(600 - CONFIG.PLAYER.SEEK_STEP);
+    expect(container.querySelector('[data-rewind]')?.classList.contains('is-pressed')).toBe(true);
+  });
+
+  it('shows Pause through the prebuffer hold and follows the element\'s playing and pause', () => {
+    const video = fakeVideo(3600);
+    player.init(video);
+    player.playVod(req());
+    const label = () => container.querySelector('[data-playpause]')?.getAttribute('aria-label');
+    const holding = vi.spyOn(PlayerPipeline.prototype, 'isPrebuffering').mockReturnValue(true);
+    try {
+      video.pause(); // the hold pauses the element
+      player.showOSD();
+      expect(label()).toBe('Pause');
+    } finally { holding.mockRestore(); }
+
+    // Paused for real, then the element plays and pauses on its own.
+    player.showOSD();
+    expect(label()).toBe('Play');
+    video.play();
+    video.dispatchEvent(new Event('playing'));
+    expect(label()).toBe('Pause');
+    video.pause();
+    video.dispatchEvent(new Event('pause'));
+    expect(label()).toBe('Play');
+  });
+
+  it('shows the controls with Up or Down without pausing', () => {
+    const video = fakeVideo(3600);
+    player.init(video);
+    player.playVod(req());
+    player.hideOSD();
+    player.handleAction('up');
+    expect(container.querySelector('#player-osd')!.classList.contains('hidden')).toBe(false);
+    expect(video.paused).toBe(false);
+  });
+
+  describe('Next episode', () => {
+    const owner = { kind: 'series' as const, itemId: 's1' };
+    const e2 = {
+      url: 'http://host:8080/series/u/p/e2.mp4', title: 'Series One — S1E2', poster: '',
+      accountId: 'x1', itemId: 'e2', kind: 'episode' as const, subtitles: [], watchlistOwner: owner,
+    };
+    const e3 = { ...e2, itemId: 'e3', title: 'Series One — S1E3', url: 'http://host:8080/series/u/p/e3.mp4' };
+    afterEach(() => Focus.uninstall());
+
+    it('reaches Next episode along the controls, plays it from its own resume point with OK', () => {
+      const video = fakeVideo(1800);
+      player.init(video);
+      const r = req({ itemId: 'e1', kind: 'episode', watchlistOwner: owner, episodeQueue: [e2, e3] });
+      player.playVod(r);
+      video.dispatchEvent(new Event('loadedmetadata'));
+      video.currentTime = 600;
+      vi.mocked(StorageService.getResume).mockImplementation((_a, _k, id) => id === 'e2'
+        ? { accountId: 'x1', kind: 'episode', itemId: 'e2', name: '', poster: '', ext: 'mp4',
+          position: 300, duration: 1800, updatedAt: 1 }
+        : null);
+      vi.mocked(StorageService.setResume).mockClear();
+      vi.mocked(probeMedia).mockClear();
+      try {
+        expect(container.querySelector('[data-next-episode]')?.textContent).toContain('Next episode');
+        player.handleAction('down');
+        expect(Focus.owner()?.id).toBe('player.controls');
+        for (let i = 0; i < 4; i++) player.handleAction('right'); // forward, resync, menu, next
+        expect(container.querySelector('[data-next-episode]')!.classList.contains('focused')).toBe(true);
+
+        player.handleAction('select');
+      } finally {
+        vi.mocked(StorageService.getResume).mockImplementation(() => null);
+      }
+
+      expect(StorageService.setResume).toHaveBeenCalledWith(expect.objectContaining({ itemId: 'e1', position: 600 }));
+      expect(probeMedia).toHaveBeenCalledWith(e2.url, 'x1|media_probe|episode|e2');
+      expect(Focus.owner()?.id).not.toBe('player.controls');
+      video.dispatchEvent(new Event('loadedmetadata'));
+      expect(video.currentTime).toBe(300);
+      expect(container.querySelector('.osd-channel-name')?.textContent).toContain('S1E2');
+      expect(container.querySelector('[data-next-episode]')).not.toBeNull(); // e3 still follows
+      expect(r.onBack).not.toHaveBeenCalled();
+    });
+
+    it('moves the ring between the bar and the buttons, and Back takes it down without leaving', () => {
+      const video = fakeVideo(1800);
+      player.init(video);
+      const r = req({ itemId: 'e1', kind: 'episode', watchlistOwner: owner, episodeQueue: [e2] });
+      player.playVod(r);
+      video.dispatchEvent(new Event('loadedmetadata'));
+      const focused = () => container.querySelector('#player-osd .focused')?.getAttribute('data-key');
+
+      player.handleAction('down');
+      expect(focused()).toBe('playpause');
+      player.handleAction('up');
+      expect(focused()).toBe('seek');
+      player.handleAction('down');
+      expect(focused()).toBe('playpause');
+
+      player.handleAction('back');
+      expect(Focus.owner()?.id).not.toBe('player.controls');
+      expect(r.onBack).not.toHaveBeenCalled();
+      expect(player.isVod()).toBe(true);
+    });
+
+    it('leaves keys the ring does not use to their usual routing', () => {
+      const video = fakeVideo(1800);
+      player.init(video);
+      player.playVod(req({ itemId: 'e1', kind: 'episode', watchlistOwner: owner, episodeQueue: [e2] }));
+      video.currentTime = 600;
+      player.handleAction('down');
+
+      // The App's own keys (Blue opens Settings) are not taken by the ring.
+      expect(Focus.owner()!.handle('blue')).toBe(false);
+    });
+
+    it('moves along the buttons with Left/Right without seeking; OK on Forward seeks', () => {
+      const video = fakeVideo(1800);
+      player.init(video);
+      player.playVod(req({ itemId: 'e1', kind: 'episode', watchlistOwner: owner, episodeQueue: [e2] }));
+      video.currentTime = 600;
+      player.handleAction('down'); // ring on play/pause
+      player.handleAction('right');
+      expect(container.querySelector('[data-forward]')!.classList.contains('focused')).toBe(true);
+      expect(video.currentTime).toBe(600);
+      player.handleAction('select');
+      expect(video.currentTime).toBe(600 + CONFIG.PLAYER.SEEK_STEP);
+    });
+
+    it('retries the same episode, not the next one, after a failure', () => {
+      const video = mediaVideo(1800);
+      player.init(video);
+      player.playVod(req({ itemId: 'e1', kind: 'episode', watchlistOwner: owner, episodeQueue: [e2] }));
+      video.dispatchEvent(new Event('loadedmetadata'));
+      vi.mocked(probeMedia).mockClear();
+
+      fail(video);
+      vi.advanceTimersByTime(CONFIG.PLAYER.VOD_RETRY_INTERVAL_MS);
+
+      expect(currentVideo()).not.toBe(video);
+      expect(probeMedia).not.toHaveBeenCalledWith(e2.url, expect.anything());
+      expect(container.querySelector('.osd-channel-name')?.textContent).not.toContain('S1E2');
+    });
+
+    it('drops the ring when a channel replaces the episode, so Down changes channel', () => {
+      const video = fakeVideo(1800);
+      player.init(video);
+      player.playVod(req({ itemId: 'e1', kind: 'episode', watchlistOwner: owner, episodeQueue: [e2] }));
+      player.handleAction('down');
+      expect(Focus.owner()?.id).toBe('player.controls');
+      playlistMock.channels = [{}, {}];
+
+      player.play(0);
+      expect(Focus.owner()?.id).not.toBe('player.controls');
+      playlistMock.getByIndex.mockClear();
+      player.handleAction('down');
+      expect(playlistMock.getByIndex).toHaveBeenCalled();
+    });
+
+    it('offers no Next episode for a movie or a series\' last episode', () => {
+      const video = fakeVideo(1800);
+      player.init(video);
+      player.playVod(req());
+      expect(container.querySelector('[data-next-episode]')).toBeNull();
+      player.handleAction('down');
+      for (let i = 0; i < 6; i++) player.handleAction('right');
+      expect(container.querySelector('#player-osd .focused')?.getAttribute('data-key')).toBe('menu');
+
+      player.playVod(req({ itemId: 'e9', kind: 'episode', watchlistOwner: owner, episodeQueue: [] }));
+      expect(container.querySelector('[data-next-episode]')).toBeNull();
+    });
+  });
+
+  it('treats an end well before the duration as an interruption, not a finish', () => {
+    const video = mediaVideo(3600);
+    player.init(video);
+    const r = req();
+    player.playVod(r);
+    video.dispatchEvent(new Event('loadedmetadata'));
+    playTo(video, 1200);
+    vi.mocked(StorageService.clearResume).mockClear();
+    vi.mocked(StorageService.removeWatchlist).mockClear();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    video.dispatchEvent(new Event('ended'));
+
+    expect(warn.mock.calls.map(args => args.join(' ')).join('\n'))
+      .toMatch(/event=playback\.vod\.ended_early .*position=1200 duration=3600/);
+    warn.mockRestore();
+    expect(StorageService.clearResume).not.toHaveBeenCalled();
+    expect(StorageService.removeWatchlist).not.toHaveBeenCalled();
+    expect(r.onBack).not.toHaveBeenCalled();
+    expect(statusText()).toContain('Reconnecting');
+    expect(StorageService.setResume).toHaveBeenLastCalledWith(expect.objectContaining({ position: 1200 }));
+  });
+
+  it('saves the resume point periodically while playing', () => {
+    const video = mediaVideo(3600);
+    player.init(video);
+    player.playVod(req());
+    video.dispatchEvent(new Event('loadedmetadata'));
+    vi.mocked(StorageService.setResume).mockClear();
+
+    playTo(video, 100);
+    expect(StorageService.setResume).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(CONFIG.PLAYER.VOD_CHECKPOINT_INTERVAL);
+    playTo(video, 115);
+    expect(StorageService.setResume).toHaveBeenCalledTimes(1);
+    expect(StorageService.setResume).toHaveBeenLastCalledWith(expect.objectContaining({ position: 115, duration: 3600 }));
+    playTo(video, 120);
+    expect(StorageService.setResume).toHaveBeenCalledTimes(1);
+  });
+
+  it('saves the resume point when the app goes to the background', () => {
+    const video = mediaVideo(3600);
+    player.init(video);
+    player.playVod(req());
+    video.dispatchEvent(new Event('loadedmetadata'));
+    video.currentTime = 900;
+    vi.mocked(StorageService.setResume).mockClear();
+
+    player.suspend();
+
+    expect(StorageService.setResume).toHaveBeenCalledWith(expect.objectContaining({ position: 900 }));
+  });
+
+  it('counts the end credits as finished: the next episode goes up next and this one is watched', () => {
+    const video = mediaVideo(1800);
+    player.init(video);
+    const owner = { kind: 'series' as const, itemId: 's1' };
+    const e2 = {
+      url: 'http://host:8080/series/u/p/e2.mkv', title: 'Series One — S1E2', poster: '',
+      accountId: 'x1', itemId: 'e2', kind: 'episode' as const, subtitles: [],
+      watchlistOwner: owner, searchMeta: { season: 1, episode: 2 },
+    };
+    const e3 = { ...e2, itemId: 'e3', title: 'Series One — S1E3' };
+    player.playVod(req({ itemId: 'e1', kind: 'episode', watchlistOwner: owner, episodeQueue: [e2, e3] }));
+    video.dispatchEvent(new Event('loadedmetadata'));
+    video.currentTime = 1800 - 60; // inside the last 5%
+    vi.mocked(StorageService.setResume).mockClear();
+    vi.mocked(StorageService.removeWatchlist).mockClear();
+
+    player.handleAction('back');
+
+    expect(StorageService.clearResume).toHaveBeenCalledWith('x1', 'episode', 'e1');
+    expect(StorageService.markEpisodeWatched).toHaveBeenCalledWith('x1', 's1', 'e1');
+    expect(StorageService.setResume).toHaveBeenCalledTimes(1);
+    expect(StorageService.setResume).toHaveBeenCalledWith(expect.objectContaining({
+      itemId: 'e2', position: 0, upNext: true, ext: 'mkv',
+      episodeQueue: [e3], watchlistOwner: owner, searchMeta: { season: 1, episode: 2 },
+    }));
+    expect(StorageService.removeWatchlist).not.toHaveBeenCalled();
+  });
+
+  it('keeps the next episode\'s own progress when the one before it finishes', () => {
+    const video = mediaVideo(1800);
+    player.init(video);
+    const owner = { kind: 'series' as const, itemId: 's1' };
+    const e3 = {
+      url: 'http://host:8080/series/u/p/e3.mp4', title: 'Series One — S1E3', poster: '',
+      accountId: 'x1', itemId: 'e3', kind: 'episode' as const, subtitles: [], watchlistOwner: owner,
+    };
+    const saved = {
+      accountId: 'x1', kind: 'episode' as const, itemId: 'e3', name: 'Series One — S1E3', poster: '',
+      ext: 'mp4', position: 900, duration: 1800, updatedAt: 1, watchlistOwner: owner,
+    };
+    vi.mocked(StorageService.getResume).mockImplementation((_a, _k, id) => id === 'e3' ? saved : null);
+    try {
+      player.playVod(req({ itemId: 'e2', kind: 'episode', watchlistOwner: owner, episodeQueue: [e3] }));
+      video.dispatchEvent(new Event('loadedmetadata'));
+      video.currentTime = 1790;
+      vi.mocked(StorageService.setResume).mockClear();
+
+      player.handleAction('back');
+    } finally {
+      vi.mocked(StorageService.getResume).mockImplementation(() => null);
+    }
+
+    expect(StorageService.setResume).toHaveBeenCalledTimes(1);
+    const written = vi.mocked(StorageService.setResume).mock.calls[0][0];
+    expect(written).toMatchObject({ itemId: 'e3', position: 900, duration: 1800 });
+    expect(written.upNext).toBeUndefined();
+    expect(written.updatedAt).toBeGreaterThan(1);
   });
 
   it('surfaces a source the element refused, which fires no error event', () => {
@@ -1674,9 +2211,9 @@ describe('Player VOD mode', () => {
     expect(detail).toContain('extension=mkv');
     expect(detail).toContain('url=[URL REDACTED]');
     logged.mockRestore();
-    expect(showToast).toHaveBeenCalledWith('Unable to play this video.');
-    expect(r.onBack).toHaveBeenCalled();
-    expect(player.isVod()).toBe(false);
+    expect(vodFailed()).toBe(true);
+    expect(r.onBack).not.toHaveBeenCalled();
+    expect(player.isVod()).toBe(true);
   });
 
   it('surfaces a VOD stream that never produces a frame', () => {
@@ -1690,8 +2227,9 @@ describe('Player VOD mode', () => {
 
     vi.advanceTimersByTime(CONFIG.PLAYER.STARTUP_TIMEOUT);
 
-    expect(showToast).toHaveBeenCalledWith('Unable to play this video.');
-    expect(r.onBack).toHaveBeenCalled();
+    expect(vodFailed()).toBe(true);
+    expect(statusText()).toContain('No video frame received');
+    expect(r.onBack).not.toHaveBeenCalled();
   });
 
   it('stops watching once the stream starts', () => {
@@ -1705,7 +2243,7 @@ describe('Player VOD mode', () => {
 
     vi.advanceTimersByTime(CONFIG.PLAYER.STARTUP_TIMEOUT * 2);
 
-    expect(showToast).not.toHaveBeenCalled();
+    expect(vodFailed()).toBe(false);
     expect(player.isVod()).toBe(true);
   });
 
@@ -1722,7 +2260,7 @@ describe('Player VOD mode', () => {
       player.handleAction('pause');
       expect(video.paused).toBe(true);
       vi.advanceTimersByTime(CONFIG.PLAYER.STARTUP_TIMEOUT * 2);
-      expect(showToast).not.toHaveBeenCalled();
+      expect(vodFailed()).toBe(false);
       expect(r.onBack).not.toHaveBeenCalled();
     } finally { holding.mockRestore(); player.stop(); }
   });
@@ -1739,7 +2277,7 @@ describe('Player VOD mode', () => {
     player.suspend();
     vi.advanceTimersByTime(CONFIG.PLAYER.STARTUP_TIMEOUT * 2);
 
-    expect(showToast).not.toHaveBeenCalled();
+    expect(vodFailed()).toBe(false);
     expect(r.onBack).not.toHaveBeenCalled();
   });
 
@@ -1760,7 +2298,7 @@ describe('Player VOD mode', () => {
     player.resume();
     vi.advanceTimersByTime(CONFIG.PLAYER.STARTUP_TIMEOUT * 2);
 
-    expect(showToast).not.toHaveBeenCalled();
+    expect(vodFailed()).toBe(false);
     expect(r.onBack).not.toHaveBeenCalled();
   });
 

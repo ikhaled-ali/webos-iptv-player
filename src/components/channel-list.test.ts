@@ -838,6 +838,45 @@ describe('ChannelList.render', () => {
   });
 });
 
+describe('ChannelList grid layout', () => {
+  function setMainWidth(width: number): void {
+    const main = container.querySelector<HTMLElement>('.channel-main')!;
+    Object.defineProperty(main, 'clientWidth', { configurable: true, get: () => width });
+  }
+
+  it('keeps its columns while the view is hidden', () => {
+    list.render();
+    // 3 tiles of 210px plus two 24px gaps fit; a 4th does not.
+    setMainWidth(3 * 210 + 2 * 24);
+    list.render(false);
+    const tile = () => container.querySelector<HTMLElement>('[data-list-position="2"]')!;
+    const placed = tile().getAttribute('style');
+    expect(placed).toContain('* 2 / 3');
+
+    // Another section is showing: the hidden grid has no width.
+    setMainWidth(0);
+    list.render(false);
+    expect(tile().getAttribute('style')).toBe(placed);
+  });
+
+  it('leaves the grid only upward, from its top row', () => {
+    list.render();
+    setMainWidth(3 * 210 + 2 * 24);
+    list.render();
+    const tile = (position: number) =>
+      container.querySelector<HTMLElement>(`[data-list-position="${position}"]`)!;
+    expect(ringed(tile(0))).toBe(true);
+
+    // One row of three: it is both the top and the last row. Down holds
+    // focus; Up hands it to the tab bar above the view.
+    expect(list.handleAction('down')).toBe(true);
+    expect(ringed(tile(0))).toBe(true);
+    list.handleAction('channel_up');
+    expect(ringed(tile(0))).toBe(true);
+    expect(list.handleAction('up')).toBe(false);
+  });
+});
+
 describe('ChannelList interaction', () => {
   beforeEach(() => list.render());
 

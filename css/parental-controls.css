@@ -316,8 +316,8 @@
 }
 
 .tab-bar-item.tab-bar-lock.focused {
-  background: var(--warning);
-  color: var(--bg-primary);
+  background-image: var(--focus-layer);
+  color: var(--warning);
 }
 
 .parental-row .lock-badge {
@@ -337,9 +337,8 @@
 
 .parental-row.focused,
 .parental-pin-actions button:focus {
-  outline: 3px solid var(--focus-ring);
-  outline-offset: -3px;
-  background: var(--bg-tertiary);
+  outline: none;
+  background-image: var(--focus-layer);
 }
 
 .parental-empty {
@@ -467,8 +466,7 @@
 }
 
 .parental-pin-slots span.active {
-  border-color: var(--focus-ring);
-  box-shadow: 0 0 0 3px var(--accent-glow);
+  background-image: var(--focus-layer-strong);
 }
 
 .parental-pin-input:disabled + .parental-pin-slots {

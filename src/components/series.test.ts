@@ -12,6 +12,12 @@ const { catalogMock, storageMock, watchlistState, toastMock } = vi.hoisted(() =>
       getCatalogSort: vi.fn((): CatalogSortPreference => ({ by: 'default', direction: 'asc' })),
       setCatalogSort: vi.fn((_kind: 'vod' | 'series', _sort: CatalogSortPreference) => true),
       getResumeList: vi.fn(() => [] as unknown[]),
+      getSeriesResumeList: vi.fn((_accountId: string, seriesId: string) =>
+        (storageMock.getResumeList() as { kind: string; watchlistOwner?: { itemId: string } }[])
+          .filter((entry) => entry.kind === 'episode' && entry.watchlistOwner?.itemId === seriesId)),
+      clearResume: vi.fn(),
+      clearSeriesResume: vi.fn(),
+      getWatchedEpisodes: vi.fn((_accountId: string, _seriesId: string) => [] as string[]),
       getResume: vi.fn(() => null),
       getWatchlist: vi.fn(() => watchlistState.entries),
       isWatchlisted: vi.fn((_accountId: string, _kind: WatchlistKind, itemId: string) =>
@@ -56,6 +62,7 @@ beforeEach(() => {
   // prior test's mockReturnValue override doesn't leak (order-safety).
   storageMock.getResumeList.mockReturnValue([]);
   storageMock.getResume.mockReturnValue(null);
+  storageMock.getWatchedEpisodes.mockReturnValue([]);
   storageMock.getCatalogSort.mockReturnValue({ by: 'default', direction: 'asc' });
   storageMock.setCatalogSort.mockReturnValue(true);
   watchlistState.entries = [];
@@ -127,6 +134,47 @@ describe('Series browse + grid', () => {
     expect(container.querySelector('.catalog-layer-grid .focused')?.getAttribute('data-key')).toBe('r:e2');
     expect(container.querySelector('.catalog-layer-grid .focused')?.closest('[data-grid-index]')
       ?.getAttribute('data-grid-index')).toBe('0');
+  });
+
+  it('lists one Continue Watching tile per series, its latest episode, and removes the whole series', async () => {
+    const owner = (itemId: string) => ({ kind: 'series', itemId });
+    storageMock.getResumeList.mockReturnValue([
+      { accountId: 'x1', kind: 'episode', itemId: 'e3', name: 'Series One — S1E3', poster: '', ext: 'mp4',
+        position: 100, duration: 600, updatedAt: 3, watchlistOwner: owner('s1') },
+      { accountId: 'x1', kind: 'episode', itemId: 'f1', name: 'Series Two — S1E1', poster: '', ext: 'mp4',
+        position: 100, duration: 600, updatedAt: 2, watchlistOwner: owner('s2') },
+      { accountId: 'x1', kind: 'episode', itemId: 'e1', name: 'Series One — S1E1', poster: '', ext: 'mp4',
+        position: 100, duration: 600, updatedAt: 1, watchlistOwner: owner('s1') },
+    ]);
+    const { view } = await openWith();
+    const rail = container.querySelector('[data-rail-key="continue"]')!;
+    expect(Array.from(rail.querySelectorAll('[data-resume-episode]'))
+      .map(tile => tile.getAttribute('data-resume-episode'))).toEqual(['e3', 'f1']);
+
+    container.querySelector<HTMLElement>('[data-collection-manage="continue"]')!.click();
+    expect(container.querySelector('.catalog-grid-count')?.textContent).toBe('2 series');
+    const remove = container.querySelector<HTMLElement>(
+      '.catalog-layer-grid [data-grid-index="0"] [data-collection-action="remove"]')!;
+    remove.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
+    view.handleAction('select');
+    expect(storageMock.clearSeriesResume).toHaveBeenCalledWith('x1', 's1');
+    expect(storageMock.clearResume).not.toHaveBeenCalled();
+  });
+
+  it('resumes from Continue Watching with the saved subtitles and subtitle-search details', async () => {
+    const subtitles = [{ id: 'sub1', name: 'Track 1', lang: 'l1', url: 'http://host/a' }];
+    storageMock.getResumeList.mockReturnValue([{
+      accountId: 'x1', kind: 'episode', itemId: 'e2', name: 'Series One — S1E2', poster: '', ext: 'mp4',
+      position: 300, duration: 1500, updatedAt: 1, subtitles, searchMeta: { season: 1, episode: 2 },
+      watchlistOwner: { kind: 'series', itemId: 's1' },
+    }]);
+    const { view, handlers } = await openWith();
+    container.querySelector<HTMLElement>('[data-resume-episode="e2"]')!
+      .dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
+    view.handleAction('select');
+    expect(handlers.onPlayVod).toHaveBeenCalledWith(expect.objectContaining({
+      itemId: 'e2', resumeSecs: 300, subtitles, searchMeta: { season: 1, episode: 2 },
+    }));
   });
 
   it('restores its own saved sort field and direction', async () => {
@@ -675,6 +723,100 @@ describe('Series detail', () => {
       episodeQueue: [next],
       watchlistOwner: { kind: 'series', itemId: 's1' },
     }));
+  });
+
+  const inProgress = (over: Record<string, unknown> = {}) => ({
+    accountId: 'x1', kind: 'episode', itemId: 'e2', name: 'Series One — S2E1', poster: '', ext: 'mkv',
+    position: 300, duration: 1600, updatedAt: 1, watchlistOwner: { kind: 'series', itemId: 's1' }, ...over,
+  });
+  const mainButton = () => container.querySelector<HTMLElement>('.series-detail [data-key="continue"]');
+
+  it('opens on the season of the episode in progress with Resume focused', async () => {
+    catalogMock.loadSeriesInfo.mockResolvedValue(SERIES_INFO);
+    const entry = inProgress();
+    storageMock.getResumeList.mockReturnValue([entry]);
+    storageMock.getResume.mockImplementation((_a: string, _k: string, id: string) => id === 'e2' ? entry : null);
+    const { view, handlers } = await openWith();
+    await openDetail(view);
+
+    expect(container.querySelector('.series-season-btn.active')?.getAttribute('data-season')).toBe('2');
+    expect(mainButton()?.textContent).toContain('Resume');
+    expect(mainButton()?.textContent).toContain('S2E1');
+    expect(container.querySelector('.series-detail .focused')).toBe(mainButton());
+    view.handleAction('select');
+    expect(handlers.onPlayVod).toHaveBeenCalledWith(expect.objectContaining({ itemId: 'e2', resumeSecs: 300 }));
+  });
+
+  it('opens the season group listing the episode when its own season number differs', async () => {
+    const regrouped = {
+      ...SERIES_INFO,
+      seasons: [1],
+      episodesBySeason: { 1: [
+        { ...SERIES_INFO.episodesBySeason[1][0] },
+        { ...SERIES_INFO.episodesBySeason[2][0], season: 2 },
+      ] },
+    };
+    catalogMock.loadSeriesInfo.mockResolvedValue(regrouped);
+    const entry = inProgress();
+    storageMock.getResumeList.mockReturnValue([entry]);
+    storageMock.getResume.mockImplementation((_a: string, _k: string, id: string) => id === 'e2' ? entry : null);
+    const { view } = await openWith();
+    await openDetail(view);
+
+    expect(container.querySelector('.series-season-btn.active')?.getAttribute('data-season')).toBe('1');
+    expect(container.querySelector('.episode-row[data-episode-id="e2"]')).not.toBeNull();
+    expect(mainButton()?.textContent).toContain('S2E1');
+  });
+
+  it('offers the episode after the last watched one, and the first when none is', async () => {
+    catalogMock.loadSeriesInfo.mockResolvedValue(SERIES_INFO);
+    const { view } = await openWith();
+    await openDetail(view);
+    expect(mainButton()?.textContent).toContain('Play');
+    expect(mainButton()?.textContent).toContain('S1E1');
+
+    storageMock.getWatchedEpisodes.mockReturnValue(['e1']);
+    view.handleAction('back');
+    await openDetail(view);
+    expect(mainButton()?.textContent).toContain('Play');
+    expect(mainButton()?.textContent).toContain('S2E1');
+    expect(container.querySelector('.series-season-btn.active')?.getAttribute('data-season')).toBe('2');
+  });
+
+  it('starts an up-next episode from the beginning, without a Resume mark', async () => {
+    catalogMock.loadSeriesInfo.mockResolvedValue(SERIES_INFO);
+    const entry = inProgress({ position: 0, duration: 0, upNext: true });
+    storageMock.getResumeList.mockReturnValue([entry]);
+    storageMock.getResume.mockImplementation((_a: string, _k: string, id: string) => id === 'e2' ? entry : null);
+    const { view, handlers } = await openWith();
+    await openDetail(view);
+
+    expect(mainButton()?.textContent).toContain('Play');
+    expect(mainButton()?.textContent).not.toContain('Resume');
+    const row = container.querySelector('.episode-row[data-episode-id="e2"]')!;
+    expect(row.querySelector('.episode-resume')).toBeNull();
+    expect(row.querySelector('.catalog-progress')).toBeNull();
+    view.handleAction('select');
+    expect(handlers.onPlayVod).toHaveBeenCalledWith(expect.objectContaining({ itemId: 'e2', resumeSecs: 0 }));
+  });
+
+  it('shows progress on a started episode and marks a watched one', async () => {
+    catalogMock.loadSeriesInfo.mockResolvedValue(SERIES_INFO);
+    storageMock.getResume.mockImplementation((_a: string, _k: string, id: string) =>
+      id === 'e1' ? inProgress({ itemId: 'e1', position: 450, duration: 1500 }) : null);
+    storageMock.getWatchedEpisodes.mockReturnValue(['e2']);
+    const { view } = await openWith();
+    await openDetail(view);
+
+    const started = container.querySelector('.episode-row[data-episode-id="e1"]')!;
+    expect(started.querySelector('.episode-resume')?.textContent).toBe('Resume');
+    expect(started.querySelector<HTMLElement>('.catalog-progress-fill')?.style.width).toBe('30%');
+    container.querySelector<HTMLElement>('.series-season-btn[data-season="2"]')!
+      .dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
+    view.handleAction('select');
+    const watched = container.querySelector('.episode-row[data-episode-id="e2"]')!;
+    expect(watched.querySelector('.episode-watched')?.textContent).toBe('Watched');
+    expect(watched.querySelector('.catalog-progress')).toBeNull();
   });
 
   it('shows an empty state when the series has no seasons', async () => {

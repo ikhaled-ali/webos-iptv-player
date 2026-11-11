@@ -72,9 +72,9 @@
 
 .live-preview-favorite.focused,
 .live-preview-favorite:hover {
-  border-color: var(--focus-ring) !important;
-  background: rgba(255, 255, 255, .16);
-  box-shadow: 0 0 12px var(--accent-glow);
+  border-color: transparent !important;
+  background-image: var(--focus-layer-strong);
+  box-shadow: none;
   transform: none;
 }
 
@@ -155,9 +155,9 @@
 }
 
 .live-preview-controls .live-preview-button.focused {
-  border-color: var(--focus-ring) !important;
-  background: rgba(255, 255, 255, .16);
-  box-shadow: 0 0 12px var(--accent-glow);
+  border-color: transparent !important;
+  background-image: var(--focus-layer-strong);
+  box-shadow: none;
   transform: none;
 }
 

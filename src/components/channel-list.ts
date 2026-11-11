@@ -12,7 +12,7 @@ import { SpatialNav, isFocusMove } from '../navigation/spatial-nav';
 import { KeyHandler } from '../navigation/key-handler';
 import { InputMode } from '../navigation/input-mode';
 import { Focus, type FocusScope, type Via } from '../navigation/focus-scope';
-import { html, raw, type Safe } from '../utils/dom';
+import { html, raw, scrollInsetTop, visibleHeight, type Safe } from '../utils/dom';
 import { morph } from '../utils/morph';
 import { channelKey, groupDisplayLabel } from '../utils/channel';
 import { formatPosition } from '../utils/time';
@@ -36,6 +36,16 @@ import { CONFIG } from '../config';
 // .channel-item is 88px, .group-item is 60px plus its 8px vertical margin.
 const CHANNEL_ROW_STRIDE = 88;
 const GROUP_ROW_STRIDE = 68;
+// The browse grid mirrors .channel-tile: a 204px tile plus the 24px gap.
+const CHANNEL_GRID_ROW_STRIDE = 228;
+const CHANNEL_GRID_GAP = 24;
+const CHANNEL_GRID_MIN_TILE = 210;
+const CHANNEL_GRID_OVERSCAN = 2;
+// .channel-main-grid's top padding, above the first row.
+const CHANNEL_GRID_PADDING_TOP = 24;
+// Room kept between a focused tile and the grid's edges: the tile grows 10%
+// and casts a deep shadow, which must never touch or get cut by them.
+const CHANNEL_GRID_FOCUS_MARGIN = 56;
 const CHANNEL_OVERSCAN = 12;
 const CHANNEL_VIEWPORT_FALLBACK = 900;
 
@@ -65,6 +75,12 @@ export interface ChannelListOptions {
   authorizeEdit?: (proceed: () => void) => void;
 }
 
+function recentKey(item: RecentlyWatchedItem): string {
+  return item.kind === 'live'
+    ? `recent:live:${channelKey(item.channel)}`
+    : `recent:catchup:${channelKey(item.channel)}:${item.progress.progStart}`;
+}
+
 export class ChannelList {
   private container: HTMLElement;
   private onChannelSelect: (
@@ -89,15 +105,25 @@ export class ChannelList {
   private recentItems: RecentlyWatchedItem[] = [];
   private failedLogos = new Set<string>();
   private readonly channelVirtualizer = new VirtualList({
+    revealMargin: CONFIG.NAVIGATION.REVEAL_MARGIN,
     itemSize: CHANNEL_ROW_STRIDE,
     overscan: CHANNEL_OVERSCAN,
     fallbackViewportSize: CHANNEL_VIEWPORT_FALLBACK,
   });
+  private readonly gridVirtualizer = new VirtualList({
+    revealMargin: CONFIG.NAVIGATION.REVEAL_MARGIN,
+    itemSize: CHANNEL_GRID_ROW_STRIDE,
+    overscan: CHANNEL_GRID_OVERSCAN,
+    fallbackViewportSize: CHANNEL_VIEWPORT_FALLBACK,
+  });
   private readonly groupVirtualizer = new VirtualList({
+    revealMargin: CONFIG.NAVIGATION.REVEAL_MARGIN,
     itemSize: GROUP_ROW_STRIDE,
     overscan: CHANNEL_OVERSCAN,
     fallbackViewportSize: CHANNEL_VIEWPORT_FALLBACK,
   });
+  private renderedGrid = false;
+  private renderedColumns = 0;
   private scrollFrame: number | null = null;
   private groupScrollFrame: number | null = null;
   // A channel tuned from outside the list since it was last entered.
@@ -110,8 +136,6 @@ export class ChannelList {
   private ringHidden = false;
   // How the nav's last focus was asked for, so only a hover reaches the scope as one.
   private navVia: 'key' | 'pointer' = 'key';
-  // A Recently Watched row the list itself re-rendered or re-entered.
-  private recentToReveal: string | null = null;
   readonly focusScope: FocusScope;
   private channelScrollbarVisible = false;
   private channelScrollbarTimer: ReturnType<typeof setTimeout> | null = null;
@@ -140,6 +164,7 @@ export class ChannelList {
       authorizeEdit = proceed => proceed(),
     } = options;
     this.authorizeEdit = authorizeEdit;
+    this.gridVirtualizer.setLeadingSize(CHANNEL_GRID_PADDING_TOP);
     this.container = container;
     this.onChannelSelect = onChannelSelect;
     this.onChannelsChanged = onChannelsChanged;
@@ -243,21 +268,21 @@ export class ChannelList {
           this.groupScrollFrame = null;
           // A smooth scroll keeps moving after the event; render at where it is now.
           this.groupVirtualizer.setScrollOffset(target.scrollTop);
-          this.render(false);
+          if (this.groupVirtualizer.rangeStale()) this.render(false);
         });
         return;
       }
       if (!target.classList.contains('channel-main')) return;
       this.showChannelScrollbar(target);
-      if (this.currentGroup === 'builtin:recently-watched') return;
       const offset = this.scrollGuard.readUserOffset(target, 'vertical');
       if (offset === null) return;
-      this.channelVirtualizer.setScrollOffset(offset);
+      this.channelRows().setScrollOffset(offset);
       if (this.scrollFrame !== null) return;
       this.scrollFrame = requestAnimationFrame(() => {
         this.scrollFrame = null;
-        this.channelVirtualizer.setScrollOffset(target.scrollTop);
-        this.render(false);
+        this.channelRows().setScrollOffset(target.scrollTop);
+        // A glide fires this every frame; only a new row window needs a render.
+        if (this.channelRows().rangeStale()) this.render(false);
       });
     }, true);
   }
@@ -313,26 +338,51 @@ export class ChannelList {
     const wasShowingRecent = previousMain
       ?.querySelector('.channel-list-scroll')
       ?.classList.contains('recent-list') ?? false;
+    const grid = this.isGrid();
+    const columns = this.measureColumns();
+    const rows = this.channelRows();
     if (showingRecent && !wasShowingRecent && previousMain) {
       previousMain.scrollTop = 0;
-    } else if (!showingRecent && ensureFocus && previousMain) {
-      this.channelVirtualizer.setScrollOffset(previousMain.scrollTop);
+      rows.setScrollOffset(0);
+    }
+    const itemCount = showingRecent ? this.recentItems.length : filteredChannels.length;
+    const layoutChanged = grid !== this.renderedGrid || columns !== this.renderedColumns;
+    if (layoutChanged) {
+      // The old offset means nothing once the list and grid swap or the grid
+      // reflows; the focused channel is centered again below.
+      if (previousMain && this.renderedColumns > 0) previousMain.scrollTop = 0;
+      rows.setScrollOffset(0);
+      this.renderedGrid = grid;
+      this.renderedColumns = columns;
+    } else if (ensureFocus && previousMain) {
+      rows.setScrollOffset(previousMain.scrollTop);
     }
     if (previousGroupList) this.groupVirtualizer.setScrollOffset(previousGroupList.scrollTop);
-    const viewportHeight = previousMain?.clientHeight || CHANNEL_VIEWPORT_FALLBACK;
-    let wantedPosition = filteredChannels.findIndex(
-      ch => `ch:${String(PlaylistService.indexOf(ch))}` === wantedKey,
-    );
-    if (!showingRecent && ensureFocus && wantedPosition >= 0) {
-      this.channelVirtualizer.ensureVisible(wantedPosition, viewportHeight);
+    const viewportHeight = (previousMain && visibleHeight(previousMain)) || CHANNEL_VIEWPORT_FALLBACK;
+    let wantedPosition = showingRecent
+      ? this.recentItems.findIndex(item => recentKey(item) === wantedKey)
+      : filteredChannels.findIndex(
+        ch => `ch:${String(PlaylistService.indexOf(ch))}` === wantedKey,
+      );
+    const focusedPosition = wantedPosition >= 0
+      ? wantedPosition
+      : parseInt(attached?.dataset.listPosition ?? '-1', 10);
+    if (layoutChanged && focusedPosition >= 0) {
+      rows.centerOn(Math.floor(focusedPosition / columns), viewportHeight);
+    } else if (ensureFocus && wantedPosition >= 0) {
+      rows.ensureVisible(Math.floor(wantedPosition / columns), viewportHeight, this.focusMargin());
     } else if (!showingRecent && ensureFocus && !wantedKey && !this.detachedKey()
         && this.playingIndex >= 0) {
       wantedPosition = filteredChannels.findIndex(
         ch => PlaylistService.indexOf(ch) === this.playingIndex,
       );
-      if (wantedPosition >= 0) this.channelVirtualizer.centerOn(wantedPosition, viewportHeight);
+      if (wantedPosition >= 0) rows.centerOn(Math.floor(wantedPosition / columns), viewportHeight);
     }
-    const range = this.channelVirtualizer.getRange(filteredChannels.length, viewportHeight);
+    const rowRange = rows.getRange(Math.ceil(itemCount / columns), viewportHeight);
+    const range = {
+      start: rowRange.start * columns,
+      end: Math.min(itemCount, rowRange.end * columns),
+    };
     const groupViewportHeight = previousGroupList?.clientHeight || CHANNEL_VIEWPORT_FALLBACK;
     const wantedGroupPosition = wantedKey && wantedKey.indexOf('g:') === 0
       ? groups.findIndex(group => `g:${group.id}` === wantedKey)
@@ -397,24 +447,35 @@ export class ChannelList {
             </div>
           </div>
         </div>
-        <div class="channel-main" data-nav-container data-nav-enter="last-focused">
-          <div class="channel-list-scroll ${showingRecent ? 'recent-list' : ''}">
+        <div class="channel-main ${grid ? 'channel-main-grid' : ''}"
+             data-nav-container data-nav-enter="last-focused">
+          <div class="channel-list-scroll ${showingRecent ? 'recent-list' : ''} ${
+            grid ? 'channel-grid' : ''}">
             ${showingRecent
               ? (this.recentItems.length
-                  ? this.recentItems.map((item, index) =>
-                    this.renderRecentItem(item, index, favs))
+                  ? html`
+                    <div class="channel-list-spacer" data-key="channel-list-spacer"
+                         style="height:${rows.getTotalSize(Math.ceil(itemCount / columns))}px">
+                      ${this.recentItems.slice(range.start, range.end).map((item, offset) => {
+                        const position = range.start + offset;
+                        return this.renderRecentItem(
+                          item, position, favs, rows.getItemOffset(Math.floor(position / columns)), columns);
+                      })}
+                    </div>
+                  `
                   : html`<div class="empty-state">${t('channel.recentEmpty')}</div>`)
               : (filteredChannels.length
                   ? html`
                     <div class="channel-list-spacer" data-key="channel-list-spacer"
-                         style="height:${this.channelVirtualizer.getTotalSize(filteredChannels.length)}px">
+                         style="height:${rows.getTotalSize(Math.ceil(filteredChannels.length / columns))}px">
                       ${filteredChannels.slice(range.start, range.end)
-                        .map((ch, offset) => this.renderChannel(
-                          ch,
-                          favs,
-                          range.start + offset,
-                          this.channelVirtualizer.getItemOffset(range.start + offset),
-                        ))}
+                        .map((ch, offset) => {
+                          const position = range.start + offset;
+                          const top = rows.getItemOffset(Math.floor(position / columns));
+                          return grid
+                            ? this.renderChannelTile(ch, favs, position, top, columns)
+                            : this.renderChannel(ch, favs, position, top);
+                        })}
                     </div>
                   `
                   : html`<div class="empty-state">${
@@ -455,9 +516,7 @@ export class ChannelList {
     }
     if (target) this.nav.focus(target);
     const main = this.container.querySelector<HTMLElement>('.channel-main');
-    if (main && !showingRecent) {
-      this.scrollGuard.syncOffset(main, 'vertical', this.channelVirtualizer.scrollOffset);
-    }
+    if (main) this.scrollGuard.syncOffset(main, 'vertical', rows.scrollOffset);
     if (main) this.updateChannelScrollbar(main);
     const groupList = this.container.querySelector<HTMLElement>('.group-list');
     if (groupList) {
@@ -467,8 +526,9 @@ export class ChannelList {
     // An inline rename / new-group field owns the keyboard while it is open.
     if (Focus.owner() === this.focusScope) this.editor.focusTextInput();
     if (this.previewFocused) this.ringHidden = true;
-    if (ensureFocus && showingRecent) this.recentToReveal = this.nav.focused?.dataset.key ?? null;
     this.syncScope(ensureFocus ? 'key' : 'render');
+    // The first render has no list to measure and draws one column.
+    if (grid && !previousMain && this.measureColumns() !== columns) this.render(ensureFocus);
   }
 
   private showChannelScrollbar(main: HTMLElement): void {
@@ -499,6 +559,11 @@ export class ChannelList {
     const offset = (track - height) * main.scrollTop / (content - viewport);
     thumb.style.height = `${height}px`;
     thumb.style.transform = `translateY(${Math.max(0, Math.min(track - height, offset))}px)`;
+  }
+
+  // Reflow the grid after its width changed outside a render.
+  relayout(): void {
+    if (this.isGrid() && this.measureColumns() !== this.renderedColumns) this.render(false);
   }
 
   // `key` names the preview control that takes the ring.
@@ -633,13 +698,26 @@ export class ChannelList {
       }
     }
     if (this.editor.handleAction(action)) return true;
-    if (action === 'up' && this.nav.focused?.dataset.listPosition === '0') return false;
+    const listPosition = this.nav.focused?.dataset.listPosition;
+    if (action === 'up' && listPosition !== undefined
+        && parseInt(listPosition, 10) < this.channelColumns()
+        && this.nav.focused?.closest('.channel-main')) {
+      // The top row hands focus up to the tab bar, the only way out past an end.
+      return false;
+    }
+    if ((action === 'left' || action === 'right')
+        && this.moveGridColumn(action === 'left' ? -1 : 1)) {
+      return true;
+    }
     if (this.handleRegionNavigation(action)) return true;
 
     switch (action) {
       case 'up':
-      case 'down':
-        if (this.moveVirtualFocus(action === 'up' ? -1 : 1)) return true;
+      case 'down': {
+        const step = this.nav.focused?.closest('.channel-main') ? this.channelColumns() : 1;
+        if (this.moveVirtualFocus((action === 'up' ? -1 : 1) * step)) return true;
+        // The grid's last row holds focus rather than dropping into the hints.
+        if (this.inGrid()) return true;
         // Above the sidebar's top sits the tab bar, never the channel list.
         if (action === 'up' && this.nav.focused?.closest('.sidebar')) {
           const edit = this.container.querySelector<HTMLElement>('[data-edit-channels]');
@@ -648,6 +726,7 @@ export class ChannelList {
           return true;
         }
         return this.nav.move(action);
+      }
       case 'left':
         return this.nav.move(action);
       case 'right':
@@ -655,11 +734,11 @@ export class ChannelList {
         return this.nav.move(action);
 
       case 'channel_up':
-        if (!this.moveVirtualFocus(-1)) this.nav.move('up');
+        if (!this.moveVirtualFocus(-1) && !this.inGrid()) this.nav.move('up');
         break;
 
       case 'channel_down':
-        if (!this.moveVirtualFocus(1)) this.nav.move('down');
+        if (!this.moveVirtualFocus(1) && !this.inGrid()) this.nav.move('down');
         break;
 
       case 'select': {
@@ -900,7 +979,10 @@ export class ChannelList {
     }
     if (position < 0) return false;
     const main = this.container.querySelector<HTMLElement>('.channel-main');
-    this.channelVirtualizer.centerOn(position, main?.clientHeight || CHANNEL_VIEWPORT_FALLBACK);
+    this.channelRows().centerOn(
+      Math.floor(position / this.channelColumns()),
+      (main && visibleHeight(main)) || CHANNEL_VIEWPORT_FALLBACK,
+    );
     this.render(false);
     const target = this.container.querySelector<HTMLElement>(
       `[data-list-position="${String(position)}"]`,
@@ -943,7 +1025,6 @@ export class ChannelList {
     const el = this.container.querySelector<HTMLElement>(`[data-key="${attrSelectorEscape(key)}"]`);
     if (!el || !el.hasAttribute('data-focusable')) return false;
     this.nav.focus(el);
-    if (key.indexOf('recent:') === 0) this.recentToReveal = key;
     return true;
   }
 
@@ -957,8 +1038,13 @@ export class ChannelList {
       const scroller = this.container.querySelector<HTMLElement>(
         list === 'group' ? '.group-list' : '.channel-main',
       );
-      const virtualizer = list === 'group' ? this.groupVirtualizer : this.channelVirtualizer;
-      virtualizer.ensureVisible(position, scroller?.clientHeight || CHANNEL_VIEWPORT_FALLBACK);
+      const virtualizer = list === 'group' ? this.groupVirtualizer : this.channelRows();
+      const index = list === 'group' ? position : Math.floor(position / this.channelColumns());
+      virtualizer.ensureVisible(
+        index,
+        (scroller && visibleHeight(scroller)) || CHANNEL_VIEWPORT_FALLBACK,
+        list === 'group' ? CONFIG.NAVIGATION.REVEAL_MARGIN : this.focusMargin(),
+      );
       // render() reads the group offset back from the DOM.
       if (scroller) this.scrollGuard.syncOffset(scroller, 'vertical', virtualizer.scrollOffset);
       this.render(false);
@@ -975,20 +1061,19 @@ export class ChannelList {
       const position = this.getGroupEntries().findIndex(group => `g:${group.id}` === key);
       return position < 0 ? null : { list: 'group', position };
     }
-    if (key.indexOf('ch:') !== 0 || this.currentGroup === 'builtin:recently-watched') return null;
+    if (this.currentGroup === 'builtin:recently-watched') {
+      const recent = this.recentItems.findIndex(item => recentKey(item) === key);
+      return recent < 0 ? null : { list: 'channel', position: recent };
+    }
+    if (key.indexOf('ch:') !== 0) return null;
     const position = this.channelPosition(parseInt(key.slice(3), 10));
     return position < 0 ? null : { list: 'channel', position };
   }
 
   // A list row moves with the list's scroll, so no input pass may scroll it
-  // back: virtual rows are kept in view by the list, and a Recently Watched
-  // row only by the list's own re-render or re-entry.
+  // back: the list keeps its own rows in view.
   private reveal(key: string): boolean | null {
-    if (this.recentToReveal === key) {
-      this.recentToReveal = null;
-      return false;
-    }
-    return this.rowPosition(key) !== null || key.indexOf('recent:') === 0 ? null : false;
+    return this.rowPosition(key) !== null ? null : false;
   }
 
   private defaultKey(): string | null {
@@ -1043,61 +1128,104 @@ export class ChannelList {
     `;
   }
 
+  // Logo first, name along the bottom; the number and status sit in the
+  // tile's corners. Tiles keep .channel-item so edit, focus, and playing
+  // state apply unchanged.
+  private renderChannelTile(
+    ch: Channel,
+    favs: string[],
+    position: number,
+    top: number,
+    columns: number,
+  ): Safe {
+    const globalIdx = PlaylistService.indexOf(ch);
+    const epgId = EpgService.findChannelId(ch);
+    const nowPlaying = epgId ? EpgService.getNowPlaying(epgId) : null;
+    const isPlaying = globalIdx === this.playingIndex && this.playingCatchupStart === null;
+    const showFavoriteStar = favs.includes(channelKey(ch)) && this.currentGroup !== 'builtin:favorites';
+    const column = position % columns;
+    const gaps = CHANNEL_GRID_GAP * (columns - 1);
+    const width = `calc((100% - ${gaps}px) / ${columns})`;
+    const left = `calc((100% + ${CHANNEL_GRID_GAP}px) * ${column} / ${columns})`;
+
+    return html`
+      <div class="channel-item channel-tile ${isPlaying ? 'playing' : ''}"
+           data-key="ch:${String(globalIdx)}"
+           data-focusable data-channel-index="${globalIdx}"
+           data-list-position="${position}"
+           style="top:${top}px;left:${left};width:${width}">
+        <div class="channel-tile-art">
+          ${this.renderLogo(ch)}
+          <div class="channel-number">${globalIdx + 1}</div>
+          <div class="channel-tile-status">
+            ${this.renderHealth(ch)}
+            ${isPlaying ? raw('<div class="playing-indicator">&#9654;</div>') : ''}
+          </div>
+        </div>
+        <div class="channel-info">
+          <div class="channel-name">${raw(channelLockBadge(ch))}${
+            showFavoriteStar ? raw(favoriteIcon(true)) : ''
+          }${ch.name}</div>
+          ${nowPlaying ? html`<div class="channel-now">${nowPlaying.title}</div>` : ''}
+        </div>
+      </div>
+    `;
+  }
+
   private renderRecentItem(
     item: RecentlyWatchedItem,
     index: number,
     favs: string[],
+    top: number,
+    columns: number,
   ): Safe {
-    const isFav = favs.includes(channelKey(item.channel));
-    if (item.kind === 'live') {
-      const epgId = EpgService.findChannelId(item.channel);
-      const nowPlaying = epgId ? EpgService.getNowPlaying(epgId) : null;
-      const isPlaying = item.channelIndex === this.playingIndex && this.playingCatchupStart === null;
-      return html`
-        <div class="channel-item recent-item recent-live ${isPlaying ? 'playing' : ''}"
-             data-key="recent:live:${channelKey(item.channel)}"
-             data-focusable data-recent-index="${index}" data-channel-index="${item.channelIndex}"
-             data-list-position="${index}">
-          <div class="channel-number">${item.channelIndex + 1}</div>
-          ${this.renderLogo(item.channel)}
-          <div class="channel-info">
-            <div class="channel-name">${raw(channelLockBadge(item.channel))}${
-              isFav ? raw(favoriteIcon(true)) : ''
-            }${item.channel.name}</div>
-            ${nowPlaying ? html`<div class="channel-now">${nowPlaying.title}</div>` : ''}
-          </div>
-          ${this.renderHealth(item.channel)}
-          <div class="recent-kind-badge live">${t('common.live')}</div>
-          ${isPlaying ? raw('<div class="playing-indicator">&#9654;</div>') : ''}
-        </div>
-      `;
+    const ch = item.channel;
+    const live = item.kind === 'live';
+    const epgId = live ? EpgService.findChannelId(ch) : null;
+    const nowPlaying = epgId ? EpgService.getNowPlaying(epgId) : null;
+    const isPlaying = item.channelIndex === this.playingIndex
+      && this.playingCatchupStart === (live ? null : item.progress.progStart);
+    let percent = 0;
+    if (!live) {
+      const duration = item.progress.duration > 0
+        ? item.progress.duration
+        : Math.max(1, (item.progress.progEnd - item.progress.progStart) / 1000);
+      percent = Math.round(Math.max(0, Math.min(1, item.progress.position / duration)) * 100);
     }
-
-    const duration = item.progress.duration > 0
-      ? item.progress.duration
-      : Math.max(1, (item.progress.progEnd - item.progress.progStart) / 1000);
-    const percent = Math.round(Math.max(0, Math.min(1, item.progress.position / duration)) * 100);
-    const isPlaying = item.channelIndex === this.playingIndex &&
-      this.playingCatchupStart === item.progress.progStart;
+    const column = index % columns;
+    const gaps = CHANNEL_GRID_GAP * (columns - 1);
+    const width = `calc((100% - ${gaps}px) / ${columns})`;
+    const left = `calc((100% + ${CHANNEL_GRID_GAP}px) * ${column} / ${columns})`;
     return html`
-      <div class="channel-item recent-item recent-catchup ${isPlaying ? 'playing' : ''}"
-           data-key="recent:catchup:${channelKey(item.channel)}:${item.progress.progStart}"
+      <div class="channel-item channel-tile recent-item ${live ? 'recent-live' : 'recent-catchup'} ${
+        isPlaying ? 'playing' : ''}"
+           data-key="${recentKey(item)}"
            data-focusable data-recent-index="${index}" data-channel-index="${item.channelIndex}"
-           data-list-position="${index}">
-        <div class="channel-number">${item.channelIndex + 1}</div>
-        ${this.renderLogo(item.channel)}
-        <div class="channel-info">
-          <div class="channel-name">${raw(channelLockBadge(item.channel))}${
-            isFav ? raw(favoriteIcon(true)) : ''
-          }${item.progress.title ?? ''}</div>
-          <div class="channel-now">${t('channel.resumeAt', {
-            channel: item.channel.name,
-            position: formatPosition(item.progress.position),
-          })}</div>
-          <div class="recent-progress"><div class="recent-progress-fill" style="width:${percent}%"></div></div>
+           data-list-position="${index}"
+           style="top:${top}px;left:${left};width:${width}">
+        <div class="channel-tile-art">
+          ${this.renderLogo(ch)}
+          <div class="channel-number">${item.channelIndex + 1}</div>
+          <div class="channel-tile-status">
+            ${live ? this.renderHealth(ch) : ''}
+            <div class="recent-kind-badge ${live ? 'live' : 'catchup'}">${
+              t(live ? 'common.live' : 'common.catchup')}</div>
+            ${isPlaying ? raw('<div class="playing-indicator">&#9654;</div>') : ''}
+          </div>
+          ${live ? '' : html`
+            <div class="recent-progress"><div class="recent-progress-fill" style="width:${percent}%"></div></div>`}
         </div>
-        <div class="recent-kind-badge catchup">${t('common.catchup')}</div>
-        ${isPlaying ? raw('<div class="playing-indicator">&#9654;</div>') : ''}
+        <div class="channel-info">
+          <div class="channel-name">${raw(channelLockBadge(ch))}${
+            favs.includes(channelKey(ch)) ? raw(favoriteIcon(true)) : ''
+          }${live ? ch.name : item.progress.title ?? ''}</div>
+          ${live
+            ? (nowPlaying ? html`<div class="channel-now">${nowPlaying.title}</div>` : '')
+            : html`<div class="channel-now">${t('channel.resumeAt', {
+                channel: ch.name,
+                position: formatPosition(item.progress.position),
+              })}</div>`}
+        </div>
       </div>
     `;
   }
@@ -1224,7 +1352,7 @@ export class ChannelList {
     if (hintsRect && hintsRect.height > 0 && hintsRect.top > rect.top) {
       bottom = Math.min(bottom, hintsRect.top);
     }
-    return { top: rect.top, bottom };
+    return { top: rect.top + scrollInsetTop(list), bottom };
   }
 
   private moveVirtualFocus(delta: number): boolean {
@@ -1253,26 +1381,103 @@ export class ChannelList {
     }
     const rawPosition = focused?.dataset.listPosition;
     if (rawPosition === undefined) return false;
-    if (this.currentGroup === 'builtin:recently-watched') return false;
     const position = parseInt(rawPosition, 10);
-    const count = PlaylistService.getGroupCount(
-      this.currentGroup,
-      this.currentPlaylist || undefined,
-    );
-    const next = position + delta;
+    const count = this.mainCount();
+    let next = position + delta;
+    const columns = this.channelColumns();
+    // Down into a short last row lands on its last tile.
+    if (next >= count && Math.floor(next / columns) <= Math.floor((count - 1) / columns)) {
+      next = count - 1;
+    }
     if (next < 0 || next >= count) return false;
     const selector = `[data-list-position="${String(next)}"]`;
     const renderedTarget = this.container.querySelector<HTMLElement>(selector);
-    if (renderedTarget && this.scrollFrame === null) {
+    const main = this.container.querySelector<HTMLElement>('.channel-main');
+    const rows = this.channelRows();
+    if (renderedTarget && this.scrollFrame === null && !this.isGrid()) {
       this.nav.focus(renderedTarget);
       return true;
     }
-    const main = this.container.querySelector<HTMLElement>('.channel-main');
-    this.channelVirtualizer.ensureVisible(next, main?.clientHeight || CHANNEL_VIEWPORT_FALLBACK);
+    // A grid tile scrolls in with room to spare, instead of the focus
+    // scroll's edge-to-edge `nearest`.
+    const scrolled = rows.ensureVisible(
+      Math.floor(next / columns),
+      (main && visibleHeight(main)) || CHANNEL_VIEWPORT_FALLBACK,
+      this.focusMargin(),
+    );
+    if (renderedTarget && !scrolled && this.scrollFrame === null) {
+      this.nav.focus(renderedTarget);
+      return true;
+    }
+    if (main) this.scrollGuard.syncOffset(main, 'vertical', rows.scrollOffset);
+    // The overscan rows already hold the target: scroll to it without a render.
+    if (renderedTarget && !rows.rangeStale()) {
+      this.nav.focus(renderedTarget);
+      return true;
+    }
     this.render(false);
     const target = this.container.querySelector<HTMLElement>(selector);
     if (target) this.nav.focus(target);
     return true;
+  }
+
+  // The browse view lays channels out as a grid; editing keeps rows, which
+  // carry their own controls.
+  private isGrid(): boolean {
+    return !this.editor.isChannelEditing;
+  }
+
+  // How many tiles or rows the channel area holds.
+  private mainCount(): number {
+    return this.currentGroup === 'builtin:recently-watched'
+      ? this.recentItems.length
+      : PlaylistService.getGroupCount(this.currentGroup, this.currentPlaylist || undefined);
+  }
+
+  // The columns on screen, without measuring: a key press must not force layout.
+  private channelColumns(): number {
+    if (!this.isGrid()) return 1;
+    return this.renderedGrid && this.renderedColumns > 0 ? this.renderedColumns : this.measureColumns();
+  }
+
+  private measureColumns(): number {
+    if (!this.isGrid()) return 1;
+    const main = this.container.querySelector<HTMLElement>('.channel-main');
+    if (!main) return Math.max(1, this.renderedColumns);
+    const style = getComputedStyle(main);
+    const width = main.clientWidth
+      - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0);
+    // Hidden (another section is showing) or no CSS: keep the last layout,
+    // so returning to Live doesn't reflow the grid.
+    if (width <= 0) return Math.max(1, this.renderedColumns);
+    return Math.max(1, Math.floor((width + CHANNEL_GRID_GAP) / (CHANNEL_GRID_MIN_TILE + CHANNEL_GRID_GAP)));
+  }
+
+  // Focus sits on a grid tile, which never hands it out past the grid's ends.
+  private inGrid(): boolean {
+    return this.isGrid() && !!this.nav.focused?.closest('.channel-main');
+  }
+
+  private focusMargin(): number {
+    return this.isGrid() ? CHANNEL_GRID_FOCUS_MARGIN : CONFIG.NAVIGATION.REVEAL_MARGIN;
+  }
+
+  private channelRows(): VirtualList {
+    return this.isGrid() ? this.gridVirtualizer : this.channelVirtualizer;
+  }
+
+  // Left and right walk the grid's row; past its edge they leave for the
+  // groups or the live preview.
+  private moveGridColumn(delta: -1 | 1): boolean | null {
+    if (!this.isGrid()) return null;
+    const raw = this.nav.focused?.dataset.listPosition;
+    if (raw === undefined || !this.nav.focused?.closest('.channel-main')) return null;
+    const position = parseInt(raw, 10);
+    const columns = this.channelColumns();
+    const column = position % columns;
+    const count = this.mainCount();
+    if (delta < 0 ? column === 0 : column === columns - 1 || position + 1 >= count) return null;
+    return this.moveVirtualFocus(delta);
   }
 
   private getGroupEntries(): { id: ChannelGroupId; label: string; builtin?: BuiltinChannelGroup }[] {

@@ -7,6 +7,7 @@ export interface VirtualGridOptions {
   overscanRows: number;
   fallbackViewportWidth: number;
   fallbackViewportHeight: number;
+  revealMargin?: number;
 }
 
 export interface VirtualGridRange extends VirtualRange {
@@ -38,6 +39,7 @@ export class VirtualGrid {
       itemSize: options.rowStride,
       overscan: options.overscanRows,
       fallbackViewportSize: options.fallbackViewportHeight,
+      revealMargin: options.revealMargin,
     });
   }
 
@@ -47,6 +49,10 @@ export class VirtualGrid {
 
   setScrollOffset(offset: number): void {
     this.rows.setScrollOffset(offset);
+  }
+
+  rangeStale(): boolean {
+    return this.rows.rangeStale();
   }
 
   getColumnCount(viewportWidth = this.fallbackViewportWidth): number {

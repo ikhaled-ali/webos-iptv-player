@@ -1,12 +1,13 @@
 import { localValue, writeLocalValue, removeLocalValue, clearLocalValues, flushSecureLocal, setSecureWriteFailureHandler } from './secure-local';
 import { CONFIG } from '../config';
-import { DEFAULT_THEME, DEFAULT_OVERLAY, DEFAULT_TEXT_SIZE, isValidTextSize, type OverlayStyle, type TextSize } from '../config/themes';
-import type { AudioPref, CatchupProgressEntry, Channel, ChannelCustomization, ChannelCycleMode, ManualEpgSource, ParentalControlConfig, ParentalPinThrottle, PlaylistEntry, RecentlyWatchedLiveEntry, Reminder, ResumeEntry, ResumeKind, SubtitlePref, TzMode, WatchlistEntry, WatchlistKind, XtreamLiveCategorySnapshot } from '../types';
+import { DEFAULT_THEME, DEFAULT_OVERLAY, DEFAULT_TEXT_SIZE, isValidTextSize, isValidTheme, type OverlayStyle, type TextSize } from '../config/themes';
+import type { AudioPref, CatchupProgressEntry, Channel, ChannelCustomization, ChannelCycleMode, ManualEpgSource, ParentalControlConfig, ParentalPinThrottle, PlaylistEntry, RecentlyWatchedLiveEntry, Reminder, ResumeEntry, ResumeKind, SubtitlePref, TzMode, WatchedEpisodes, WatchlistEntry, WatchlistKind, XtreamLiveCategorySnapshot } from '../types';
 import type { OnlineSubtitleConfig, PickedOnlineSub } from './subtitle-search/types';
 import { channelKey, legacyChannelKey } from '../utils/channel';
 import { genPlaylistId } from '../utils/playlist';
 import { isCatalogSort, isCatalogSortDirection, type CatalogSortPreference } from '../utils/catalog-sort';
 import { normalizeXtreamBaseUrl } from '../utils/xtream-url';
+import { resumeSeriesId, vodFinished } from '../utils/vod-progress';
 import { createLogger } from '../utils/logger';
 import { isLocalePreference, type LocalePreference } from '../i18n';
 import {
@@ -56,6 +57,7 @@ interface UserDataState {
   watchlist: Record<string, WatchlistEntry>;
   onlineSubPicks: Record<string, PickedOnlineSub>;
   catchupProgress: Record<string, StoredCatchup>;
+  watchedEpisodes: Record<string, WatchedEpisodes>;
   recentlyWatchedLive: RecentlyWatchedLiveEntry[];
   parentalControl: ParentalControlConfig | null;
   liveCategorySnapshots: Record<string, XtreamLiveCategorySnapshot>;
@@ -64,6 +66,8 @@ interface UserDataState {
 const LIVE_CATEGORY_KEY_PREFIX = 'live-categories:';
 // Without IndexedDB the snapshot is session-only; losing it is harmless.
 const fallbackLiveCategorySnapshots: Record<string, XtreamLiveCategorySnapshot> = {};
+// Watched marks are a convenience; without IndexedDB they last the session.
+const fallbackWatchedEpisodes: Record<string, WatchedEpisodes> = {};
 
 let userData: UserDataState | null = null;
 let userDataInitPromise: Promise<void> | null = null;
@@ -210,6 +214,21 @@ function watchlistKey(entry: Pick<WatchlistEntry, 'accountId' | 'kind' | 'itemId
   return `watch:${entry.accountId}|${entry.kind}|${entry.itemId}`;
 }
 
+function watchedKey(entry: Pick<WatchedEpisodes, 'accountId' | 'seriesId'>): string {
+  return `watched:${entry.accountId}|${entry.seriesId}`;
+}
+
+// Keeps the WATCHED_MAX_SERIES most recently updated series of `accountId`.
+function trimWatched(all: Record<string, WatchedEpisodes>, accountId: string): WatchedEpisodes[] {
+  const keys = Object.keys(all).filter(key => all[key].accountId === accountId)
+    .sort((a, b) => all[b].updatedAt - all[a].updatedAt);
+  return keys.slice(CONFIG.XTREAM.WATCHED_MAX_SERIES).map(key => {
+    const removed = all[key];
+    delete all[key];
+    return removed;
+  });
+}
+
 function catchupKey(entry: Pick<CatchupProgressEntry, 'channelKey' | 'progStart'>): string {
   return `catchup:${entry.channelKey}|${entry.progStart}`;
 }
@@ -271,6 +290,10 @@ function allUserRecords(data: UserDataState): Parameters<typeof replaceAllUserDa
           updatedAt: entry.updatedAt,
           expiresAt: entry.expiresAt,
         });
+      }),
+      ...Object.keys(data.watchedEpisodes).map(key => {
+        const entry = data.watchedEpisodes[key];
+        return record(watchedKey(entry), entry, { updatedAt: entry.updatedAt });
       }),
     ],
     'recently-watched': data.recentlyWatchedLive.map(entry =>
@@ -405,7 +428,7 @@ async function loadUserDataState(): Promise<UserDataState> {
   const channelState = records['channel-state'];
   const watchlist = records.watchlist as UserDataRecord<WatchlistEntry>[];
   const progress = records['playback-progress'] as
-    UserDataRecord<ResumeEntry | StoredCatchup>[];
+    UserDataRecord<ResumeEntry | StoredCatchup | WatchedEpisodes>[];
   const recentlyWatched = records['recently-watched'] as
     UserDataRecord<RecentlyWatchedLiveEntry>[];
   const onlineSubPicks = records['online-sub-picks'] as
@@ -424,6 +447,7 @@ async function loadUserDataState(): Promise<UserDataState> {
     watchlist: {},
     onlineSubPicks: {},
     catchupProgress: {},
+    watchedEpisodes: {},
     recentlyWatchedLive: recentlyWatched.map(item => item.value),
     parentalControl: parentalControl.find(item => item.key === 'config')?.value ?? null,
     liveCategorySnapshots: {},
@@ -467,6 +491,9 @@ async function loadUserDataState(): Promise<UserDataState> {
     } else if (item.key.startsWith('catchup:')) {
       const entry = item.value as StoredCatchup;
       data.catchupProgress[`${entry.channelKey}|${entry.progStart}`] = entry;
+    } else if (item.key.startsWith('watched:')) {
+      const entry = item.value as WatchedEpisodes;
+      data.watchedEpisodes[`${entry.accountId}|${entry.seriesId}`] = entry;
     }
   }
   for (const item of onlineSubPicks) {
@@ -1096,7 +1123,9 @@ export const StorageService = {
 
   // Selected color theme id (see src/config/themes.ts). Default = Midnight.
   getTheme(): string {
-    return get<string>('theme', DEFAULT_THEME);
+    // A theme saved by an earlier version may no longer exist.
+    const id = get<string>('theme', DEFAULT_THEME);
+    return isValidTheme(id) ? id : DEFAULT_THEME;
   },
   setTheme(id: string): void {
     set('theme', id);
@@ -1211,9 +1240,16 @@ export const StorageService = {
   },
   setResume(entry: ResumeEntry): void {
     const key = `${entry.accountId}|${entry.kind}|${entry.itemId}`;
-    const finished = entry.duration > 0 && entry.position >= entry.duration - CONFIG.XTREAM.RESUME_FINISH_PAD;
+    const finished = vodFinished(entry.position, entry.duration);
+    // An up-next episode is listed before it has a position of its own, and a
+    // start too short to count keeps it listed rather than dropping the series.
+    const stored = (userData ? userData.resume : fallbackResume())[key];
+    if (!entry.upNext && stored?.upNext && !finished && entry.position < CONFIG.XTREAM.RESUME_MIN_SECS) {
+      entry = { ...stored, updatedAt: entry.updatedAt };
+    }
+    const drop = !entry.upNext && (finished || entry.position < CONFIG.XTREAM.RESUME_MIN_SECS);
     if (userData) {
-      if (finished || entry.position < CONFIG.XTREAM.RESUME_MIN_SECS) {
+      if (drop) {
         delete userData.resume[key];
         persistUserChanges('playback-progress', [], [resumeKey(entry)]);
       } else {
@@ -1226,7 +1262,7 @@ export const StorageService = {
       return;
     }
     const all = fallbackResume();
-    if (finished || entry.position < CONFIG.XTREAM.RESUME_MIN_SECS) {
+    if (drop) {
       delete all[key];
     } else {
       all[key] = cloneValue(entry);
@@ -1254,6 +1290,55 @@ export const StorageService = {
     const all = fallbackResume();
     delete all[key];
     set('resume', all);
+  },
+  /** One series' episode resume points, newest first. Filters before cloning:
+   *  the series detail asks on every render. */
+  getSeriesResumeList(accountId: string, seriesId: string): ResumeEntry[] {
+    const all = userData ? userData.resume : fallbackResume();
+    return Object.keys(all)
+      .map((k) => all[k])
+      .filter((e) => e.accountId === accountId && resumeSeriesId(e) === seriesId)
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .map(cloneValue);
+  },
+  /** Drops every episode resume point of one series (its Continue Watching tile). */
+  clearSeriesResume(accountId: string, seriesId: string): void {
+    const all = userData ? userData.resume : fallbackResume();
+    const removed: ResumeEntry[] = [];
+    for (const key of Object.keys(all)) {
+      const entry = all[key];
+      if (entry.accountId === accountId && resumeSeriesId(entry) === seriesId) {
+        removed.push(entry);
+        delete all[key];
+      }
+    }
+    if (userData) {
+      if (removed.length) persistUserChanges('playback-progress', [], removed.map(resumeKey));
+    } else if (removed.length) {
+      set('resume', all);
+    }
+  },
+  getWatchedEpisodes(accountId: string, seriesId: string): string[] {
+    const all = userData ? userData.watchedEpisodes : fallbackWatchedEpisodes;
+    return (all[`${accountId}|${seriesId}`]?.episodeIds ?? []).slice();
+  },
+  markEpisodeWatched(accountId: string, seriesId: string, episodeId: string): void {
+    const all = userData ? userData.watchedEpisodes : fallbackWatchedEpisodes;
+    const key = `${accountId}|${seriesId}`;
+    const ids = all[key]?.episodeIds ?? [];
+    const entry: WatchedEpisodes = {
+      accountId,
+      seriesId,
+      episodeIds: ids.indexOf(episodeId) >= 0 ? ids : ids.concat(episodeId),
+      updatedAt: Date.now(),
+    };
+    all[key] = entry;
+    const evicted = trimWatched(all, accountId);
+    if (userData) {
+      persistUserChanges('playback-progress', [
+        record(watchedKey(entry), entry, { updatedAt: entry.updatedAt }),
+      ], evicted.map(watchedKey));
+    }
   },
   clearResumeList(accountId: string, kind?: ResumeKind): void {
     const all = userData ? userData.resume : fallbackResume();

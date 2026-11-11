@@ -4,41 +4,99 @@
   cursor: pointer;
 }
 
+/* One focus look everywhere: the focused item takes a light tint. No border,
+   ring, glow, outline, or underline marks focus. */
 [data-focusable].focused {
-  border-color: var(--focus-ring) !important;
-  box-shadow: 0 0 0 3px var(--accent-glow), 0 0 20px var(--accent-glow);
+  background-image: var(--focus-layer);
+  border-color: transparent !important;
+  box-shadow: none;
   z-index: 10;
 }
 
 .group-item.focused,
 .channel-item.focused {
-  background: var(--bg-tertiary) !important;
-  border-color: var(--focus-ring) !important;
+  background-image: var(--focus-layer) !important;
 }
 
 .btn.focused {
-  background: var(--accent-dim);
-  border-color: var(--accent);
-  color: white;
+  background-image: var(--focus-layer);
+  color: var(--text-primary);
 }
 
+/* A destructive action keeps its color under the tint. */
 .btn-danger.focused,
 .confirmation-btn.danger.focused {
-  color: #fff;
-  background: var(--danger);
-  border-color: var(--danger) !important;
-  box-shadow:
-    0 0 0 3px rgb(var(--danger-rgb) / 0.24),
-    0 0 20px rgb(var(--danger-rgb) / 0.35);
+  color: var(--danger);
+  background-image: var(--focus-layer);
 }
 
 .settings-input.focused {
-  border-color: var(--accent) !important;
-  background: var(--bg-primary);
+  background-image: var(--focus-layer);
 }
 
 .epg-programme.focused {
-  background: var(--accent-dim) !important;
-  border-color: var(--accent) !important;
+  background-image: var(--focus-layer) !important;
   z-index: 10;
+}
+
+/* A D-pad move brings focus in with room to spare, never flush with a
+   scroller's edge. Only inside scrollers: scrollIntoView also moves
+   overflow-hidden panels, which must stay put. --reveal-margin feeds the
+   Chromium 53 scrollIntoView polyfill; keep it equal to
+   CONFIG.NAVIGATION.REVEAL_MARGIN, which the virtual lists use. */
+.catalog-view [data-focusable],
+.catalog-rails [data-focusable],
+.channel-main [data-focusable],
+.group-list [data-focusable],
+.group-picker [data-focusable],
+.epg-mapping-list [data-focusable],
+.playlist-tabs [data-focusable],
+.epg-channel-list [data-focusable],
+.epg-date-list [data-focusable],
+.epg-group-options [data-focusable],
+.epg-programmes-pane [data-focusable],
+.live-category-list [data-focusable],
+.parental-list [data-focusable],
+.parental-options-pane [data-focusable],
+.player-menu .menu-items [data-focusable],
+.player-sidebar .sidebar-channel-list [data-focusable],
+.player-sidebar .sidebar-group-list [data-focusable],
+.player-sidebar .sidebar-tabs [data-focusable],
+.subs-list [data-focusable],
+.reminder-manager-view [data-focusable],
+.search-view [data-focusable],
+.search-virtual-scroll [data-focusable],
+.dropdown-menu [data-focusable],
+.settings-scroll [data-focusable] {
+  --reveal-margin: 40px;
+}
+
+@supports (scroll-margin: 1px) {
+  .catalog-view [data-focusable],
+  .catalog-rails [data-focusable],
+  .channel-main [data-focusable],
+  .group-list [data-focusable],
+  .group-picker [data-focusable],
+  .epg-mapping-list [data-focusable],
+  .playlist-tabs [data-focusable],
+  .epg-channel-list [data-focusable],
+  .epg-date-list [data-focusable],
+  .epg-group-options [data-focusable],
+  .epg-programmes-pane [data-focusable],
+  .live-category-list [data-focusable],
+  .parental-list [data-focusable],
+  .parental-options-pane [data-focusable],
+  .player-menu .menu-items [data-focusable],
+  .player-sidebar .sidebar-channel-list [data-focusable],
+  .player-sidebar .sidebar-group-list [data-focusable],
+  .player-sidebar .sidebar-tabs [data-focusable],
+  .subs-list [data-focusable],
+  .reminder-manager-view [data-focusable],
+  .search-view [data-focusable],
+  .search-virtual-scroll [data-focusable],
+  .dropdown-menu [data-focusable],
+  .settings-scroll [data-focusable] {
+    /* stylelint-disable-next-line plugin/no-unsupported-browser-features -- inside @supports */
+    scroll-margin: var(--reveal-margin);
+  }
 }

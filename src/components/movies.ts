@@ -59,10 +59,6 @@ export class Movies extends CatalogView<VodCategory, VodItem> {
   protected fallbackItem(streamId: string): VodItem | null {
     return this.resumeToVod(streamId) ?? this.watchlistToVod(streamId);
   }
-  protected heroFallback(): VodItem | null {
-    return this.resumeToVod(this.resume[0]?.itemId ?? '')
-      ?? this.watchlistToVod(this.visibleWatchlist('vod')[0]?.itemId ?? '');
-  }
 
   private resumeToVod(streamId: string): VodItem | null {
     const r = this.resume.find((e) => e.itemId === streamId);

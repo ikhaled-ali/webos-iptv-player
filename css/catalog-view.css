@@ -30,55 +30,32 @@
 
 .catalog-browse { position: relative; padding: 0; overflow: hidden; }
 
-.catalog-hero {
-  position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background-size: cover;
-  background-position: center 28%;
-  background-color: var(--bg-primary);
-}
-.catalog-hero-scrim {
-  position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background:
-    linear-gradient(90deg, rgb(var(--catalog-hero-scrim-rgb) / 0.95) 2%, rgb(var(--catalog-hero-scrim-rgb) / 0.5) 40%, transparent 72%),
-    linear-gradient(0deg, var(--bg-primary) 6%, transparent 52%);
-}
-.catalog-hero-body {
-  position: absolute;
-  left: 80px; top: 120px;
-  max-width: 960px;
-  z-index: 1;
-}
-.catalog-hero-kicker {
-  font-size: 22px; letter-spacing: 4px; font-weight: 700;
-  color: var(--accent); text-transform: uppercase;
-}
-.catalog-hero-title {
-  margin: 12px 0 0; font-size: 64px; font-weight: 800;
-  color: var(--text-primary); line-height: 1.05;
-}
-
 .catalog-rails {
   position: absolute;
   top: 0; left: 0; right: 0; bottom: 0;
   overflow-y: auto;
   z-index: 2;
 }
-.catalog-rails-spacer { height: 45%; }
 .catalog-rails-body {
-  min-height: 55%;
-  padding: 8px 12px 60px 80px;
-  background: linear-gradient(180deg, transparent 0, rgb(var(--catalog-hero-scrim-rgb) / 0.85) 90px, var(--bg-primary) 240px);
+  padding: 40px 12px 60px 80px;
 }
 
 .catalog-rail { margin-bottom: 28px; }
-.catalog-rail-title { margin: 0 0 12px; font-size: 30px; font-weight: 600; color: var(--text-primary); }
-.catalog-rail-track { display: flex; gap: 20px; overflow-x: auto; padding: 12px 12px 20px; margin: 0 -12px; }
+.catalog-rail-title { margin: 0 0 6px; font-size: 30px; font-weight: 600; color: var(--text-primary); }
+/* 18px above the posters holds a focused one's grown ring inside the clip. */
+.catalog-rail-track { display: flex; gap: 20px; overflow-x: auto; padding: 18px 12px 20px; margin: 0 -12px; }
 .catalog-rails-body .catalog-rail-track { margin-left: -80px; padding-left: 80px; }
-/* The bar starts at the keyline the posters rest on, not the bleed edge. */
-.catalog-rails-body .catalog-rail-track::-webkit-scrollbar-track { margin-left: 80px; }
-.catalog-category-rail { height: 152px; display: block; overflow-anchor: none; }
+/* Rails scroll by D-pad and wheel; the poster cut-off at the edge already
+   shows there is more, so the bar only adds noise under each row. */
+.catalog-rails-body .catalog-rail-track::-webkit-scrollbar { display: none; }
+/* A step scrolls one card or row, so it glides in every mode but Essential
+   (Full already does); Chromium 53 has no scroll-behavior and stays instant. */
+html[data-animation="reduced"] .catalog-view,
+html[data-animation="reduced"] .catalog-rails,
+html[data-animation="reduced"] .catalog-rail-track {
+  scroll-behavior: smooth;
+}
+.catalog-category-rail { height: 158px; display: block; overflow-anchor: none; }
 .catalog-category-rail-spacer { position: relative; height: 120px; }
 .catalog-category-rail-cell {
   position: absolute;
@@ -118,7 +95,26 @@
 .catalog-grid-track { position: relative; width: 100%; }
 .catalog-grid-cell { position: absolute; width: 220px; height: 371px; }
 
-.catalog-tile { width: 220px; flex: 0 0 auto; cursor: pointer; }
+.catalog-tile { position: relative; width: 220px; flex: 0 0 auto; cursor: pointer; }
+/* The poster's shadow is its own layer behind it, faded and grown with the
+   poster: animating box-shadow itself repaints every frame. */
+.catalog-tile::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  width: 220px; height: 330px;
+  border-radius: 12px;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.65), 0 6px 14px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  transition: opacity 300ms cubic-bezier(0.22, 1, 0.36, 1), transform 300ms cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
+}
+.catalog-tile.focused::before { opacity: 1; transform: scale(1.1); }
+.catalog-poster-wrap,
+.catalog-cat {
+  /* Matches the channel grid: the focused card grows over a soft shadow. */
+  transition: transform 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
 .catalog-poster-wrap {
   position: relative;
   width: 220px; height: 330px;
@@ -131,15 +127,13 @@
   margin-top: 10px; font-size: 22px; color: var(--text-primary);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* A grid cell takes no tint: the focused one only grows, smoothly. */
 .catalog-tile.focused,
 .catalog-cat.focused {
-  box-shadow: none;
-  border-color: transparent !important;
+  background-image: none;
 }
 .catalog-tile.focused .catalog-poster-wrap {
-  outline: 3px solid var(--catalog-focus);
-  outline-offset: 2px;
-  box-shadow: 0 0 0 6px rgb(var(--catalog-focus-rgb) / 0.25), 0 10px 24px rgba(0, 0, 0, 0.6);
+  transform: scale(1.1);
 }
 
 .catalog-see-all-card {
@@ -158,9 +152,8 @@
   box-sizing: border-box;
 }
 .catalog-cat.focused {
-  outline: 3px solid var(--catalog-focus);
-  outline-offset: 2px;
-  box-shadow: 0 0 0 6px rgb(var(--catalog-focus-rgb) / 0.25);
+  transform: scale(1.1);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.6);
 }
 
 .movies-detail { display: flex; gap: 56px; }
@@ -183,9 +176,11 @@
 }
 .detail-btn-primary { background: var(--accent, #3ea6ff); color: #fff; }
 .detail-btn-danger { color: var(--danger); }
-.detail-btn.focused { border-color: var(--text-primary); }
+.detail-btn.focused { background-image: var(--focus-layer); color: var(--text-primary); }
+.detail-btn-danger.focused { color: var(--danger); }
 .detail-btn-icon { display: inline-flex; width: 28px; height: 28px; flex: 0 0 auto; }
 .detail-btn-icon svg { width: 100%; height: 100%; }
+.detail-btn-code { font-weight: 500; opacity: 0.85; }
 .watchlist-glyph.set { fill: currentColor; }
 .watchlist-glyph.unset {
   fill: none;
@@ -207,18 +202,19 @@
   background: var(--catalog-control); color: var(--text-primary); font-size: 26px; font-weight: 600; cursor: pointer;
 }
 .series-season-btn.active { background: var(--accent, #3ea6ff); color: #fff; }
-.series-season-btn.focused { border-color: var(--text-primary); }
+.series-season-btn.focused { background-image: var(--focus-layer); color: var(--text-primary); }
 
 .series-episodes { position: relative; overflow-anchor: none; }
 .series-episodes-spacer { position: relative; width: 100%; }
 .series-episode-cell { position: absolute; left: 0; right: 0; }
 .episode-row {
+  position: relative; overflow: hidden;
   box-sizing: border-box;
   display: flex; gap: 20px; align-items: flex-start;
   padding: 20px 24px; border-radius: 12px; background: var(--catalog-surface);
   border: 3px solid transparent; cursor: pointer;
 }
-.episode-row.focused { border-color: var(--accent, #3ea6ff); }
+.episode-row.focused { background-image: var(--focus-layer); }
 .episode-badge { display: inline-flex; width: 32px; height: 32px; flex: 0 0 auto; color: var(--text-secondary); margin-top: 4px; }
 .episode-badge svg { width: 100%; height: 100%; }
 .episode-body { flex: 1 1 auto; min-width: 0; }
@@ -228,6 +224,11 @@
 .episode-resume {
   font-size: 20px; font-weight: 600; color: #fff;
   background: var(--accent, #3ea6ff); border-radius: 6px; padding: 2px 12px;
+}
+/* Outlined, so its text sits on the row surface: the theme's title contrast. */
+.episode-watched {
+  font-size: 20px; font-weight: 600; color: var(--text-primary);
+  border: 2px solid var(--bg-tertiary); border-radius: 6px; padding: 0 10px;
 }
 .episode-meta { font-size: 22px; color: var(--text-secondary); margin-top: 6px; }
 .episode-plot {
@@ -266,8 +267,7 @@
 }
 .btn.catalog-collection-manage.focused,
 .btn.catalog-collection-clear.focused {
-  background: var(--bg-tertiary);
-  border-color: var(--focus-ring);
+  background-image: var(--focus-layer);
   color: var(--text-primary);
 }
 .catalog-collection-manage .catalog-action-icon { color: var(--text-muted); }
@@ -303,7 +303,7 @@
   color: var(--danger);
 }
 .catalog-managing .catalog-tile { cursor: default; }
-.catalog-remove-mark.focused { border-color: transparent !important; box-shadow: none; }
+.catalog-remove-mark.focused { background-image: none; }
 .catalog-remove-mark.focused circle { fill: var(--danger); }
 .catalog-remove-mark.focused path { stroke: #fff; }
 .catalog-poster-wrap .lock-badge ~ .catalog-remove-mark { right: 58px; }

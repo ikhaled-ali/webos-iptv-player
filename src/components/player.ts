@@ -29,10 +29,12 @@ import { StorageService } from '../services/storage-service';
 import { CONFIG } from '../config';
 import { StallWatchdog, type StallProbe, type StallRecovery } from '../utils/stall-watchdog';
 import { StartupWatchdog, type StartupFailure, type StartupProbe } from '../utils/startup-watchdog';
+import { findIntroMarker, inIntro, type IntroMarker } from '../utils/intro-marker';
 import { resolutionBadge, hdrLabel, frameRateLabel, pickVariant, codecName, audioSummary, subtitleSummary, type StreamVariant, type MediaInfo } from '../utils/stream-info';
 import { extFromUrl, diagnosticStreamUrl, streamUrlMime } from '../utils/url';
 import { isWebOS } from '../utils/platform';
 import { probeMedia } from '../services/media-probe';
+import { upNextResume, vodFinished } from '../utils/vod-progress';
 import { ChannelHealthService } from '../services/channel-health';
 import { createLogger } from '../utils/logger';
 import { nativePlaybackError, safePlaybackDetail } from '../utils/playback-error';
@@ -48,6 +50,7 @@ import {
 import {
   PlayerOsd,
   type PlayerOsdSnapshot,
+  type OsdControl,
   type PlayerOsdStreamInfo,
 } from './player-osd';
 import { PlayerTracks } from './player-tracks';
@@ -83,6 +86,7 @@ export class Player {
   private upNextAuthorized = false;
   private pendingResumeSecs = 0;
   private pendingSeekTarget: number | null = null;
+  private dvrKept: DvrWindow | null = null;
   private wasPlayingBeforeHide = false;
   private dvrPauseTick: ReturnType<typeof setInterval> | null = null;
   // Catch-up progress checkpointing. Wall-clock time of the last periodic save;
@@ -104,9 +108,24 @@ export class Player {
   // Manual A/V resync (catch-up / VOD): true from the resync seek until playback
   // resumes, gating the "Resyncing…" message and debouncing repeat presses.
   private resyncing = false;
+  private menuOpener: (() => void) | null = null;
   private resyncTimer: ReturnType<typeof setTimeout> | null = null;
   private manifestVariants: StreamVariant[] = []; // HLS master variants for best-effort codec readout
+  // The current title's intro was offered once, so it doesn't pop up again.
+  private introOffered = false;
   private vodInfo: MediaInfo | null = null; // container-header stream info for the active VOD (codec/fps/HDR)
+  // The last position/duration read from a healthy element. A failed or
+  // reloading element reports 0, so saves and reconnects use these instead.
+  private vodLastPosition = 0;
+  private vodLastDuration = 0;
+  private vodCheckpointAt = 0;
+  // Reconnect only a title that has played: a source that never started fails
+  // the same way again.
+  private vodHasPlayed = false;
+  // A failed title keeps its error on screen and reloads on this timer.
+  private vodRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  // The finished title's completion (watched mark, up-next entry) is recorded.
+  private vodCompleted = false;
   private stallWatchdog: StallWatchdog;
   private startupWatchdog: StartupWatchdog;
   private startupPending = false;
@@ -199,6 +218,11 @@ export class Player {
       onResync: () => this.resyncAV(),
       onPlayNext: () => this.playNextItem(),
       onCancelNext: () => this.cancelNextItem(),
+      onSeekStep: direction => this.seekStep(direction),
+      onNextEpisode: () => this.playNextEpisode(),
+      onSkipIntro: () => this.skipIntro(),
+      onOpenMenu: () => this.openMenu(),
+      onSurfaceClick: () => this.surfaceClick(),
     });
     this.stallWatchdog = new StallWatchdog({
       probe: (): StallProbe => {
@@ -286,14 +310,19 @@ export class Player {
         if (el === this.videoEl) listener();
       });
     };
+    el.addEventListener('click', (e: MouseEvent) => {
+      if (el === this.videoEl && !this.container.classList.contains('hidden')) this.osd.pointerRelease(e);
+    });
     const update = (status?: LivePlaybackStatus) => {
       if (status && this.liveSessionActive) this.livePlaybackStatus = status;
       this.onPlaybackStateChanged();
     };
     onCurrent('pause', () => {
       if (this.pipeline.isPrebuffering()) return;
-      if (!this.startupPending && !this.errorRetryPending && this.status.state !== 'error') this.status.set(null);
+      if (!this.startupPending && !this.errorRetryPending && this.vodRetryTimer === null &&
+          this.status.state !== 'error') this.status.set(null);
       update('paused');
+      if (this.osd.isVisible()) this.osd.render();
     });
     onCurrent('volumechange', () => {
       if (this.liveSessionActive && !this.vod) this.rememberLiveAudio();
@@ -319,6 +348,7 @@ export class Player {
         el.currentTime = target;
         this.pendingResumeSecs = 0;
       }
+      this.rememberVodPosition();
       this.tracks.applyNativeAudioSelection();
       this.tracks.applyNativeSubtitleSelection();
       if (this.osd.isVisible()) this.osd.render();
@@ -358,8 +388,9 @@ export class Player {
         this.cancelErrorRetry();
         if (isWebOS()) this.stallWatchdog.resume();
       }
+      if (this.vod) this.vodHasPlayed = true;
       update('playing');
-      if (recovered) this.osd.render();
+      if (recovered || this.osd.isVisible()) this.osd.render(); // play/pause shows the new state
       log.info('playing', this.videoLabel(el), this.mediaState(el));
       this.playbackRate.reapply();
       if (this.catchupInfo) this.catchupVariantConfirmed = true;
@@ -406,6 +437,7 @@ export class Player {
       this.reconcileLiveDvrPosition(el);
       this.reconcilePendingSeek(el);
       this.refreshProgress();
+      this.offerSkipIntro();
     });
     onCurrent('progress', () => {
       this.reconcileLiveDvrPosition(el);
@@ -449,8 +481,10 @@ export class Player {
   }
 
   suspend(): void {
-    this.status.set(null);
+    if (this.vodRetryTimer === null) this.status.set(null);
     this.startupWatchdog.stop();
+    // webOS may close a backgrounded app, so the resume point goes to disk now.
+    if (this.vod) this.saveVodResume();
     if (!this.videoEl || (!this.currentChannel && !(this.vod && this.pipeline.isPrebuffering()))) return;
     if (this.wasPlayingBeforeHide) return; // already suspended
     this.wasPlayingBeforeHide = this.pipeline.isPrebuffering() || !this.videoEl.paused;
@@ -467,10 +501,7 @@ export class Player {
         );
         this.saveCatchupProgress();
       }
-      if (this.vod) {
-        this.pendingResumeSecs = this.pendingSeekTarget
-          ?? (this.videoEl.currentTime || this.pendingResumeSecs || this.vod.resumeSecs);
-      }
+      if (this.vod) this.pendingResumeSecs = this.vodPosition();
       this.stallWatchdog.stop();
       this.tracks.suspend();
       this.pipeline.destroy();
@@ -515,7 +546,7 @@ export class Player {
     // readyState below HAVE_CURRENT_DATA.
     if (this.startupPending && this.videoEl.readyState < 2) this.startupWatchdog.start();
     if (this.vod) {
-      this.reauthorizeVod(this.vod, this.videoEl);
+      this.reauthorizeVod(this.vod);
       return;
     }
     if (!this.currentChannel) return;
@@ -536,9 +567,8 @@ export class Player {
     }
   }
 
-  private reauthorizeVod(v: VodPlayback, el: HTMLVideoElement): void {
-    const resumeSecs = this.pendingSeekTarget ?? (el.currentTime || this.pendingResumeSecs || v.resumeSecs);
-    const resumed: VodPlayback = { ...v, resumeSecs };
+  private reauthorizeVod(v: VodPlayback): void {
+    const resumed: VodPlayback = { ...v, resumeSecs: this.vodPosition() };
     if (this.authorizeVod(resumed, () => {
       if (this.vod !== v || this.wasPlayingBeforeHide) {
         this.wasPlayingBeforeHide = false;
@@ -600,7 +630,9 @@ export class Player {
   private startPlaybackGeneration(): void {
     this.cancelLiveHistoryTimer();
     this.cancelErrorRetry();
+    this.cancelVodRetry();
     this.lastFailureDetail = '';
+    this.dvrKept = null;
     this.playbackGeneration++;
     this.healthStartedAt = Date.now();
     this.liveHistoryGeneration = -1;
@@ -612,6 +644,12 @@ export class Player {
       this.errorRetryTimer = null;
     }
     this.errorRetryPending = false;
+  }
+
+  private cancelVodRetry(): void {
+    if (this.vodRetryTimer === null) return;
+    clearTimeout(this.vodRetryTimer);
+    this.vodRetryTimer = null;
   }
 
   private cancelLiveHistoryTimer(): void {
@@ -662,6 +700,9 @@ export class Player {
     scope?: ChannelScope | null,
   ): void {
     if (!this.videoEl) return;
+    // A channel can replace a movie or episode, failed or not, without Back.
+    if (this.vod) this.saveVodResume();
+    this.resetVodSession(0);
     if (!this.currentChannel || channelKey(this.currentChannel) !== channelKey(channel)) this.pipeline.resetMode();
     this.playbackRate.reset();
     if (this.liveSessionActive) this.rememberLiveAudio();
@@ -742,6 +783,7 @@ export class Player {
     this.vod = v;
     this.pendingResumeSecs = v.resumeSecs > 0 ? v.resumeSecs : 0;
     this.pendingSeekTarget = null;
+    this.resetVodSession(this.pendingResumeSecs);
     this.osd.clearFailedIcons();
     this.videoEl.classList.add('active');
     this.loadStream(v.url, null, { direct: true });
@@ -750,6 +792,7 @@ export class Player {
     // expose them on webOS. Fires once, off the playback path; re-renders the OSD
     // when it resolves. Guarded so a stale probe can't clobber a newer VOD.
     this.vodInfo = null;
+    this.introOffered = false;
     void probeMedia(v.url, `${v.accountId}|media_probe|${v.kind}|${v.itemId}`).then((info) => {
       if (this.vod !== v || !info) return;
       this.vodInfo = info;
@@ -759,22 +802,94 @@ export class Player {
     show(this.container);
   }
 
+  private resetVodSession(position: number): void {
+    this.vodLastPosition = position;
+    this.vodLastDuration = 0;
+    this.vodCheckpointAt = Date.now();
+    this.vodHasPlayed = false;
+    this.vodCompleted = false;
+    this.cancelVodRetry();
+    this.osd.releaseFocus();
+  }
+
+  // Trusted once metadata is in, never while the element is failed or being
+  // replaced. Until a pending resume seek lands the element still reads 0; one
+  // that plays on without it (its duration came late) is at its own position.
+  private rememberVodPosition(): void {
+    const el = this.videoEl;
+    if (!this.vod || !el || el.error || this.vodRetryTimer !== null) return;
+    if (!Number.isFinite(el.duration) || el.duration <= 0) return;
+    if (this.pendingResumeSecs > 0 && !(el.currentTime > 0)) return;
+    this.vodLastPosition = this.pendingSeekTarget ?? el.currentTime;
+    this.vodLastDuration = el.duration;
+  }
+
+  private vodPosition(): number {
+    this.rememberVodPosition();
+    return this.pendingSeekTarget ?? this.vodLastPosition;
+  }
+
+  private vodDuration(): number {
+    this.rememberVodPosition();
+    return this.vodLastDuration;
+  }
+
+  private checkpointVod(): void {
+    if (!this.vod || Date.now() - this.vodCheckpointAt < CONFIG.PLAYER.VOD_CHECKPOINT_INTERVAL) return;
+    this.vodCheckpointAt = Date.now();
+    this.saveVodResume();
+  }
+
   private saveVodResume(): void {
     const v = this.vod;
-    const el = this.videoEl;
-    if (!v || !el) return;
-    const dur = Number.isFinite(el.duration) ? el.duration : 0;
-    if (dur <= 0) return; // metadata not loaded yet — currentTime is 0/unknown; don't clobber the stored point
+    if (!v) return;
+    const duration = this.vodDuration();
+    if (duration <= 0) return; // metadata never loaded: no position to store, so keep the saved one
+    const position = this.vodPosition();
+    if (vodFinished(position, duration)) {
+      this.completeVod(v);
+      return;
+    }
+    this.vodCompleted = false;
     StorageService.setResume({
       accountId: v.accountId, kind: v.kind, itemId: v.itemId,
       name: v.title, poster: v.poster, ext: extFromUrl(v.url),
-      position: this.pendingSeekTarget ?? (el.currentTime || 0),
-      duration: dur,
+      position,
+      duration,
       updatedAt: Date.now(),
       episodeQueue: v.episodeQueue,
       watchlistOwner: v.watchlistOwner,
       categoryId: v.categoryId,
+      // Catalog sidecars are URLs; inline text is never written to the store.
+      subtitles: v.subtitles.length
+        ? v.subtitles.map(({ id, name, lang, url }) => ({ id, name, lang, url }))
+        : undefined,
+      searchMeta: v.searchMeta,
     });
+  }
+
+  // Watched to the end (or into the credits): drop the resume point, mark the
+  // episode watched, and list the next episode in Continue Watching.
+  private completeVod(v: VodPlayback): void {
+    if (this.vodCompleted) return;
+    this.vodCompleted = true;
+    StorageService.clearResume(v.accountId, v.kind, v.itemId);
+    if (v.kind === 'vod') {
+      StorageService.removeWatchlist(v.accountId, 'vod', v.itemId);
+      return;
+    }
+    if (v.watchlistOwner) StorageService.markEpisodeWatched(v.accountId, v.watchlistOwner.itemId, v.itemId);
+    const queue = v.episodeQueue ?? [];
+    if (queue.length) {
+      // The next episode may have progress of its own; it moves to the front.
+      const next = queue[0];
+      const saved = StorageService.getResume(next.accountId, next.kind, next.itemId);
+      StorageService.setResume(saved && !saved.upNext
+        ? { ...saved, updatedAt: Date.now() }
+        : upNextResume(next, queue.slice(1), extFromUrl(next.url)));
+    } else if (v.watchlistOwner) {
+      StorageService.removeWatchlist(v.accountId, v.watchlistOwner.kind, v.watchlistOwner.itemId);
+    }
   }
 
   private saveCatchupProgress(opts?: { completed?: boolean }): void {
@@ -812,41 +927,157 @@ export class Player {
       else if (action === 'back' || action === 'stop') this.cancelNextItem();
       return;
     }
+    if (this.osdControlKey(action)) return;
     switch (action) {
       case 'back':
-      case 'stop': {
-        const back = this.vod?.onBack;
-        this.stop();       // saves the resume point, clears VOD state
-        back?.();
+      case 'stop':
+        // Back takes the controls down first; the next Back leaves.
+        if (action === 'back' && this.osd.isVisible()) this.osd.hide();
+        else this.exitVod();
         break;
-      }
       case 'select':
         {
           const pointer = this.osd.pointerPosition();
           if (this.osd.seekAtPointer(pointer.x, pointer.y)) break;
         }
-        if (this.canSeek()) this.pauseToggle();
-        else this.osd.toggle();
+        // OK plays and pauses whether or not the controls show; a pause
+        // brings them up and keeps them there.
+        this.pauseToggle();
+        this.osd.flash('playpause');
         break;
+      case 'rewind':
+        this.seekStep(-1);
+        break;
+      case 'fast_forward':
+        this.seekStep(1);
+        break;
+      // Left/Right seek only from the bar: the first press brings the ring to it.
       case 'left':
-        this.seekBy(-CONFIG.PLAYER.SEEK_STEP);
-        break;
       case 'right':
-        this.seekBy(CONFIG.PLAYER.SEEK_STEP);
+        this.focusOsdControl('seek');
+        break;
+      case 'up':
+      case 'down':
+        this.focusOsdControl('playpause');
         break;
       case 'play':
         if (this.pipeline.isPrebuffering()) this.pipeline.resumePrebuffering();
         else if (this.videoEl?.paused) this.pauseToggle();
+        this.osd.flash('playpause');
         break;
       case 'pause':
         if (this.videoEl && (!this.videoEl.paused || this.pipeline.isPrebuffering())) this.pauseToggle();
+        this.osd.flash('playpause');
         break;
       case 'yellow':
         this.showOSD();
         break;
       default:
-        break; // up/down/channel_up/channel_down are no-ops (no channels in VOD)
+        break; // channel_up/channel_down are no-ops (no channels in VOD)
     }
+  }
+
+  /** Hands the key to the OSD control that holds the ring; true when it took it. */
+  private osdControlKey(action: Action): boolean {
+    if (this.osd.focusedControl() === null) return false;
+    if (action === 'select') {
+      const pointer = this.osd.pointerPosition();
+      if (this.osd.seekAtPointer(pointer.x, pointer.y)) return true;
+    }
+    if (!this.osd.handleKey(action)) return false;
+    this.osd.resetTimer();
+    return true;
+  }
+
+  private focusOsdControl(key: OsdControl): void {
+    if (!this.osd.isVisible()) this.showOSD();
+    this.osd.focusControl(key);
+    this.osd.resetTimer();
+  }
+
+  // Live seekable (catch-up or DVR) whether or not the OSD shows; canSeek() needs it shown.
+  private canSeekOnceShown(): boolean {
+    const v = this.videoEl;
+    if (!v) return false;
+    if (this.catchupInfo) return Number.isFinite(v.duration) && v.duration > 0;
+    return this.isLiveDvr();
+  }
+
+  /** Whether an OSD control holds the ring, so the arrows are the OSD's. */
+  osdHasFocus(): boolean {
+    return this.osd.focusedControl() !== null;
+  }
+
+  setMenuOpener(open: () => void): void {
+    this.menuOpener = open;
+  }
+
+  private openMenu(): void {
+    this.hideOSD();
+    this.menuOpener?.();
+  }
+
+  // OK pressed with the cursor over the picture: play/pause as the OK key does.
+  private surfaceClick(): void {
+    if (this.vod) {
+      this.pauseToggle();
+      this.osd.flash('playpause');
+    } else if (this.canSeek()) this.pauseToggle();
+    else this.osd.toggle();
+  }
+
+  private seekStep(direction: -1 | 1): void {
+    this.seekBy(direction * CONFIG.PLAYER.SEEK_STEP);
+    this.osd.flash(direction < 0 ? 'rewind' : 'forward');
+  }
+
+  private introMarker(): IntroMarker | null {
+    return this.vod ? findIntroMarker(this.videoEl?.textTracks) : null;
+  }
+
+  private vodInIntro(): boolean {
+    return !!this.vod && inIntro(this.introMarker(), this.vodPosition());
+  }
+
+  // Entering a marked intro brings up the controls on Skip intro, once a title.
+  private offerSkipIntro(): void {
+    if (this.introOffered || this.upNextSeconds > 0 || !this.vodInIntro()) return;
+    this.introOffered = true;
+    if (this.osd.focusedControl() !== null || !this.canAutoRevealOsd()) return;
+    this.focusOsdControl('skipintro');
+  }
+
+  private skipIntro(): void {
+    const marker = this.introMarker();
+    if (!marker) return;
+    this.osd.releaseFocus();
+    this.seekTo(marker.end);
+  }
+
+  // Skips to the following episode, from its own resume point when it has one.
+  private playNextEpisode(): void {
+    const v = this.vod;
+    const queue = v && v.kind === 'episode' && !this.upNextTimer ? v.episodeQueue ?? [] : [];
+    const next = queue[0];
+    if (!v || !next) return;
+    this.osd.releaseFocus();
+    this.saveVodResume();
+    const saved = StorageService.getResume(next.accountId, next.kind, next.itemId);
+    const item: VodPlayback = {
+      ...next,
+      resumeSecs: saved && !saved.upNext ? saved.position : 0,
+      episodeQueue: queue.slice(1),
+      onBack: v.onBack,
+    };
+    // The PIN that unlocked the series covers its next episode.
+    if (sameParentalItem(v, next)) this.playVodResolved(item);
+    else this.playVod(item);
+  }
+
+  private exitVod(): void {
+    const back = this.vod?.onBack;
+    this.stop(); // saves the resume point, clears VOD state
+    back?.();
   }
 
   closeSubtitleSearch(): void {
@@ -897,13 +1128,18 @@ export class Player {
   private onEnded(): void {
     if (this.vod) {
       const v = this.vod;
-      this.vod = null; // before stop(), so it doesn't re-save a resume point for a finished movie
-      StorageService.clearResume(v.accountId, v.kind, v.itemId);
-      if (v.kind === 'vod') {
-        StorageService.removeWatchlist(v.accountId, 'vod', v.itemId);
-      } else if ((v.episodeQueue?.length ?? 0) === 0 && v.watchlistOwner) {
-        StorageService.removeWatchlist(v.accountId, v.watchlistOwner.kind, v.watchlistOwner.itemId);
+      const position = this.vodPosition();
+      const duration = this.vodDuration();
+      // A server that drops a progressive download can end it mid-title.
+      if (duration > 0 && !vodFinished(position, duration)) {
+        log.warn('VOD ended before its duration', 'event=playback.vod.ended_early',
+          this.playbackLabel(), `kind=${v.kind}`,
+          `position=${Math.round(position)}`, `duration=${Math.round(duration)}`);
+        this.onVodError(v);
+        return;
       }
+      this.completeVod(v);
+      this.vod = null; // before stop(), so it doesn't re-save a resume point for a finished movie
       this.stop();
       const queue = v.kind === 'episode' ? v.episodeQueue : v.watchlistQueue;
       const next = queue?.[0];
@@ -981,6 +1217,7 @@ export class Player {
       watchlistQueue: isEpisodeQueue ? undefined : remaining,
       onBack,
     };
+    this.resetVodSession(0);
     this.upNextSeconds = CONFIG.PLAYER.UP_NEXT_COUNTDOWN;
     this.osd.show();
     show(this.container);
@@ -1041,11 +1278,18 @@ export class Player {
     const vod = this.vod;
     const url = vod?.url ?? (channel ? this.resolveStreamUrl(channel, this.catchupInfo) : '');
     if (!url) return;
-    if (vod || this.catchupInfo) {
+    const keepError = vod !== null && this.status.state === 'error';
+    if (vod) {
+      this.pendingResumeSecs = this.vodPosition();
+      this.pendingSeekTarget = null;
+    } else if (this.catchupInfo) {
       this.pendingResumeSecs = Math.max(this.videoEl?.currentTime ?? 0, this.pendingResumeSecs, this.pendingSeekTarget ?? 0);
     }
     const failureDetail = this.lastFailureDetail;
+    // A reconnect is the same tune-in: its timeshift bar stays.
+    const dvrKept = this.dvrKept;
     this.startPlaybackGeneration();
+    this.dvrKept = dvrKept;
     this.lastFailureDetail = failureDetail;
     this.stallWatchdog.stop();
     this.startupWatchdog.stop();
@@ -1054,7 +1298,13 @@ export class Player {
     this.videoEl?.classList.add('active');
     this.livePlaybackStatus = 'loading';
     this.loadStream(url, channel?.extras ?? null, vod ? { direct: true } : undefined, 'reconnecting');
-    if (!vod) this.stallWatchdog.start(isWebOS(), StorageService.getLiveReconnectAttempts());
+    // A failed title's error stays up through the reload until it plays again.
+    if (keepError) this.status.set('error', this.pipeline.engineName, this.lastFailureDetail || t('player.noErrorDetails'));
+    if (!vod) {
+      this.stallWatchdog.start(isWebOS(), StorageService.getLiveReconnectAttempts());
+    } else {
+      this.tracks.attachVod(vod); // the load cleared its sidecar subtitles
+    }
     this.onPlaybackStateChanged();
   }
 
@@ -1159,14 +1409,7 @@ export class Player {
     }
     this.cancelLiveHistoryTimer();
     if (this.vod) {
-      const v = this.vod;
-      const failureDetail = this.lastFailureDetail;
-      this.vod = null;            // so stop() won't overwrite/wipe the resume point on error
-      log.warn('VOD playback error', 'event=playback.vod.error',
-        this.playbackLabel(), v.title);
-      this.stop();
-      showToast(`${t('player.unableToPlay')} ${failureDetail}`);
-      v.onBack();
+      this.onVodError(this.vod, reason);
       return;
     }
     if (this.catchupInfo && this.currentChannel?.catchup === 'xtream' &&
@@ -1243,6 +1486,27 @@ export class Player {
     }
     if (reason !== 'player_unsupported') this.markLiveUnavailable(reason);
     this.status.set('error', this.pipeline.engineName, this.lastFailureDetail || t('player.noErrorDetails'));
+    this.onPlaybackStateChanged();
+  }
+
+  // A failed title keeps its error on screen and reloads in place at its last
+  // position every few seconds until it plays again or the user leaves.
+  private onVodError(v: VodPlayback, reason?: 'unsupported'): void {
+    if (this.vodRetryTimer !== null) return;
+    this.saveVodResume();
+    this.pipeline.cancelPrebuffering();
+    this.startupPending = false;
+    this.startupWatchdog.stop();
+    this.cancelLiveHistoryTimer();
+    if (this.resyncing) this.endResync();
+    log.warn('VOD playback error', 'event=playback.vod.error', this.playbackLabel(),
+      `kind=${v.kind}`, `reason=${reason ?? 'error'}`, `played=${String(this.vodHasPlayed)}`,
+      `position=${String(Math.round(this.vodLastPosition))}`);
+    this.status.set('error', this.pipeline.engineName, this.lastFailureDetail || t('player.noErrorDetails'));
+    this.vodRetryTimer = setTimeout(() => {
+      this.vodRetryTimer = null;
+      if (this.vod === v) this.retryPlayback();
+    }, CONFIG.PLAYER.VOD_RETRY_INTERVAL_MS);
     this.onPlaybackStateChanged();
   }
 
@@ -1336,7 +1600,13 @@ export class Player {
   private liveDvrWindow(): DvrWindow | null {
     const v = this.videoEl;
     if (!v || this.catchupInfo) return null;
-    return dvrWindow(v.seekable, v.duration, CONFIG.PLAYER.DVR_MIN_WINDOW);
+    // Once this tune-in has offered timeshift it keeps the bar: a window that
+    // dips under the floor or empties (a trimmed buffer, a stall, a reconnect)
+    // would otherwise blink the progress row away.
+    const kept = this.dvrKept;
+    const win = dvrWindow(v.seekable, v.duration, kept ? 0 : CONFIG.PLAYER.DVR_MIN_WINDOW) ?? kept;
+    this.dvrKept = win;
+    return win;
   }
 
   isLiveDvr(): boolean {
@@ -1478,6 +1748,7 @@ export class Player {
     } else {
       v.pause?.();
       if (this.catchupInfo) this.saveCatchupProgress();
+      if (this.vod) this.saveVodResume();
       if (this.isLiveDvr()) this.startDvrPauseTick();
     }
     if (this.osd.isVisible()) {
@@ -1514,6 +1785,10 @@ export class Player {
         this.catchupCheckpointAt = now;
         this.saveCatchupProgress();
       }
+    }
+    if (this.vod) {
+      this.rememberVodPosition();
+      this.checkpointVod();
     }
     this.osd.refreshProgress();
   }
@@ -1561,26 +1836,28 @@ export class Player {
   private osdSnapshot(): PlayerOsdSnapshot {
     const channel = this.currentChannel;
     const epgId = channel && !this.catchupInfo ? EpgService.findChannelId(channel) : null;
-    const upcoming = epgId ? EpgService.getUpcoming(epgId, 1) : [];
     const win = this.liveDvrWindow();
     const video = this.videoEl;
-    const position = this.pendingSeekTarget ?? video?.currentTime ?? 0;
+    // A reconnecting or failed title keeps showing where it stopped.
+    const position = this.vod ? this.vodPosition() : this.pendingSeekTarget ?? video?.currentTime ?? 0;
     return {
       playback: video ? {
         position,
-        duration: video.duration,
-        paused: video.paused,
+        duration: this.vod ? this.vodDuration() || video.duration : video.duration,
+        // The prebuffer hold pauses the element, but playback is under way.
+        paused: video.paused && !this.pipeline.isPrebuffering(),
       } : null,
       channel,
       channelNumber: this.currentIndexAnchor + 1,
       catchup: this.catchupInfo,
       vodTitle: this.vod?.title ?? null,
+      vodInIntro: this.vodInIntro(),
+      vodHasNext: this.vod?.kind === 'episode' && (this.vod.episodeQueue?.length ?? 0) > 0,
       upNextSeconds: this.upNextSeconds,
       dvr: win && video
         ? dvrState(win, position, CONFIG.PLAYER.DVR_LIVE_EDGE)
         : null,
       nowPlaying: epgId ? EpgService.getNowPlaying(epgId) : null,
-      upcoming: upcoming[0] ?? null,
       streamInfo: this.streamInfo(),
     };
   }
@@ -1778,9 +2055,14 @@ export class Player {
     if (action === 'red') { this.switchPlayer(); return; }
     if (action === 'green') { this.retryPlayback(); return; }
     if (this.vod) { this.handleVodAction(action); return; }
+    if (this.osdControlKey(action)) return;
     switch (action) {
       case 'back':
       case 'stop':
+        if (action === 'back' && this.osd.isVisible()) {
+          this.osd.hide();
+          break;
+        }
         this.stop();
         this.onBack();
         break;
@@ -1793,11 +2075,10 @@ export class Player {
         if (this.canSeek()) this.pauseToggle();
         else this.osd.toggle();
         break;
+      // Left/Right seek only from the bar; Blue opens the menu (App).
       case 'left':
-        this.seekBy(-CONFIG.PLAYER.SEEK_STEP);
-        break;
       case 'right':
-        this.seekBy(CONFIG.PLAYER.SEEK_STEP);
+        if (this.canSeekOnceShown()) this.focusOsdControl('seek');
         break;
       case 'up':
       case 'channel_up':

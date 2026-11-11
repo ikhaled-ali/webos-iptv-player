@@ -2,7 +2,6 @@
   position: relative;
   display: flex;
   align-items: center;
-  margin-left: 20px;
 }
 
 .tab-bar-account:empty {
@@ -10,31 +9,31 @@
 }
 
 .account-avatar {
-  width: 52px;
-  height: 52px;
+  width: 42px;
+  height: 42px;
   border-radius: 50%;
   border: none;
   padding: 0;
+  background: #a9a09d;
   color: #fff;
   font-family: inherit;
-  font-size: 26px;
+  font-size: 23px;
   font-weight: 700;
-  line-height: 52px;
+  line-height: 42px;
   text-align: center;
   cursor: pointer;
   box-shadow: 0 0 0 3px transparent;
-  transition: box-shadow 120ms ease, transform 120ms ease, filter 120ms ease;
+  transition: box-shadow 120ms ease, filter 120ms ease;
 }
 
-/* Pointer feedback (desktop mouse + Magic Remote pointer): a subtle lift that
-   stacks with the D-pad focus ring. */
+/* Pointer feedback (desktop mouse + Magic Remote pointer): a brightening that
+   stacks with the D-pad focus ring. Nothing in the bar scales. */
 html:not(.keyboard-nav) .account-avatar:hover {
-  transform: scale(1.06);
   filter: brightness(1.12);
 }
 
 .account-avatar.focused {
-  box-shadow: 0 0 0 3px var(--accent);
+  background-image: var(--focus-layer-strong);
 }
 
 .account-menu {
@@ -62,7 +61,7 @@ html:not(.keyboard-nav) .account-avatar:hover {
 }
 
 .account-menu-item.focused {
-  background: rgb(var(--accent-rgb) / 0.18);
+  background-image: var(--focus-layer);
   color: var(--text-primary);
 }
 

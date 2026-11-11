@@ -55,7 +55,7 @@ sweep every locale, both READMEs, and the setup page for the old term.
   all amounts; "Reduced / Full / Performance" mixes axes.
 - **Scope bare words.** "All playlists" beats "All" when "All" could
   mean anything.
-- Brand and protocol names stay untranslated: webOS IPTV Player, M3U,
+- Brand and protocol names stay untranslated: iPlayer, M3U,
   Xtream, EPG/XMLTV, Magic Remote (use LG's official localized name where
   one exists).
 

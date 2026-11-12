@@ -64,7 +64,7 @@
    follow the theme. The light variant is opt-in via "Player overlay". */
 .player-osd,
 .player-sidebar,
-.player-menu,
+.side-panel,
 .subs-overlay,
 .subs-offset-card,
 .number-entry,
@@ -85,7 +85,7 @@
    reads as a bright card. */
 [data-overlay="frosted"] .player-osd,
 [data-overlay="frosted"] .player-sidebar,
-[data-overlay="frosted"] .player-menu,
+[data-overlay="frosted"] .side-panel,
 [data-overlay="frosted"] .subs-overlay,
 [data-overlay="frosted"] .subs-offset-card,
 [data-overlay="frosted"] .number-entry,
@@ -242,6 +242,42 @@
   pointer-events: none;
 }
 
+/* Shown the whole time a recording runs, with or without the OSD. */
+.recording-indicator {
+  position: absolute;
+  top: 48px;
+  left: 80px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  padding: 8px 18px 8px 14px;
+  color: #fff;
+  font-size: 26px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 999px;
+}
+.recording-indicator.hidden {
+  display: none;
+}
+.recording-indicator-dot {
+  width: 16px;
+  height: 16px;
+  margin-right: 12px;
+  border-radius: 50%;
+  background: var(--remote-key-red);
+  animation: recording-pulse 1.6s ease-in-out infinite;
+}
+@keyframes recording-pulse {
+  50% { opacity: 0.35; }
+}
+html[data-animation="essential"] .recording-indicator-dot {
+  animation: none;
+}
+
 .osd-programme-icon {
   width: 57px;
   height: 32px;
@@ -344,12 +380,26 @@
   background-image: var(--focus-layer-strong);
 }
 
+/* On the glass movie/episode controls focus changes only the tint: the rim,
+   inner highlight, and stacking stay put, so leaving one neither flashes its
+   rim nor re-composites its blur. */
+.osd-vod-controls .osd-vod-btn.focused {
+  border-color: rgba(255, 255, 255, 0.24) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  z-index: auto;
+}
+
+.osd-vod-controls .osd-vod-next.focused {
+  border-color: rgba(255, 255, 255, 0.24) !important;
+  z-index: auto;
+}
+
 .osd-progress[data-seekbar].focused .osd-progress-bar::after {
   transform: translateY(-50%) scale(1.4);
   background: #fff;
 }
 
-/* The panel's round icon buttons (play/pause, resync). The border is
+/* The panel's round icon buttons (play/pause). The border is
    reserved so the D-pad ring doesn't shift the row. */
 .osd-btn {
   display: inline-flex;
@@ -409,13 +459,6 @@
 
 .osd-dvr-live.is-live {
   color: var(--danger);
-}
-
-.osd-message {
-  font-size: 24px;
-  color: var(--warning);
-  text-align: center;
-  padding: 8px 20px;
 }
 
 .osd-next-episode {
@@ -1019,14 +1062,13 @@
   85%, 100% { transform: translateX(0); }
 }
 
-/* Player right menu (Magic Remote / right key) */
-.player-menu {
+/* The player's side panels (menu, Title Info, Episodes) share one shell:
+   docked right at one width, sliding in over the video and the controls. */
+.side-panel {
   position: absolute;
   top: 0;
   right: 0;
-  width: fit-content;
-  min-width: 340px;
-  max-width: 440px;
+  width: 560px;
   height: 1080px;
   background: rgba(10, 10, 15, 0.92);
   backdrop-filter: blur(12px);
@@ -1039,20 +1081,21 @@
   border-left: 1px solid var(--border);
 }
 
-.player-menu.visible {
+.side-panel.visible {
   transform: translateX(0);
 }
 
-.player-menu .menu-header {
+.side-panel .menu-header {
+  flex: 0 0 auto;
   margin-bottom: 32px;
 }
 
-.player-menu .menu-header h2 {
+.side-panel .menu-header h2 {
   font-size: 28px;
   color: var(--accent);
 }
 
-.player-menu .menu-header .menu-subtitle {
+.side-panel .menu-header .menu-subtitle {
   font-size: 18px;
   color: var(--text-muted);
   margin-top: 4px;
@@ -1116,6 +1159,18 @@
 .menu-dot.yellow { background: var(--remote-key-yellow); }
 .menu-dot.blue { background: var(--remote-key-blue); }
 
+/* The remote's color key for a row, trailing its value. */
+.menu-key-dot {
+  width: 12px;
+  height: 12px;
+  margin-left: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.menu-key-dot.red { background: var(--remote-key-red); }
+.menu-key-dot.green { background: var(--remote-key-green); }
+.menu-key-dot.yellow { background: var(--remote-key-yellow); }
+
 /* Icon in the color-dot slot */
 /* Icons are wider than the 14px dot; negative margins keep labels aligned. */
 .menu-icon {
@@ -1129,6 +1184,11 @@
 .menu-icon.audio { color: #9b59b6; }
 .menu-icon.subtitle { color: #1abc9c; }
 .menu-icon.speed { color: #f5b041; }
+.menu-icon.record,
+.menu-icon.recording { color: var(--remote-key-red); }
+.menu-icon.switch,
+.menu-icon.reload,
+.menu-icon.quality { color: var(--text-secondary); }
 .menu-icon svg { display: block; width: 22px; height: 22px; }
 /* Deeper shades for the light Frosted panel; the row label carries the meaning. */
 [data-overlay="frosted"] .menu-icon.audio { color: #8e44ad; }
@@ -1342,4 +1402,183 @@
   background-image: var(--focus-layer);
   border-color: transparent;
   color: var(--text-primary);
+}
+
+/* Title Info: the movie or episode's details, in the side-panel shell. The
+   panel holds the keys itself and never scrolls. */
+.vod-info-card {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* The panel holds the keys itself: it never shows the focus tint. */
+.vod-info-card.focused {
+  background-image: none;
+}
+
+.vod-info-head {
+  display: flex;
+  align-items: flex-start;
+}
+
+.vod-info-poster {
+  flex: 0 0 auto;
+  width: 150px;
+  height: 225px;
+  margin-right: 24px;
+  border-radius: var(--radius);
+  object-fit: cover;
+  background: var(--overlay-chip);
+}
+
+.vod-info-heading {
+  flex: 1;
+  min-width: 0;
+}
+
+.vod-info-context {
+  margin-bottom: 8px;
+  font-size: 20px;
+  color: var(--text-secondary);
+}
+
+.vod-info-title {
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.3;
+  /* Three lines at most. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.vod-info-meta {
+  margin-top: 12px;
+  font-size: 20px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+/* Twelve lines, then an ellipsis. */
+.vod-info-plot {
+  margin-top: 24px;
+  font-size: 22px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  display: -webkit-box;
+  -webkit-line-clamp: 12;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.vod-info-credit {
+  margin-top: 16px;
+  font-size: 20px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.vod-info-label {
+  margin-right: 8px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* The series' episode list, in the side-panel shell, with the playing episode
+   selected. Rows match the menu's, with the same gutter for the focus tint. */
+.vod-episodes-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin: -20px;
+  padding: 20px;
+}
+
+.vod-episodes-season {
+  padding: 16px 18px 8px;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.vod-episode {
+  display: flex;
+  align-items: center;
+  margin-bottom: 6px;
+  padding: 16px 18px;
+  border: 2px solid transparent;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+/* The playing episode keeps its mark wherever focus goes. */
+.vod-episode.current {
+  background: rgb(var(--accent-rgb) / 0.16);
+}
+
+.vod-episode.current.focused {
+  background-image: var(--focus-layer);
+}
+
+.vod-episode-number {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 36px;
+  margin-right: 14px;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.vod-episode.current .vod-episode-number {
+  color: var(--accent);
+}
+
+.vod-episode-number svg {
+  width: 22px;
+  height: 22px;
+  fill: currentColor;
+}
+
+.vod-episode-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.vod-episode-title {
+  font-size: 22px;
+  line-height: 1.3;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vod-episode-length {
+  margin-top: 4px;
+  font-size: 18px;
+  color: var(--text-muted);
+}
+
+.vod-episode-progress {
+  height: 4px;
+  margin-top: 10px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--overlay-chip);
+}
+
+.vod-episode-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
 }

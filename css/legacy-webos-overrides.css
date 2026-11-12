@@ -80,7 +80,7 @@ html.q-scroll-end-padding .catalog-category-rail::after { content: none; }
 
 @supports not (backdrop-filter: blur(1px)) {
   .player-sidebar { background: rgb(20, 20, 35); }
-  .player-menu,
+  .side-panel,
   .player-osd,
   .number-entry,
   .live-preview-message { background: rgb(10, 10, 15); }

@@ -149,7 +149,6 @@ test('green hides a channel in edit mode and toggles a favorite outside it', asy
   await key(page, YELLOW);
   await expect(page.locator('.channel-main .channel-item')).toHaveCount(3);
   expect(await names(page)).not.toContain('Beta News');
-  await expect(page.locator('.channel-count')).toHaveText('3 channels');
 
   await page.reload();
   await expect(page.locator('#view-channels')).toBeVisible();
@@ -588,7 +587,7 @@ test('Settings enters edit mode, reveals hidden channels, and resets everything'
 
   // Show hidden reveals the hidden channel in the normal list, marked.
   await page.locator('#show-hidden [data-value="on"]').click();
-  await page.locator('#cancel-settings').click();
+  await page.keyboard.press('Escape');
   await expect(page.locator('#view-channels')).toBeVisible();
   await expect(page.locator('.channel-main .channel-item')).toHaveCount(4);
   await expect(page.locator('.channel-main .hidden-entry')).toHaveCount(1);
@@ -599,7 +598,7 @@ test('Settings enters edit mode, reveals hidden channels, and resets everything'
   await page.locator('#reset-customization').click();
   await expect(page.locator('.confirmation-prompt')).toBeVisible();
   await page.locator('.confirmation-btn').first().click();
-  await page.locator('#cancel-settings').click();
+  await page.keyboard.press('Escape');
   await expect(page.locator('#view-channels')).toBeVisible();
   await expect(page.locator('.channel-main .hidden-entry')).toHaveCount(0);
   await expect(page.locator('.channel-main .channel-item')).toHaveCount(4);

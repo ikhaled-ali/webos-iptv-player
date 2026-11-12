@@ -659,6 +659,21 @@ export interface RecentlyWatchedLiveEntry {
   updatedAt: number;
 }
 
+// What the player's Title Info panel shows about a movie or episode; any
+// field the provider left out is empty.
+export interface VodDetails {
+  title: string;
+  // An episode's series and code (e.g. "Alpha — S1E2"); empty for a movie.
+  context: string;
+  plot: string;
+  genre: string;
+  year: string;
+  rating: string;
+  durationSecs: number;
+  cast: string;
+  director: string;
+}
+
 export interface VodQueueItem {
   url: string;
   title: string;
@@ -672,6 +687,8 @@ export interface VodQueueItem {
   subtitles: SidecarSubtitle[];
   searchMeta?: SearchMeta;
   watchlistOwner?: WatchlistOwner;
+  // In memory only: never written with a resume entry.
+  details?: VodDetails;
 }
 
 export interface WatchlistOwner {
@@ -684,6 +701,8 @@ export interface WatchlistOwner {
 export interface VodPlayback extends VodQueueItem {
   resumeSecs: number;
   episodeQueue?: VodQueueItem[];
+  /** Every episode of the series, in order, for the player's episode list. */
+  seriesEpisodes?: VodQueueItem[];
   /** Transient movie queue created only when playback starts from Watchlist. */
   watchlistQueue?: VodQueueItem[];
   onBack: () => void;

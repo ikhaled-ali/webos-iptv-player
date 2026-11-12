@@ -327,7 +327,14 @@ test('episode controls: OK pauses and keeps the bar up, Down picks Next episode,
 
   await page.keyboard.press('ArrowDown');
   await expect(playPause).toHaveClass(/focused/);
-  for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowRight'); // forward, resync, menu, next
+  // Focus only tints a glass control: its rim, highlight, and stacking match
+  // an unfocused one, so leaving it doesn't flash the rim.
+  const rim = (selector: string) => osd.locator(selector).evaluate((el) => {
+    const s = getComputedStyle(el);
+    return [s.borderTopColor, s.boxShadow, s.zIndex];
+  });
+  expect(await rim('[data-playpause]')).toEqual(await rim('[data-forward]'));
+  for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowRight'); // forward, info, menu, episodes, next
   await expect(osd.locator('[data-next-episode]')).toHaveClass(/focused/);
   await page.keyboard.press('Enter');
   await expect(osd.locator('.osd-channel-name')).toContainText('S1E2');

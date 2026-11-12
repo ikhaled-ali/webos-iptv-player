@@ -49,7 +49,7 @@ test('playlist loading stays in the foreground and reports parsed channel counts
   await expect(page.locator('.channel-main .channel-item')).toHaveCount(3);
 });
 
-test('settings save immediately and Close keeps the new values', async ({ page }) => {
+test('settings save immediately and Back keeps the new values', async ({ page }) => {
   await page.goto('/');
   await page.locator('[data-settings-target="playback"]').click();
   await page.locator('#live-preview-setting [data-value="on"]').click();
@@ -57,7 +57,10 @@ test('settings save immediately and Close keeps the new values', async ({ page }
   await expect(page.locator('#view-settings')).toBeVisible();
   await page.locator('[data-settings-target="subtitles"]').click();
   await page.locator('#assrt-key').fill('token1');
-  await page.locator('#cancel-settings').click();
+  // The first Back lets the caret go; the second leaves Settings.
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#view-channels')).toBeVisible();
   await enterTab(page, 'settings');
   await expect(page.locator('#assrt-key')).toHaveValue('token1');
   await expect(page.locator('#live-preview-setting .active')).toHaveAttribute('data-value', 'on');

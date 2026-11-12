@@ -43,11 +43,9 @@
 .catalog-rail { margin-bottom: 28px; }
 .catalog-rail-title { margin: 0 0 6px; font-size: 30px; font-weight: 600; color: var(--text-primary); }
 /* 18px above the posters holds a focused one's grown ring inside the clip. */
-.catalog-rail-track { display: flex; gap: 20px; overflow-x: auto; padding: 18px 12px 20px; margin: 0 -12px; }
+/* 24px below holds a focused card's grown title. */
+.catalog-rail-track { display: flex; gap: 20px; overflow-x: auto; padding: 18px 12px 24px; margin: 0 -12px; }
 .catalog-rails-body .catalog-rail-track { margin-left: -80px; padding-left: 80px; }
-/* Rails scroll by D-pad and wheel; the poster cut-off at the edge already
-   shows there is more, so the bar only adds noise under each row. */
-.catalog-rails-body .catalog-rail-track::-webkit-scrollbar { display: none; }
 /* A step scrolls one card or row, so it glides in every mode but Essential
    (Full already does); Chromium 53 has no scroll-behavior and stays instant. */
 html[data-animation="reduced"] .catalog-view,
@@ -111,6 +109,7 @@ html[data-animation="reduced"] .catalog-rail-track {
 }
 .catalog-tile.focused::before { opacity: 1; transform: scale(1.1); }
 .catalog-poster-wrap,
+.catalog-tile-name,
 .catalog-cat {
   /* Matches the channel grid: the focused card grows over a soft shadow. */
   transition: transform 300ms cubic-bezier(0.22, 1, 0.36, 1);
@@ -126,13 +125,17 @@ html[data-animation="reduced"] .catalog-rail-track {
 .catalog-tile-name {
   margin-top: 10px; font-size: 22px; color: var(--text-primary);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  /* The poster's center (165px above the poster's bottom, plus the 10px
+     gap), so the title grows with the poster as one card. */
+  transform-origin: 50% -175px;
 }
 /* A grid cell takes no tint: the focused one only grows, smoothly. */
 .catalog-tile.focused,
 .catalog-cat.focused {
   background-image: none;
 }
-.catalog-tile.focused .catalog-poster-wrap {
+.catalog-tile.focused .catalog-poster-wrap,
+.catalog-tile.focused .catalog-tile-name {
   transform: scale(1.1);
 }
 

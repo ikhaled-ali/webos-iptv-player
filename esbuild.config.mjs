@@ -66,12 +66,17 @@ const iconHash = createHash('sha1')
   .digest('hex').slice(0, 8);
 const icon = `icon-${iconHash}.png`;
 const largeIcon = `largeIcon-${iconHash}.png`;
+// The launch splash, likewise: scripts/build-splash.mjs renders it from the
+// boot screen, so the TV hands off to the app without the logo moving.
+const splashHash = createHash('sha1').update(readFileSync('assets/splash.png')).digest('hex').slice(0, 8);
+const splashBackground = `splash-${splashHash}.png`;
 for (const file of readdirSync('dist')) {
-  if (/^(icon|largeIcon)(-[0-9a-f]+)?\.png$/.test(file)) rmSync(`dist/${file}`);
+  if (/^(icon|largeIcon|splash)(-[0-9a-f]+)?\.png$/.test(file)) rmSync(`dist/${file}`);
 }
 cpSync('assets/icon80.png', `dist/${icon}`);
 cpSync('assets/icon130.png', `dist/${largeIcon}`);
-writeFileSync('dist/appinfo.json', JSON.stringify({ ...appinfo, icon, largeIcon }, null, 2) + '\n');
+cpSync('assets/splash.png', `dist/${splashBackground}`);
+writeFileSync('dist/appinfo.json', JSON.stringify({ ...appinfo, icon, largeIcon, splashBackground }, null, 2) + '\n');
 cpSync('assets/icons', 'dist/assets/icons', { recursive: true });
 cpSync('assets/fonts', 'dist/assets/fonts', { recursive: true });
 

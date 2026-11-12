@@ -147,6 +147,36 @@ describe('PlaylistService.refresh', () => {
     expect(channels.map(c => c.name)).toEqual(['Alpha', 'Bravo', 'Charlie']);
   });
 
+  it('drops a removed source at once and returns only what no other source carries', async () => {
+    await PlaylistService.refresh();
+
+    const removed = PlaylistService.removeSources(['a']);
+
+    expect(removed.channels.map(c => c.url)).toEqual(['http://stream/u1']);
+    expect(removed.epgUrls).toEqual(['http://localhost:8080/epg.xml']);
+    expect(PlaylistService.channels.map(c => c.url)).toEqual(['http://stream/u2', 'http://stream/u3']);
+    expect(PlaylistService.allChannels.every(c => !c.playlistIds.includes('a'))).toBe(true);
+    expect(PlaylistService.epgSources).toEqual([]);
+    expect(PlaylistService.hasLoadedSource(storageMock.getPlaylists()[0])).toBe(false);
+  });
+
+  it('keeps a source removed while a refresh ran from coming back with it', async () => {
+    let finish!: (value: string) => void;
+    fetchTextMock.mockImplementation((url: string) => url.includes('p1')
+      ? Promise.resolve(P1)
+      : new Promise<string>(resolve => { finish = resolve; }));
+    const refreshing = PlaylistService.refresh();
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+    storageMock.getPlaylists.mockReturnValue([{ id: 'a', name: 'P1', url: 'http://host1/p1.m3u' }]);
+    finish(P2);
+    await refreshing;
+
+    expect(PlaylistService.allChannels.map(c => c.url)).toEqual(['http://stream/u1', 'http://stream/u2']);
+    expect(PlaylistService.allChannels.every(c => c.playlistIds.join() === 'a')).toBe(true);
+    const cached = cacheMock.scheduleCachedPlaylist.mock.lastCall?.[0] as Channel[];
+    expect(cached.map(c => c.url)).toEqual(['http://stream/u1', 'http://stream/u2']);
+  });
+
   it('updates one source without fetching another or dropping its channels', async () => {
     await PlaylistService.refresh();
     fetchTextMock.mockClear();

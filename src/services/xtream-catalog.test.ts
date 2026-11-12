@@ -31,6 +31,12 @@ vi.mock('./xtream-client', async (importOriginal) => ({
   createXtreamClient: () => clientMock,
 }));
 vi.mock('./idb-cache', () => ({
+  catalogCacheAvailable: vi.fn(async () => true),
+  clearCachedCatalogAccount: vi.fn(async (accountId: string) => {
+    for (const key of Array.from(cacheStore.keys())) {
+      if (key.startsWith(`${accountId}|`)) cacheStore.delete(key);
+    }
+  }),
   catalogCacheGeneration: vi.fn(() => cacheState.generation),
   getCachedCatalog: vi.fn(async (key: string) => cacheStore.get(key) ?? null),
   getCachedCatalogMetadata: vi.fn(async (key: string) => {
@@ -64,10 +70,19 @@ import {
   loadVodInfo,
   onCatalogListRefreshed,
   onCatalogListWritten,
+  onCatalogLoadProgress,
+  forgetAccountCatalog,
   loadVodStreams,
+  preloadAccountCatalog,
   refreshAccountCatalog,
 } from './xtream-catalog';
-import { getCachedCatalog, setCachedCatalog, setCachedCatalogState } from './idb-cache';
+import {
+  catalogCacheAvailable,
+  clearCachedCatalogAccount,
+  getCachedCatalog,
+  setCachedCatalog,
+  setCachedCatalogState,
+} from './idb-cache';
 import { CONFIG } from '../config';
 import { XtreamRequestError } from './xtream-client';
 import { StorageService } from './storage-service';
@@ -105,6 +120,20 @@ describe('xtream-catalog', () => {
     expect(cacheStore.get('x1|vod_all')?.data).toEqual([{ streamId: 'new', categoryId: '1' }]);
     expect(cacheStore.get('x2|vod_all')?.data).toBe(previous);
     expect(setCachedCatalog.mock.calls.every(([key]) => key.startsWith('x1|'))).toBe(true);
+  });
+
+  it('reports each catalog of a manual account update as it settles', async () => {
+    const failure = new XtreamRequestError('request_failed', 'down');
+    clientMock.getVodStreams.mockResolvedValue([{ streamId: 'm1', categoryId: '1' }]);
+    clientMock.getSeriesCategories.mockRejectedValue(failure);
+    const settled: Array<[string, unknown]> = [];
+
+    await expect(refreshAccountCatalog(account, (resource, error) => settled.push([resource, error])))
+      .rejects.toBe(failure);
+    await settle();
+
+    expect(settled).toEqual(expect.arrayContaining([['vod_all', undefined], ['series_all', failure]]));
+    expect(settled).toHaveLength(2);
   });
 
   it('shares a manual account update and accepts an account without movies or series', async () => {
@@ -1189,5 +1218,144 @@ describe('xtream-catalog whole-catalog (search)', () => {
       data: [], state: { complete: true },
     });
     expect(cacheStore.get('x1|series-v2|1')?.data).toEqual([]);
+  });
+});
+
+describe('xtream-catalog account preload', () => {
+  it('fills cold Movies and Series catalogs and reports categories done of total', async () => {
+    clientMock.getVodCategories.mockResolvedValue([{ id: '1', name: 'Cat A' }, { id: '2', name: 'Cat B' }]);
+    clientMock.getVodStreams.mockImplementation(async (categoryId: string) =>
+      [{ accountId: 'x1', streamId: `m${categoryId}`, categoryId }]);
+    clientMock.getSeries.mockResolvedValue([{ accountId: 'x1', seriesId: 's1', categoryId: '1' }]);
+    const progress: string[] = [];
+    const off = onCatalogLoadProgress(update => progress.push(
+      `${update.accountId}|${update.resource}|${update.categoriesDone}/${update.categoriesTotal}`));
+
+    const { movies, series } = preloadAccountCatalog(account);
+    expect(await movies).toBe('loaded');
+    expect(await series).toBe('loaded');
+    off();
+
+    expect(cacheStore.get('x1|vod_all')?.data).toHaveLength(2);
+    expect(cacheStore.get('x1|series_all')?.data).toHaveLength(1);
+    expect(progress.filter(entry => entry.startsWith('x1|vod_all|'))).toEqual([
+      'x1|vod_all|0/2', 'x1|vod_all|1/2', 'x1|vod_all|2/2',
+    ]);
+    expect(progress.filter(entry => entry.startsWith('x1|series_all|'))).toEqual([
+      'x1|series_all|0/1', 'x1|series_all|1/1',
+    ]);
+  });
+
+  it('leaves a cached catalog alone, even a stale one', async () => {
+    const stale = Date.now() - CONFIG.XTREAM.DEFAULT_CATALOG_REFRESH_INTERVAL_MS - 1;
+    for (const key of ['x1|vod_all', 'x1|series_all']) {
+      cacheStore.set(key, { key, timestamp: stale, data: [] });
+    }
+
+    const { movies, series } = preloadAccountCatalog(account);
+
+    expect(await movies).toBe('cached');
+    expect(await series).toBe('cached');
+    await settle();
+    expect(clientMock.getVodCategories).not.toHaveBeenCalled();
+    expect(clientMock.getSeriesCategories).not.toHaveBeenCalled();
+  });
+
+  it('skips the preload when nothing can be cached', async () => {
+    vi.mocked(catalogCacheAvailable).mockResolvedValueOnce(false).mockResolvedValueOnce(false);
+
+    const { movies, series } = preloadAccountCatalog(account);
+
+    expect(await movies).toBe('skipped');
+    expect(await series).toBe('skipped');
+    expect(clientMock.getVodCategories).not.toHaveBeenCalled();
+  });
+
+  it('lets Search share a preload in flight instead of fetching the catalog again', async () => {
+    let release = (): void => {};
+    clientMock.getVodStreams.mockImplementation(() => new Promise(resolve => {
+      release = () => resolve([{ accountId: 'x1', streamId: 'm1', categoryId: '1' }]);
+    }));
+    clientMock.getSeries.mockResolvedValue([]);
+
+    const { movies } = preloadAccountCatalog(account);
+    await settle();
+    const search = loadAllVodStreams(account);
+    await settle();
+    release();
+
+    expect(await movies).toBe('loaded');
+    expect(await search).toEqual([{ accountId: 'x1', streamId: 'm1', categoryId: '1' }]);
+    expect(clientMock.getVodStreams).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs a failed preload and rejects for its caller', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    clientMock.getVodCategories.mockRejectedValue(new XtreamRequestError('request_failed', 'down'));
+    clientMock.getSeries.mockResolvedValue([]);
+
+    const { movies, series } = preloadAccountCatalog(account);
+
+    await expect(movies).rejects.toThrow('down');
+    expect(await series).toBe('loaded');
+    expect(warn).toHaveBeenCalledWith(
+      '[Catalog]', 'Catalog preload failed', 'event=xtream.catalog.preload.failed',
+      'resource=vod_all', 'reason=request_failed', expect.stringMatching(/^elapsedMs=\d+$/),
+    );
+    warn.mockRestore();
+  });
+});
+
+describe('xtream-catalog account removal', () => {
+  it('cancels a preload in flight and leaves nothing of the account cached', async () => {
+    let release = (): void => {};
+    clientMock.getVodStreams.mockImplementation(() => new Promise(resolve => {
+      release = () => resolve([{ accountId: 'x1', streamId: 'm1', categoryId: '1' }]);
+    }));
+    clientMock.getSeries.mockResolvedValue([]);
+    cacheStore.set('x2|vod_all', { key: 'x2|vod_all', timestamp: Date.now(), data: [] });
+
+    const { movies, series } = preloadAccountCatalog(account);
+    await settle();
+    await forgetAccountCatalog('x1');
+    release();
+
+    await expect(movies).rejects.toMatchObject({ code: 'cancelled' });
+    await series.catch(() => undefined);
+    await settle();
+    expect(clearCachedCatalogAccount).toHaveBeenCalledWith('x1');
+    expect(Array.from(cacheStore.keys())).toEqual(['x2|vod_all']);
+  });
+
+  it('drops a detail fetched after its account was removed', async () => {
+    let release = (): void => {};
+    clientMock.getVodInfo.mockImplementation(() => new Promise(resolve => {
+      release = () => resolve({ name: 'Movie 1' });
+    }));
+
+    const info = loadVodInfo(account, 'm1');
+    await settle();
+    await forgetAccountCatalog('x1');
+    release();
+
+    await expect(info).rejects.toMatchObject({ code: 'cancelled' });
+    expect(cacheStore.has('x1|vod_info|m1')).toBe(false);
+  });
+
+  it('lets a later Search fetch the catalog itself instead of waiting on a canceled preload', async () => {
+    let release = (): void => {};
+    clientMock.getVodStreams.mockImplementation(() => new Promise(resolve => {
+      release = () => resolve([]);
+    }));
+    clientMock.getSeries.mockResolvedValue([]);
+    const { movies } = preloadAccountCatalog(account);
+    const preloaded = movies.catch(() => undefined);
+    await settle();
+    await forgetAccountCatalog('x1');
+
+    clientMock.getVodStreams.mockResolvedValue([{ accountId: 'x1', streamId: 'm2', categoryId: '1' }]);
+    expect(await loadAllVodStreams(account)).toEqual([{ accountId: 'x1', streamId: 'm2', categoryId: '1' }]);
+    release();
+    await preloaded;
   });
 });

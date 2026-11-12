@@ -8,18 +8,18 @@ import { morph } from '../utils/morph';
 import { clockTime, onClockTick } from '../utils/clock';
 import { formatDuration, formatPosition, formatTime, getProgress } from '../utils/time';
 import { t, tp } from '../i18n';
-import { NEXT_EPISODE_ICON, PAUSE_ICON, PLAY_ICON, PLAYER_MENU_ICON, RESYNC_ICON, seekIcon } from './icons';
+import { EPISODES_ICON, INFO_ICON, NEXT_EPISODE_ICON, PAUSE_ICON, PLAY_ICON, PLAYER_MENU_ICON, seekIcon } from './icons';
 
 /** A movie/episode control a remote key also drives, lit briefly when it does. */
 export type VodControl = 'rewind' | 'playpause' | 'forward';
 const PRESS_MS = 220;
 
 /** An OSD control the D-pad can hold, by its `data-key`. */
-export type OsdControl = 'seek' | 'rewind' | 'playpause' | 'forward' | 'skipintro' | 'resync' | 'golive' | 'menu' | 'next';
+export type OsdControl = 'seek' | 'rewind' | 'playpause' | 'forward' | 'skipintro' | 'info' | 'golive' | 'menu' | 'episodes' | 'next';
 // The bar is its own row above the buttons, wherever it is drawn.
 const CONTROL_ROWS: readonly (readonly OsdControl[])[] = [
   ['seek'],
-  ['rewind', 'playpause', 'forward', 'skipintro', 'resync', 'golive', 'menu', 'next'],
+  ['rewind', 'playpause', 'forward', 'skipintro', 'info', 'golive', 'menu', 'episodes', 'next'],
 ];
 
 export interface PlayerOsdSnapshot {
@@ -36,6 +36,10 @@ export interface PlayerOsdSnapshot {
   vodHasNext: boolean;
   /** Playback is inside the stream's marked intro, so the controls offer Skip intro. */
   vodInIntro: boolean;
+  /** The title has details, so the controls offer Title Info. */
+  vodHasInfo: boolean;
+  /** An episode of a series whose episode list the player holds. */
+  vodHasEpisodes: boolean;
   upNextSeconds: number;
   dvr: DvrState | null;
   nowPlaying: Programme | null;
@@ -59,16 +63,19 @@ export interface PlayerOsdStreamInfo {
 export interface PlayerOsdOptions {
   getSnapshot: () => PlayerOsdSnapshot;
   canAutoReveal: () => boolean;
+  /** A side panel opened from the controls covers them: they stay up under it. */
+  isCovered: () => boolean;
   canSeek: () => boolean;
   onSeekFraction: (fraction: number) => void;
   onPauseToggle: () => void;
   onGoLive: () => void;
-  onResync: () => void;
   onPlayNext: () => void;
   onCancelNext: () => void;
   onSeekStep: (direction: -1 | 1) => void;
   onNextEpisode: () => void;
   onSkipIntro: () => void;
+  onShowInfo: () => void;
+  onShowEpisodes: () => void;
   onOpenMenu: () => void;
   onSurfaceClick: () => void;
 }
@@ -82,7 +89,7 @@ interface OsdProgramme {
 
 // Panels over the picture that own their clicks; while one shows, a click
 // elsewhere doesn't reach the picture either.
-const PANEL_SELECTORS = ['#player-sidebar', '#player-menu', '#subtitle-search', '#subtitle-offset'];
+const PANEL_SELECTORS = ['#player-sidebar', '#player-menu', '#subtitle-search', '#subtitle-offset', '#vod-info', '#vod-episodes'];
 
 function audioTrackText(name: string): string {
   const label = t('player.audioTrack');
@@ -273,11 +280,12 @@ export class PlayerOsd {
       case 'playpause': this.callbacks.onPauseToggle(); break;
       case 'rewind': this.callbacks.onSeekStep(-1); break;
       case 'forward': this.callbacks.onSeekStep(1); break;
-      case 'resync': this.callbacks.onResync(); break;
       case 'golive': this.callbacks.onGoLive(); break;
       case 'menu': this.callbacks.onOpenMenu(); break;
       case 'next': this.callbacks.onNextEpisode(); break;
       case 'skipintro': this.callbacks.onSkipIntro(); break;
+      case 'info': this.callbacks.onShowInfo(); break;
+      case 'episodes': this.callbacks.onShowEpisodes(); break;
     }
   }
 
@@ -302,7 +310,7 @@ export class PlayerOsd {
     this.timer = null;
     // Keep the OSD up while paused (live DVR or catch-up): nothing to fall behind.
     const snapshot = this.callbacks.getSnapshot();
-    if (snapshot.playback?.paused) return;
+    if (snapshot.playback?.paused || this.callbacks.isCovered()) return;
     this.timer = setTimeout(() => this.hide(), StorageService.getPlayerOsdTimeoutMs());
   }
 
@@ -354,7 +362,6 @@ export class PlayerOsd {
             <div class="osd-progress-bar" style="width: ${dur > 0 ? (pos / dur) * 100 : 0}%"></div>
           </div>
           <span class="osd-time-end">${formatPosition(dur)}</span>
-          ${this.resyncButton()}
         </div>
       `;
     } else if (state.nowPlaying || state.dvr) {
@@ -405,19 +412,6 @@ export class PlayerOsd {
         </div>
       </div>
     `);
-  }
-
-  updateMessage(message: string): void {
-    const osd = $('#player-osd', this.container);
-    if (!osd) return;
-    this.releaseFocus();
-    morph(osd, html`<div class="osd-message">${message}</div>`);
-    // Keep the OSD visible so metadata can repaint over this once the stream
-    // recovers (else "Reconnecting..." sticks) and it auto-hides otherwise.
-    this.visible = true;
-    show(osd);
-    this.setClock(clockTime());
-    this.resetTimer();
   }
 
   refreshProgress(): void {
@@ -523,17 +517,24 @@ export class PlayerOsd {
             <button class="osd-vod-next osd-vod-skip" data-focusable data-key="skipintro" data-skip-intro>
               <span>${t('player.skipIntro')}</span>
             </button>` : ''}
-          <button class="osd-vod-btn osd-vod-btn--small" data-resync data-focusable data-key="resync"
-                  aria-label="${t('player.resync')}">
-            ${raw(RESYNC_ICON)}
-          </button>
+          ${state.vodHasInfo ? html`
+            <button class="osd-vod-btn osd-vod-btn--small" data-info data-focusable data-key="info"
+                    aria-label="${t('player.titleInfo')}">
+              ${raw(INFO_ICON)}
+            </button>` : ''}
           <button class="osd-vod-btn osd-vod-btn--small" data-menu data-focusable data-key="menu"
                   aria-label="${t('player.menu')}">
             ${raw(PLAYER_MENU_ICON)}
           </button>
+          ${state.vodHasEpisodes ? html`
+            <button class="osd-vod-btn osd-vod-btn--small" data-episodes data-focusable data-key="episodes"
+                    aria-label="${t('player.episodes')}">
+              ${raw(EPISODES_ICON)}
+            </button>` : ''}
           ${state.vodHasNext ? html`
-            <button class="osd-vod-next" data-focusable data-key="next" data-next-episode>
-              ${raw(NEXT_EPISODE_ICON)}<span>${t('player.nextEpisode')}</span>
+            <button class="osd-vod-btn osd-vod-btn--small" data-next-episode data-focusable data-key="next"
+                    aria-label="${t('player.nextEpisode')}">
+              ${raw(NEXT_EPISODE_ICON)}
             </button>` : ''}
         </div>
       </div>
@@ -559,17 +560,6 @@ export class PlayerOsd {
       <button class="osd-btn osd-btn--play" data-playpause data-focusable data-key="playpause"
         aria-label="${t(paused ? 'player.play' : 'player.pause')}">
         ${paused ? raw(PLAY_ICON) : raw(PAUSE_ICON)}
-      </button>
-    `;
-  }
-
-  /** The OSD "Resync A/V" button (catch-up + VOD only). Pointer-hit-tested by
-   *  onPointerRelease; invokes Player.resyncAV() through the callback. */
-  private resyncButton(): Safe {
-    return html`
-      <button class="osd-btn" data-resync data-focusable data-key="resync"
-        aria-label="${t('player.resync')}">
-        ${raw(RESYNC_ICON)}
       </button>
     `;
   }
@@ -619,7 +609,7 @@ export class PlayerOsd {
   }
 
   /** A pointer release: seek if it landed on the bar, else activate the play/pause,
-   *  Go-to-Live, or resync control under it. Coordinates are used because the OSD
+   *  Go-to-Live, or menu control under it. Coordinates are used because the OSD
    *  controls sit over the video plane. */
   private onPointerRelease(x: number, y: number, target: EventTarget | null): void {
     const state = this.callbacks.getSnapshot();
@@ -634,10 +624,11 @@ export class PlayerOsd {
       if (this.hitsControl('[data-forward]', x, y)) { this.callbacks.onSeekStep(1); return; }
       if (this.hitsControl('[data-next-episode]', x, y)) { this.callbacks.onNextEpisode(); return; }
       if (this.hitsControl('[data-skip-intro]', x, y)) { this.callbacks.onSkipIntro(); return; }
+      if (this.hitsControl('[data-info]', x, y)) { this.callbacks.onShowInfo(); return; }
+      if (this.hitsControl('[data-episodes]', x, y)) { this.callbacks.onShowEpisodes(); return; }
     }
     if (this.hitsControl('[data-playpause]', x, y)) this.callbacks.onPauseToggle();
     else if (this.hitsControl('[data-golive]', x, y)) this.callbacks.onGoLive();
-    else if (this.hitsControl('[data-resync]', x, y)) this.callbacks.onResync();
     else if (this.hitsControl('[data-menu]', x, y)) this.callbacks.onOpenMenu();
     // Magic Remote OK with the cursor shown arrives as a click, so a click on
     // the bare picture acts as OK does.

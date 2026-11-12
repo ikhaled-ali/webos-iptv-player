@@ -53,7 +53,7 @@ import {
   runParentalBenchmark,
 } from './benchmark-suite.mjs';
 
-const APP_ID = 'com.lennylxx.iptv';
+const APP_ID = 'com.ikhaled.iptv';
 const ACCOUNT_ID = 'benchmark-x1';
 const EPG_URL = 'http://host/benchmark-epg';
 const BACKUP_KEY = '__tv_benchmark_backup__';

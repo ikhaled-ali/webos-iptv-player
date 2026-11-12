@@ -194,6 +194,17 @@ export class Movies extends CatalogView<VodCategory, VodItem> {
       categoryId: vod.categoryId,
       resumeSecs: resume && saved ? saved.position : 0,
       subtitles: this.currentInfo?.subtitles ?? [],
+      details: {
+        title: vod.name,
+        context: '',
+        plot: this.currentInfo?.plot ?? '',
+        genre: this.currentInfo?.genre ?? '',
+        year: this.currentInfo ? (this.currentInfo.releaseDate.match(/\d{4}/) || [''])[0] : vod.year ? String(vod.year) : '',
+        rating: vod.rating,
+        durationSecs: this.currentInfo?.durationSecs ?? 0,
+        cast: this.currentInfo?.cast ?? '',
+        director: this.currentInfo?.director ?? '',
+      },
       watchlistQueue: this.openedFromWatchlist ? this.movieWatchlistQueue(vod.streamId) : undefined,
       searchMeta: {
         imdbId: this.currentInfo?.imdbId || undefined,

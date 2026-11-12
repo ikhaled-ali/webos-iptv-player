@@ -718,6 +718,108 @@ export const StorageService = {
     return stored;
   },
 
+  /**
+   * Delete what removed accounts left behind: their Movies and Series history,
+   * Watchlist, and picks, and every channel record of `channelKeys`, the
+   * channels only they carried. Reminders go through ReminderService.
+   */
+  forgetAccountData(accountIds: string[], channelKeys: string[], epgUrls: string[]): void {
+    const channels = new Set(channelKeys);
+    const vodPrefixes = accountIds.map(id => `vod:${id}:`);
+    const accountKey = (key: string) => accountIds.some(id => key.indexOf(`${id}|`) === 0);
+    const prefKey = (key: string) => channels.has(key) || vodPrefixes.some(prefix => key.indexOf(prefix) === 0);
+
+    for (const id of accountIds) {
+      this.clearResumeList(id);
+      this.clearWatchlist(id);
+    }
+    const selected = this.getSelectedXtreamAccountId();
+    if (selected && accountIds.indexOf(selected) >= 0) remove('selectedXtream');
+
+    const watched = userData ? userData.watchedEpisodes : fallbackWatchedEpisodes;
+    const watchedGone = Object.keys(watched).filter(key => accountIds.indexOf(watched[key].accountId) >= 0);
+    const watchedRecords = watchedGone.map(key => watchedKey(watched[key]));
+    for (const key of watchedGone) delete watched[key];
+
+    const picks = userData
+      ? userData.onlineSubPicks
+      : get<Record<string, PickedOnlineSub>>('online_sub_picks', {});
+    const picksGone = Object.keys(picks).filter(accountKey);
+    for (const key of picksGone) delete picks[key];
+
+    const audio = userData ? userData.audioPrefs : get<Record<string, AudioPref>>('audio_prefs', {});
+    const subtitles = userData
+      ? userData.subtitlePrefs
+      : get<Record<string, SubtitlePref>>('subtitle_prefs', {});
+    const offsets = userData
+      ? userData.subtitleOffsets
+      : get<Record<string, number>>('subtitle_offsets', {});
+    const audioGone = Object.keys(audio).filter(prefKey);
+    const subtitlesGone = Object.keys(subtitles).filter(prefKey);
+    const offsetsGone = Object.keys(offsets).filter(prefKey);
+    for (const key of audioGone) delete audio[key];
+    for (const key of subtitlesGone) delete subtitles[key];
+    for (const key of offsetsGone) delete offsets[key];
+
+    const catchup = userData
+      ? userData.catchupProgress
+      : get<Record<string, StoredCatchup>>('catchup_progress', {});
+    const catchupGone = Object.keys(catchup).filter(key => channels.has(catchup[key].channelKey));
+    const catchupRecords = catchupGone.map(key => catchupKey(catchup[key]));
+    for (const key of catchupGone) delete catchup[key];
+
+    const recent = this.getRecentlyWatchedLive();
+    const recentGone = recent.filter(entry => channels.has(entry.channelKey));
+
+    if (userData) {
+      persistUserChanges('playback-progress', [], [...watchedRecords, ...catchupRecords]);
+      if (picksGone.length) persistUserChanges('online-sub-picks', [], picksGone.map(key => `pick:${key}`));
+      const channelState = [
+        ...audioGone.map(key => `audio:${key}`),
+        ...subtitlesGone.map(key => `subtitle:${key}`),
+        ...offsetsGone.map(key => `offset:${key}`),
+      ];
+      if (channelState.length) persistUserChanges('channel-state', [], channelState);
+      if (recentGone.length) {
+        userData.recentlyWatchedLive = userData.recentlyWatchedLive
+          .filter(entry => !channels.has(entry.channelKey));
+        persistUserChanges('recently-watched', [], recentGone.map(entry => `live:${entry.channelKey}`));
+      }
+    } else {
+      if (picksGone.length) set('online_sub_picks', picks);
+      if (audioGone.length) set('audio_prefs', audio);
+      if (subtitlesGone.length) set('subtitle_prefs', subtitles);
+      if (offsetsGone.length) set('subtitle_offsets', offsets);
+      if (catchupGone.length) set('catchup_progress', catchup);
+      if (recentGone.length) {
+        set('recently_watched_live', recent.filter(entry => !channels.has(entry.channelKey)));
+      }
+    }
+
+    const favorites = this.getFavorites();
+    if (favorites.some(key => channels.has(key))) {
+      this.setFavorites(favorites.filter(key => !channels.has(key)));
+    }
+    const custom = this.getChannelCustomization();
+    if (custom && (custom.order.some(key => channels.has(key))
+      || Object.keys(custom.overrides).some(key => channels.has(key)))) {
+      const overrides: ChannelCustomization['overrides'] = {};
+      for (const key of Object.keys(custom.overrides)) {
+        if (!channels.has(key)) overrides[key] = custom.overrides[key];
+      }
+      this.setChannelCustomization({
+        ...custom,
+        overrides,
+        order: custom.order.filter(key => !channels.has(key)),
+      });
+    }
+    const epgOffsets = this.getEpgOffsets();
+    if (epgUrls.some(url => url in epgOffsets)) {
+      for (const url of epgUrls) delete epgOffsets[url];
+      this.setEpgOffsets(epgOffsets);
+    }
+  },
+
   getLiveCategorySnapshot(playlistId: string): XtreamLiveCategorySnapshot | null {
     const all = userData ? userData.liveCategorySnapshots : fallbackLiveCategorySnapshots;
     return all[playlistId] ? cloneValue(all[playlistId]) : null;

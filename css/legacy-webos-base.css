@@ -26,6 +26,8 @@ html.q-scroll-end-padding .playlist-tabs.parental-tabs::after { content: none; }
 html.q-no-flex-gap .live-badge > * + * { margin-left: 6px; }
 html.q-no-flex-gap .loading-container > * + * { margin-top: 24px; }
 html.q-no-flex-gap .reminder-buttons > * + *, html.q-no-flex-gap .catchup-resume-buttons > * + *, html.q-no-flex-gap .confirmation-buttons > * + * { margin-left: 24px; }
+html.q-no-flex-gap .load-progress-row > * + * { margin-left: 20px; }
+html.q-no-flex-gap .sidebar-header > * + * { margin-left: 12px; }
 html.q-no-flex-gap .playlist-tabs > * + * { margin-left: 4px; }
 html.q-no-flex-gap .group-item > * + * { margin-left: 12px; }
 html.q-no-flex-gap .channel-item > * + * { margin-left: 16px; }
@@ -91,7 +93,6 @@ html.q-no-flex-gap .manual-epg-scope > * + * { margin-left: 12px; }
 html.q-no-flex-gap .manual-epg-scope-options > * + * { margin-left: 8px; }
 html.q-no-flex-gap .settings-field > * + * { margin-top: 6px; }
 html.q-no-flex-gap .dropdown-trigger > * + * { margin-left: 12px; }
-html.q-no-flex-gap .settings-actions > * + * { margin-left: 16px; }
 html.q-no-flex-gap .setup-box-info > * + * { margin-top: 16px; }
 html.q-no-flex-gap .device-setup-card > * + * { margin-left: 24px; margin-top: 0; }
 html.q-no-flex-gap #playlist-entries .settings-row > * + * { margin-left: 12px; }
@@ -120,6 +121,12 @@ html.q-no-flex-gap .reminder-day-cards > * + * { margin-top: 12px; }
 }
 html.q-no-flex-gap .reminder-manager-time > * + * { margin-left: 10px; }
 html.q-no-flex-gap .reminder-manager-empty > * + * { margin-top: 12px; }
+html.q-no-flex-gap .recordings-list > * + * { margin-top: 12px; }
+html.q-no-flex-gap .recordings-row > * + * { margin-left: 16px; }
+html.q-no-flex-gap .recordings-play > * + * { margin-left: 24px; }
+html.q-no-flex-gap .recordings-meta > * + * { margin-left: 22px; }
+html.q-no-flex-gap .recordings-delete > * + * { margin-left: 10px; }
+html.q-no-flex-gap .recordings-empty > * + * { margin-top: 12px; }
 html.q-no-flex-gap .tab-bar-inner > * + * { margin-left: 48px; }
 html.q-no-flex-gap .search-list > * + * { margin-top: 8px; }
 html.q-no-flex-gap .search-channel-row > * + * { margin-left: 24px; }

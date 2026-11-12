@@ -297,7 +297,7 @@ for (const drm of [
       __shakaE2E: { loadedUrl: string };
     }).__shakaE2E.loadedUrl.length > 0);
     await page.evaluate(() =>
-      document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 405, bubbles: true })));
+      document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 406, bubbles: true })));
     const pills = page.locator('#player-osd .osd-stream-info');
     await expect(pills).not.toContainText(drm.label);
     await page.evaluate(() => (window as unknown as {
@@ -402,7 +402,7 @@ test('configures Widevine and forwards license headers to Shaka', async ({ page 
   expect(state.licenseHeaders).toEqual({ authorization: 'Bearer token' });
 
   await page.evaluate(() =>
-    document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 405, bubbles: true })));
+    document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 406, bubbles: true })));
   await expect(page.locator('#player-osd .osd-stream-info')).toContainText('Widevine');
 });
 
@@ -538,7 +538,7 @@ test.describe('PlayReady native webOS contract (no browser decryption)', () => {
         const first = await playReadyProbe(page);
         expect(first.calls.map(call => call.method)).toEqual(['load', 'getRightsError', 'sendDrmMessage']);
         expect(first.calls.every(call => call.source === null)).toBe(true);
-        expect(first.calls[0].parameters).toEqual({ drmType: 'playready', appId: 'com.lennylxx.iptv' });
+        expect(first.calls[0].parameters).toEqual({ drmType: 'playready', appId: 'com.ikhaled.iptv' });
         expect(first.calls[1].parameters).toEqual({ clientId: 'client-1', subscribe: true });
         expect(first.calls[2].parameters).toMatchObject({
           clientId: 'client-1', msgType: 'application/vnd.ms-playready.initiator+xml',
@@ -547,7 +547,7 @@ test.describe('PlayReady native webOS contract (no browser decryption)', () => {
         expect(first.calls[2].parameters.msg).toContain('<LA_URL>http://host/license?a=1&amp;b=2</LA_URL>');
         await expect(page.locator('#video-player source')).toHaveCount(0);
         await page.evaluate(() =>
-          document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 405, bubbles: true })));
+          document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 406, bubbles: true })));
         await expect(page.locator('#player-osd')).not.toContainText('PlayReady');
         await finishPlayReadyRequest(page);
         if (customData) {
@@ -567,7 +567,7 @@ test.describe('PlayReady native webOS contract (no browser decryption)', () => {
         await expect(page.locator('#video-player source')).toHaveAttribute('src', DASH_URL);
         await expect(page.locator('#video-player source')).toHaveAttribute('type', protectedType);
         await page.evaluate(() =>
-          document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 405, bubbles: true })));
+          document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 406, bubbles: true })));
         await expect(page.locator('#player-osd .osd-stream-info')).toContainText('PlayReady');
         await page.keyboard.press('Escape');
         await expect(page.locator('#view-channels')).toBeVisible();
@@ -627,7 +627,7 @@ test.describe('PlayReady native webOS contract (no browser decryption)', () => {
       await expect(page.locator('#video-player source')).toHaveAttribute('type',
         'video/mp4;mediaOption=' + encodeURIComponent(JSON.stringify({ mediaTransportType: 'MPEG-DASH' })));
       await page.evaluate(() =>
-        document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 405, bubbles: true })));
+        document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 406, bubbles: true })));
       await expect(page.locator('#player-osd')).not.toContainText('PlayReady');
       await page.keyboard.press('Escape');
     });

@@ -59,6 +59,8 @@ function snapshot(overrides: Partial<PlayerOsdSnapshot> = {}): PlayerOsdSnapshot
     vodTitle: null,
     vodHasNext: false,
     vodInIntro: false,
+    vodHasInfo: false,
+    vodHasEpisodes: false,
     upNextSeconds: 0,
     dvr: null,
     nowPlaying: null,
@@ -94,16 +96,18 @@ describe('PlayerOsd', () => {
     callbacks = {
       getSnapshot: () => state,
       canAutoReveal: () => true,
+      isCovered: () => false,
       canSeek: () => true,
       onSeekFraction: vi.fn(),
       onPauseToggle: vi.fn(),
       onGoLive: vi.fn(),
-      onResync: vi.fn(),
       onPlayNext: vi.fn(),
       onCancelNext: vi.fn(),
       onSeekStep: vi.fn(),
       onNextEpisode: vi.fn(),
       onSkipIntro: vi.fn(),
+      onShowInfo: vi.fn(),
+      onShowEpisodes: vi.fn(),
       onOpenMenu: vi.fn(),
       onSurfaceClick: vi.fn(),
     };
@@ -210,7 +214,6 @@ describe('PlayerOsd', () => {
     osd.render();
     expect(container.textContent).toContain('Programme 3');
     expect(container.querySelector('[data-seekbar]')).not.toBeNull();
-    expect(container.querySelector('[data-resync]')).not.toBeNull();
     expect(container.querySelector('[data-menu]')).toBeNull();
 
     state = snapshot({ playback: playback(120, 30), channel: null, vodTitle: 'Video 1' });
@@ -302,15 +305,6 @@ describe('PlayerOsd', () => {
     }));
     expect(callbacks.onPauseToggle).toHaveBeenCalledOnce();
 
-    const resync = container.querySelector('[data-resync]') as HTMLElement;
-    resync.getBoundingClientRect = () => rect(600, 10, 30, 30);
-    container.dispatchEvent(new MouseEvent('click', {
-      bubbles: true,
-      clientX: 610,
-      clientY: 20,
-    }));
-    expect(callbacks.onResync).toHaveBeenCalledOnce();
-
     state = snapshot({
       playback: playback(120, 30),
       channel: null,
@@ -342,7 +336,7 @@ describe('PlayerOsd', () => {
 
     state = { ...state, vodHasNext: true };
     osd.render();
-    expect(root.querySelector('[data-next-episode]')?.textContent).toContain('Next episode');
+    expect(root.querySelector('[data-next-episode]')?.getAttribute('aria-label')).toBe('Next episode');
 
     state = snapshot();
     osd.render();

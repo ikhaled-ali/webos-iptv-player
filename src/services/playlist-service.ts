@@ -64,6 +64,11 @@ export interface PlaylistLoadProgress {
   inputBytes: number;
   channelsProcessed: number;
   channelsKept: number;
+  // The current source's Live catalog size (Xtream) and the channels it kept so far.
+  expectedChannels?: number;
+  sourceChannelsKept?: number;
+  // The response length for an M3U source, when the server sends one.
+  totalBytes?: number;
 }
 
 export interface LiveCategoryNotice {
@@ -172,8 +177,53 @@ class PlaylistServiceImpl {
     return !!source.id && this.loadedSources.get(source.id) === sourceContentKey(source);
   }
 
-  async refreshSource(id: string): Promise<Channel[]> {
-    const result = await this.refresh(undefined, { sourceId: id, preserveOnFailure: true });
+  /**
+   * Drop removed sources from memory at once. Returns the channels and guide
+   * URLs only they carried; a channel another source shares stays.
+   */
+  removeSources(ids: string[]): { channels: Channel[]; epgUrls: string[] } {
+    const gone = new Set(ids);
+    const removed = { channels: [] as Channel[], epgUrls: [] as string[] };
+    const touches = (playlistIds: string[]) => playlistIds.some(id => gone.has(id));
+    for (const id of ids) {
+      this.loadedSources.delete(id);
+      this.failedSourceIds.delete(id);
+    }
+    this.liveCategoryNotices = this.liveCategoryNotices.filter(notice => !gone.has(notice.playlistId));
+    if (!this.allChannels.some(channel => touches(channel.playlistIds))
+      && !this.epgSources.some(source => touches(source.playlistIds))) return removed;
+    const channels: Channel[] = [];
+    for (const channel of this.allChannels) {
+      if (!touches(channel.playlistIds)) {
+        channels.push(channel);
+        continue;
+      }
+      const playlistIds = channel.playlistIds.filter(id => !gone.has(id));
+      if (playlistIds.length) channels.push({ ...channel, playlistIds });
+      else removed.channels.push(channel);
+    }
+    const epgSources: EpgSource[] = [];
+    for (const source of this.epgSources) {
+      if (!touches(source.playlistIds)) {
+        epgSources.push(source);
+        continue;
+      }
+      const playlistIds = source.playlistIds.filter(id => !gone.has(id));
+      if (playlistIds.length) epgSources.push({ ...source, playlistIds });
+      else removed.epgUrls.push(source.url);
+    }
+    this.allChannels = channels;
+    this.epgSources = epgSources;
+    this.applyCustomization();
+    this.buildPlaylistTabs();
+    return removed;
+  }
+
+  async refreshSource(
+    id: string,
+    onProgress?: (progress: PlaylistLoadProgress) => void,
+  ): Promise<Channel[]> {
+    const result = await this.refresh(onProgress, { sourceId: id, preserveOnFailure: true });
     if (this.failedSourceIds.has(id)) throw new Error('Account refresh failed');
     return result;
   }
@@ -484,6 +534,10 @@ class PlaylistServiceImpl {
                 inputBytes: progress.inputBytes,
                 channelsProcessed: completedProcessed + sourceProcessed,
                 channelsKept: completedKept + sourceKept,
+                ...(xtreamCatalogAvailable && xtreamReferences?.length
+                  ? { expectedChannels: xtreamReferences.length, sourceChannelsKept: sourceKept }
+                  : {}),
+                ...(progress.totalBytes ? { totalBytes: progress.totalBytes } : {}),
               });
             },
             xtreamGroupFilter,
@@ -682,6 +736,23 @@ class PlaylistServiceImpl {
     const currentSources = StorageService.getPlaylists().filter(isSourceEnabled);
     this.loadedSources = new Map(Array.from(this.loadedSources)
       .filter(([id, key]) => currentSources.some(source => source.id === id && sourceContentKey(source) === key)));
+    // A source removed or turned off while this load ran must not come back with it.
+    const current = new Set(currentSources.map(source => source.id));
+    const stale = (playlistIds: string[]) => playlistIds.some(id => !current.has(id));
+    if (allChannels.some(channel => stale(channel.playlistIds))) {
+      allChannels = allChannels
+        .map(channel => stale(channel.playlistIds)
+          ? { ...channel, playlistIds: channel.playlistIds.filter(id => current.has(id)) }
+          : channel)
+        .filter(channel => channel.playlistIds.length > 0);
+    }
+    if (epgSources.some(source => stale(source.playlistIds))) {
+      epgSources = epgSources
+        .map(source => stale(source.playlistIds)
+          ? { ...source, playlistIds: source.playlistIds.filter(id => current.has(id)) }
+          : source)
+        .filter(source => source.playlistIds.length > 0);
+    }
     this.allChannels = allChannels;
     this.epgSources = epgSources;
     // Customization preserves source names/groups on each channel, so cached

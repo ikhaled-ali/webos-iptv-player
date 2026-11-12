@@ -80,17 +80,9 @@ body.tabbar-docked #view-epg .epg-view {
   outline: none;
 }
 
-.tab-bar-item.active {
-  color: var(--text-primary);
-}
-
-.tab-bar-item.active:not(.tab-bar-tab) {
-  background-color: var(--active-tint);
-}
-
-.tab-bar-item.active.focused:not(.tab-bar-tab) {
-  background-color: var(--active-tint-focused);
-  background-image: none;
+.tab-bar-item.active,
+.tab-bar-item.active.focused {
+  color: var(--active-text);
 }
 
 .tab-bar-item.focused,
@@ -98,8 +90,8 @@ html:not(.keyboard-nav) .tab-bar-item:hover {
   color: var(--text-primary);
 }
 
-/* A text tab: glyph beside the label. The current section sits on the same
-   light pill as focus, which grows stronger when it is focused too. */
+/* A text tab: glyph beside the label. The pill marks focus only; the
+   current section is marked by its accent glyph alone. */
 .tab-bar-tab {
   position: relative;
   display: inline-flex;
@@ -109,7 +101,8 @@ html:not(.keyboard-nav) .tab-bar-item:hover {
   z-index: 0; /* keeps the tint behind the label and above the bar */
 }
 
-/* The tint reaches 14px past the label on each side without moving it. */
+/* The tint reaches 18px past the label on each side without moving it;
+   the round ends need the extra room. */
 .tab-bar-tab.focused {
   background-image: none;
 }
@@ -118,26 +111,16 @@ html:not(.keyboard-nav) .tab-bar-item:hover {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -14px;
-  right: -14px;
+  left: -18px;
+  right: -18px;
   z-index: -1;
-  border-radius: 10px;
+  border-radius: 999px; /* fully round ends, like the icon circles */
   background-image: var(--focus-layer);
 }
 
 html:not(.keyboard-nav) .tab-bar-tab:hover::before,
-.tab-bar-tab.focused::before,
-.tab-bar-tab.active::before {
+.tab-bar-tab.focused::before {
   content: '';
-}
-
-.tab-bar-tab.active::before {
-  background-color: var(--active-tint);
-  background-image: none;
-}
-
-.tab-bar-tab.active.focused::before {
-  background-color: var(--active-tint-focused);
 }
 
 /* The logo gets 60px on each side: the bar's left padding before it, the
@@ -147,7 +130,7 @@ html:not(.keyboard-nav) .tab-bar-tab:hover::before,
 }
 
 .tab-bar-brand + .tab-bar-tab::before {
-  left: -2px;
+  left: -6px;
 }
 
 .tab-bar-tab-icon {
@@ -162,6 +145,14 @@ html:not(.keyboard-nav) .tab-bar-tab:hover::before,
   display: block;
   width: 100%;
   height: 100%;
+}
+
+/* The current section: its glyph alone takes the accent, the label stays.
+   The mic takes it while it listens. */
+.tab-bar-tab.active .tab-bar-tab-icon,
+.tab-bar-icon.active,
+.tab-bar-icon.listening {
+  color: var(--accent);
 }
 
 /* No overflow clip: it would cut the magnifier's focus glow. */
@@ -378,4 +369,22 @@ html:not(.keyboard-nav) .tab-bar-icon:hover,
   body.tabbar-docked .catalog-rails-body {
     padding-top: 136px;
   }
+}
+
+/* Hangs 12px under the bar (the 52px mic sits 22px above the bar's edge)
+   while the mic listens, styled like the account menu. */
+.tab-bar-voice-tip {
+  position: absolute;
+  top: calc(100% + 34px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 12px 20px;
+  white-space: nowrap;
+  font-size: 22px;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
 }

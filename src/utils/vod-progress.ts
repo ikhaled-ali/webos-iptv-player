@@ -26,6 +26,15 @@ export function latestPerSeries(entries: ResumeEntry[]): ResumeEntry[] {
   });
 }
 
+/** A queue as it is stored: details stay in memory only. */
+export function storedQueue(queue: VodQueueItem[] | undefined): VodQueueItem[] | undefined {
+  return queue?.map(item => {
+    const copy = { ...item };
+    delete copy.details;
+    return copy;
+  });
+}
+
 /** The Continue Watching entry for the episode after a finished one. */
 export function upNextResume(next: VodQueueItem, remaining: VodQueueItem[], ext: string): ResumeEntry {
   return {
@@ -38,7 +47,7 @@ export function upNextResume(next: VodQueueItem, remaining: VodQueueItem[], ext:
     position: 0,
     duration: 0,
     updatedAt: Date.now(),
-    episodeQueue: remaining,
+    episodeQueue: storedQueue(remaining),
     watchlistOwner: next.watchlistOwner,
     categoryId: next.categoryId,
     subtitles: next.subtitles,

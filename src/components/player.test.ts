@@ -253,6 +253,7 @@ afterEach(() => {
   Focus.uninstall();
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 const bar = () => container.querySelector('.osd-progress-bar') as HTMLElement;
@@ -483,63 +484,41 @@ describe('Player catch-up pause/play', () => {
     expect(video.paused).toBe(true);
   });
 
-  it('resyncAV seeks backward by RESYNC_SEEK_BACK to force a pipeline re-lock', () => {
-    player.seekBy(60);
-    player.resyncAV();
-    expect(video.currentTime).toBe(60 - CONFIG.PLAYER.RESYNC_SEEK_BACK);
-  });
-
-  it('resyncAV clamps the seek target at 0', () => {
-    video.currentTime = 0.3;
-    player.resyncAV();
-    expect(video.currentTime).toBe(0);
-  });
-
-  it('resyncAV debounces while a resync is already in flight', () => {
-    player.seekBy(60);
-    player.resyncAV();            // → 59.5, now resyncing
-    expect(video.currentTime).toBe(60 - CONFIG.PLAYER.RESYNC_SEEK_BACK);
-    video.currentTime = 100;      // pretend playback advanced
-    player.resyncAV();            // no-op while resyncing
-    expect(video.currentTime).toBe(100);
-  });
-
-  it('shows a Resyncing… message and clears it once playback resumes', () => {
-    const osd = container.querySelector('#player-osd')!;
-    player.resyncAV();
-    expect(osd.textContent).toContain('Resyncing');
-    video.dispatchEvent(new Event('playing'));
-    expect(osd.textContent).not.toContain('Resyncing');
-  });
-
-  it('a pointer click on the resync control seeks backward', () => {
-    player.seekBy(60);
-    const btn = container.querySelector('[data-resync]') as HTMLElement;
-    btn.getBoundingClientRect = () => ({ left: 900, right: 932, width: 32, top: 0, bottom: 32 }) as DOMRect;
-    container.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 916, clientY: 16 }));
-    expect(video.currentTime).toBe(60 - CONFIG.PLAYER.RESYNC_SEEK_BACK);
-  });
 });
 
 describe('Player OSD menu button', () => {
-  it('opens the player menu with OK from the ring, taking the OSD down', () => {
-    const open = vi.fn();
-    player.setMenuOpener(open);
-    player.play(0, CATCHUP);
-    player.handleAction('left'); // ring to the bar
+  // Only the movie/episode controls carry the menu button.
+  const vod = () => ({
+    url: 'http://host:8080/movie/u/p/10.mp4', title: 'Movie One', poster: '',
+    accountId: 'x1', itemId: '10', kind: 'vod' as const, resumeSecs: 0, subtitles: [], onBack: vi.fn(),
+  });
+
+  it('opens the player menu with OK from the ring, keeping the controls up under it', () => {
+    let menuOpen = false;
+    const open = vi.fn(() => { menuOpen = true; });
+    player.setMenuOpener(open, () => menuOpen);
+    player.playVod(vod());
     player.handleAction('down'); // play/pause
-    player.handleAction('right'); // resync
+    player.handleAction('right'); // forward
     player.handleAction('right'); // menu
     expect(container.querySelector('[data-menu]')!.classList.contains('focused')).toBe(true);
     player.handleAction('select');
     expect(open).toHaveBeenCalledTimes(1);
-    expect(container.querySelector('#player-osd')!.classList.contains('hidden')).toBe(true);
+    const osd = container.querySelector('#player-osd')!;
+    vi.advanceTimersByTime(10_000);
+    expect(osd.classList.contains('hidden')).toBe(false);
+
+    menuOpen = false;
+    player.panelClosed();
+    expect(container.querySelector('[data-menu]')!.classList.contains('focused')).toBe(true);
+    vi.advanceTimersByTime(10_000);
+    expect(osd.classList.contains('hidden')).toBe(true);
   });
 
   it('opens the player menu on a pointer click', () => {
     const open = vi.fn();
     player.setMenuOpener(open);
-    player.play(0, CATCHUP);
+    player.playVod(vod());
     const btn = container.querySelector('[data-menu]') as HTMLElement;
     btn.getBoundingClientRect = () => ({ left: 950, right: 994, width: 44, top: 0, bottom: 44 }) as DOMRect;
     container.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 970, clientY: 20 }));
@@ -639,6 +618,8 @@ describe('Player catch-up completion', () => {
     container.appendChild(realVideo);
     player.init(realVideo);
     playlistMock.getByIndex.mockReturnValue(XTREAM_CHANNEL);
+    // A `playing` while the prebuffer hold is up is not playback yet.
+    vi.spyOn(PlayerPipeline.prototype, 'isPrebuffering').mockReturnValue(false);
 
     player.play(0, CATCHUP);
     await flush();
@@ -765,7 +746,7 @@ describe('Player live playback', () => {
     expect(reload).not.toHaveBeenCalled();
   });
 
-  it('red switches player and green retries without changing the selected channel', () => {
+  it('green switches player and yellow reloads without changing the selected channel', () => {
     vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('webOS');
     vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
     vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {});
@@ -776,11 +757,11 @@ describe('Player live playback', () => {
     player.play(0);
     playlistMock.getByIndex.mockClear();
     const initial = container.querySelector('video');
-    player.handleAction('red');
+    player.handleAction('green');
     const switched = container.querySelector('video');
     expect(switched).not.toBe(initial);
     expect(container.querySelector('.player-status-engine')?.textContent).toBe('hls.js');
-    player.handleAction('green');
+    player.handleAction('yellow');
     expect(container.querySelector('video')).not.toBe(switched);
     expect(load.mock.calls.map(call => call[0])).toEqual([CHANNEL.url, CHANNEL.url, CHANNEL.url]);
     expect(player.getCurrentIndex()).toBe(0);
@@ -820,7 +801,7 @@ describe('Player live playback', () => {
     expect(playlistMock.getByIndex).not.toHaveBeenCalled();
 
     const first = container.querySelector('video')!;
-    expect(container.querySelector('.player-status-detail')?.textContent).toContain('ERR_CONNECTION_RESET');
+    expect(container.querySelector('.player-status-detail')?.textContent).not.toContain('ERR_CONNECTION_RESET');
     expect(container.querySelector('.player-status-detail')?.textContent).toContain('Attempt 1');
     first.dispatchEvent(new Event('error'));
     first.dispatchEvent(new Event('error'));
@@ -863,7 +844,7 @@ describe('Player live playback', () => {
     expect(container.querySelector('#player-osd')?.textContent).not.toContain('Reconnecting');
   });
 
-  it('honors a disabled retry limit and skips reconnect for unsupported sources', async () => {
+  it('honors a disabled retry limit', async () => {
     playlistMock.channels = [{}, {}];
     vi.mocked(StorageService.getLiveReconnectAttempts).mockReturnValueOnce(0);
     player.play(0);
@@ -872,28 +853,77 @@ describe('Player live playback', () => {
     vi.advanceTimersByTime(2000);
     expect(healthMock.recordPlaybackFailure).toHaveBeenCalledWith(CHANNEL, 'playback_error');
     expect(container.querySelector('video')).toBeNull();
-
-    player.play(0);
-    Object.defineProperty(video, 'error', { configurable: true, value: { code: 4, message: '' } });
-    healthMock.recordPlaybackFailure.mockClear();
-    video.dispatchEvent(new Event('error'));
-    expect(healthMock.recordPlaybackFailure).toHaveBeenCalledOnce();
   });
 
-  it('keeps the selected channel after an unsupported-source error', async () => {
-    playlistMock.channels = [{}, {}];
-    player.play(0);
-    await flush();
-    playlistMock.getByIndex.mockClear();
-    Object.defineProperty(video, 'error', { configurable: true, value: { code: 4, message: '' } });
-    video.dispatchEvent(new Event('error'));
-    video.dispatchEvent(new Event('error'));
-    vi.advanceTimersByTime(30_000);
-    expect(healthMock.recordPlaybackFailure).toHaveBeenCalledOnce();
-    expect(container.querySelector('.player-status-detail')?.textContent).toContain('MEDIA_ERR_SRC_NOT_SUPPORTED');
-    expect(playlistMock.getByIndex).not.toHaveBeenCalled();
-    expect(player.getCurrentIndex()).toBe(0);
-    expect(player.getCurrentChannel()).toBe(CHANNEL);
+  describe('unsupported live streams', () => {
+    let load: { mockRestore(): void };
+    afterEach(() => load.mockRestore());
+    beforeEach(() => {
+      load = vi.spyOn(PlayerPipeline.prototype, 'load').mockImplementation(() => {});
+      HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+      HTMLMediaElement.prototype.pause = vi.fn();
+      HTMLMediaElement.prototype.load = vi.fn();
+      video = document.createElement('video');
+      container.appendChild(video);
+      player.init(video);
+    });
+    const failUnsupported = (detail = ''): HTMLVideoElement => {
+      const el = container.querySelector('video')!;
+      Object.defineProperty(el, 'error', { configurable: true, value: { code: 4, message: detail } });
+      el.dispatchEvent(new Event('error'));
+      return el;
+    };
+    const statusState = () => container.querySelector('.player-status')?.getAttribute('data-state');
+    const engine = () => container.querySelector('.player-status-engine')?.textContent;
+
+    it('switches to the next player, then shows the error once every player failed', async () => {
+      playlistMock.channels = [{}, {}];
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      player.play(0);
+      await flush();
+      playlistMock.getByIndex.mockClear();
+
+      // An extensionless stream allows all three players, whichever starts.
+      const tried = [engine()];
+      const first = failUnsupported('first player');
+      expect(container.querySelector('video')).not.toBe(first);
+      tried.push(engine());
+      expect(statusState()).toBe('reconnecting');
+      expect(container.querySelector('.player-status-detail')).toBeNull();
+      expect(healthMock.recordPlaybackFailure).not.toHaveBeenCalled();
+      const line = warn.mock.calls.map(args => args.join(' '))
+        .find(l => l.includes('event=playback.player.fallback'));
+      expect(line).toContain(`from=${tried[0]} to=${tried[1]}`);
+      warn.mockRestore();
+
+      failUnsupported('second player');
+      tried.push(engine());
+      expect(statusState()).toBe('reconnecting');
+      expect(new Set(tried).size).toBe(3);
+
+      const last = failUnsupported('last player');
+      expect(container.querySelector('video')).toBe(last);
+      expect(statusState()).toBe('error');
+      expect(container.querySelector('.player-status-detail')?.textContent).toContain('last player');
+      vi.advanceTimersByTime(30_000);
+      expect(healthMock.recordPlaybackFailure).toHaveBeenCalledOnce();
+      expect(healthMock.recordPlaybackFailure).toHaveBeenCalledWith(CHANNEL, 'playback_error');
+      expect(playlistMock.getByIndex).not.toHaveBeenCalled();
+      expect(player.getCurrentChannel()).toBe(CHANNEL);
+    });
+
+    it('tries every player again when the same channel is replayed', async () => {
+      player.play(0);
+      await flush();
+      for (let i = 0; i < 3; i++) failUnsupported();
+      expect(statusState()).toBe('error');
+
+      player.play(0);
+      await flush();
+      const replayed = failUnsupported();
+      expect(container.querySelector('video')).not.toBe(replayed);
+      expect(statusState()).toBe('reconnecting');
+    });
   });
 
   it('keeps the selected channel when a stall exhausts a disabled reconnect budget', async () => {
@@ -1067,13 +1097,6 @@ describe('Player live DVR', () => {
   it('is seekable within the window and shows a seek bar', () => {
     expect(player.canSeek()).toBe(true);
     expect(container.querySelector('[data-seekbar]')).not.toBeNull();
-  });
-
-  it('resyncAV is a no-op on live (no finite decode to re-lock)', () => {
-    expect(live.currentTime).toBe(60);
-    player.resyncAV();
-    expect(live.currentTime).toBe(60);
-    expect(container.querySelector('[data-resync]')).toBeNull();
   });
 
   it('Left on the focused bar rewinds by the step, moving the bar', () => {
@@ -1431,15 +1454,6 @@ describe('Player VOD mode', () => {
     expect(player.getPlaybackRateState()).toEqual({ available: true, rate: 1 });
   });
 
-  it('resyncAV seeks backward by RESYNC_SEEK_BACK on VOD', () => {
-    const video = fakeVideo(3600);
-    player.init(video);
-    player.playVod(req());
-    video.currentTime = 900;
-    player.resyncAV();
-    expect(video.currentTime).toBe(900 - CONFIG.PLAYER.RESYNC_SEEK_BACK);
-  });
-
   it('renders the VOD OSD through the Live markup (title + stream info, no .osd-vod)', () => {
     const video = fakeVideo(3600);
     (video as unknown as { videoHeight: number }).videoHeight = 1080;
@@ -1476,6 +1490,9 @@ describe('Player VOD mode', () => {
     player.playVod(r);
     video.dispatchEvent(new Event('loadedmetadata'));
     video.currentTime = 1200;
+    player.handleAction('back'); // takes the controls down
+    expect(container.querySelector('#player-osd')!.classList.contains('hidden')).toBe(true);
+    expect(r.onBack).not.toHaveBeenCalled();
     player.handleAction('back');
     expect(StorageService.setResume).toHaveBeenCalledWith(expect.objectContaining({ itemId: '10', position: 1200, duration: 3600, ext: 'mp4' }));
     expect(r.onBack).toHaveBeenCalled();
@@ -1496,6 +1513,7 @@ describe('Player VOD mode', () => {
       watchlistOwner: { kind: 'series', itemId: 's1' },
     }));
     video.currentTime = 300;
+    player.handleAction('back'); // takes the controls down
     player.handleAction('back');
     expect(StorageService.setResume).toHaveBeenCalledWith(expect.objectContaining({
       itemId: 'e1',
@@ -1735,9 +1753,13 @@ describe('Player VOD mode', () => {
     expect(statusText()).toContain('Playback error.');
     expect(container.querySelector('[data-vod-retry], [data-vod-exit]')).toBeNull();
 
-    vi.advanceTimersByTime(30_000); // ten retries, each failing again
+    vi.advanceTimersByTime(CONFIG.PLAYER.VOD_RETRY_INTERVAL_MS);
+    expect(vodFailed()).toBe(false); // the retry clears the old error
+    fail(currentVideo());
+    vi.advanceTimersByTime(30_000);
     expect(r.onBack).not.toHaveBeenCalled();
     expect(player.isVod()).toBe(true);
+    fail(currentVideo());
     expect(vodFailed()).toBe(true);
     expect(playlistMock.getByIndex).not.toHaveBeenCalled(); // no channel playback
 
@@ -1778,12 +1800,13 @@ describe('Player VOD mode', () => {
 
     video.duration = 3600; // known later, as some progressive streams report it
     video.currentTime = 40;
+    player.handleAction('back'); // takes the controls down
     player.handleAction('back');
 
     expect(StorageService.setResume).toHaveBeenLastCalledWith(expect.objectContaining({ position: 40, duration: 3600 }));
   });
 
-  it('retries a failed title every few seconds at its last position, keeping the error up until it plays', () => {
+  it('retries a failed title every few seconds at its last position, clearing the error while it reloads', () => {
     const video = mediaVideo(3600);
     player.init(video);
     player.playVod(req());
@@ -1807,7 +1830,9 @@ describe('Player VOD mode', () => {
 
     const fresh = mediaVideo(3600);
     expect(fresh).not.toBe(video);
-    expect(vodFailed()).toBe(true); // still up while the reload loads
+    expect(vodFailed()).toBe(false);
+    expect(container.querySelector('.player-status')?.getAttribute('data-state')).toBe('reconnecting');
+    expect(container.querySelector('.player-status-detail')).toBeNull();
     fresh.dispatchEvent(new Event('loadedmetadata'));
     expect(fresh.currentTime).toBe(1200);
     expect(player.isVod()).toBe(true);
@@ -1938,6 +1963,62 @@ describe('Player VOD mode', () => {
     expect(label()).toBe('Play');
   });
 
+  it('keeps the controls up under Title Info and gives the ring back to Info when it closes', () => {
+    container.insertAdjacentHTML('beforeend', '<div id="vod-info" class="side-panel hidden"></div>');
+    const video = fakeVideo(3600);
+    player.init(video);
+    player.playVod(req({ details: {
+      title: 'Movie One', context: '', plot: 'Plot 1', genre: '', year: '', rating: '',
+      durationSecs: 0, cast: '', director: '',
+    } }));
+    player.handleAction('down'); // play/pause
+    player.handleAction('right'); // forward
+    player.handleAction('right'); // info
+    expect(container.querySelector('[data-info]')!.classList.contains('focused')).toBe(true);
+    player.handleAction('select');
+    expect(Focus.owner()?.id).toBe('player.title_info');
+    const osd = container.querySelector('#player-osd')!;
+    vi.advanceTimersByTime(10_000);
+    expect(osd.classList.contains('hidden')).toBe(false);
+
+    expect(Focus.owner()?.handle('back')).toBe(true);
+    expect(Focus.owner()?.id).toBe('player.controls');
+    expect(container.querySelector('[data-info]')!.classList.contains('focused')).toBe(true);
+    vi.advanceTimersByTime(10_000);
+    expect(osd.classList.contains('hidden')).toBe(true);
+  });
+
+  it('never scrolls the player view to reveal Title Info as it slides in', () => {
+    const scroll = vi.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scroll;
+    // The panel starts off-screen to the right, mid-slide.
+    const rects = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return (this.classList.contains('vod-info-card')
+        ? { left: 1960, right: 2480, top: 0, bottom: 1080, width: 520, height: 1080 }
+        : { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 }) as DOMRect;
+    });
+    try {
+      container.insertAdjacentHTML('beforeend', '<div id="vod-info" class="side-panel hidden"></div>');
+      const video = fakeVideo(3600);
+      player.init(video);
+      player.playVod(req({ details: {
+        title: 'Movie One', context: '', plot: 'Plot 1', genre: '', year: '', rating: '',
+        durationSecs: 0, cast: '', director: '',
+      } }));
+      player.handleAction('down'); // play/pause
+      player.handleAction('right'); // forward
+      player.handleAction('right'); // info
+      player.handleAction('select');
+      Focus.flush();
+      expect(Focus.owner()?.id).toBe('player.title_info');
+      expect(scroll).not.toHaveBeenCalled();
+    } finally {
+      rects.mockRestore();
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
   it('shows the controls with Up or Down without pausing', () => {
     const video = fakeVideo(3600);
     player.init(video);
@@ -1971,10 +2052,10 @@ describe('Player VOD mode', () => {
       vi.mocked(StorageService.setResume).mockClear();
       vi.mocked(probeMedia).mockClear();
       try {
-        expect(container.querySelector('[data-next-episode]')?.textContent).toContain('Next episode');
+        expect(container.querySelector('[data-next-episode]')?.getAttribute('aria-label')).toBe('Next episode');
         player.handleAction('down');
         expect(Focus.owner()?.id).toBe('player.controls');
-        for (let i = 0; i < 4; i++) player.handleAction('right'); // forward, resync, menu, next
+        for (let i = 0; i < 3; i++) player.handleAction('right'); // forward, menu, next
         expect(container.querySelector('[data-next-episode]')!.classList.contains('focused')).toBe(true);
 
         player.handleAction('select');
@@ -2100,8 +2181,10 @@ describe('Player VOD mode', () => {
     expect(StorageService.clearResume).not.toHaveBeenCalled();
     expect(StorageService.removeWatchlist).not.toHaveBeenCalled();
     expect(r.onBack).not.toHaveBeenCalled();
-    expect(statusText()).toContain('Reconnecting');
+    expect(vodFailed()).toBe(true);
     expect(StorageService.setResume).toHaveBeenLastCalledWith(expect.objectContaining({ position: 1200 }));
+    vi.advanceTimersByTime(CONFIG.PLAYER.VOD_RETRY_INTERVAL_MS);
+    expect(statusText()).toContain('Reconnecting');
   });
 
   it('saves the resume point periodically while playing', () => {
@@ -2150,6 +2233,7 @@ describe('Player VOD mode', () => {
     vi.mocked(StorageService.setResume).mockClear();
     vi.mocked(StorageService.removeWatchlist).mockClear();
 
+    player.handleAction('back'); // takes the controls down
     player.handleAction('back');
 
     expect(StorageService.clearResume).toHaveBeenCalledWith('x1', 'episode', 'e1');
@@ -2181,6 +2265,7 @@ describe('Player VOD mode', () => {
       video.currentTime = 1790;
       vi.mocked(StorageService.setResume).mockClear();
 
+      player.handleAction('back'); // takes the controls down
       player.handleAction('back');
     } finally {
       vi.mocked(StorageService.getResume).mockImplementation(() => null);
@@ -2308,6 +2393,7 @@ describe('Player VOD mode', () => {
     const r = req();
     player.playVod(r);
     vi.mocked(StorageService.setResume).mockClear();
+    player.handleAction('back'); // takes the controls down
     player.handleAction('back');
     expect(StorageService.setResume).not.toHaveBeenCalled();
     expect(r.onBack).toHaveBeenCalled();
@@ -2512,6 +2598,8 @@ describe('Player catch-up save/restore lifecycle', () => {
     player.play(0, CATCHUP);
     video.currentTime = 70;
     setCatchupProgress().mockClear();
+    player.handleAction('back'); // takes the controls down
+    expect(setCatchupProgress()).not.toHaveBeenCalled();
     player.handleAction('back');
     expect(setCatchupProgress()).toHaveBeenCalledWith(
       expect.objectContaining({ position: 70 }),

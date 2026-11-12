@@ -187,7 +187,7 @@ ares-launch --device tv org.webosbrew.hbchannel -p '{"launchMode":"addRepository
 4. **安装应用。**
 
    ```bash
-   ares-install --device tv ./com.lennylxx.iptv_<version>_all.ipk
+   ares-install --device tv ./com.ikhaled.iptv_<version>_all.ipk
    ```
 
 ## 开发
@@ -220,7 +220,7 @@ Windows 请使用 WSL 2；不支持原生 Windows 环境。
 无需在命令中手动填写密钥或密码短语。
 
 ```bash
-scripts/tv.sh logs --app com.lennylxx.iptv       # 实时查看应用的 DevTools 控制台
+scripts/tv.sh logs --app com.ikhaled.iptv       # 实时查看应用的 DevTools 控制台
 scripts/tv.sh eval 'document.visibilityState'    # 在应用页面中执行 JavaScript
 scripts/tv.sh perf --duration 30                 # 采样 CPU、堆、DOM 和布局
 scripts/tv.sh diag                               # 生成经过脱敏的诊断报告

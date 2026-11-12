@@ -19,6 +19,7 @@ export function seekIcon(direction: 'back' | 'forward', seconds: number): string
 
 // Magnifier (tab bar search).
 export const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg>';
+export const MIC_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><line x1="12" y1="17.5" x2="12" y2="21"/></svg>';
 // Standard eight-tooth gear.
 export const SETTINGS_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M9.62 5.10L10.30 2.35L13.70 2.35L14.38 5.10L15.20 5.44L17.62 3.97L20.03 6.38L18.56 8.80L18.90 9.62L21.65 10.30L21.65 13.70L18.90 14.38L18.56 15.20L20.03 17.62L17.62 20.03L15.20 18.56L14.38 18.90L13.70 21.65L10.30 21.65L9.62 18.90L8.80 18.56L6.38 20.03L3.97 17.62L5.44 15.20L5.10 14.38L2.35 13.70L2.35 10.30L5.10 9.62L5.44 8.80L3.97 6.38L6.38 3.97L8.80 5.44Z"/><circle cx="12" cy="12" r="3.2"/></svg>';
 // Solid section glyphs for the tab bar's text tabs.
@@ -69,14 +70,27 @@ export const AUDIO_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill=
 // Closed-caption card (player menu subtitles row).
 export const SUBTITLE_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zm2 7v2h6v-2H6zm8 0v2h4v-2h-4zM6 8v2h4V8H6zm6 0v2h6V8h-6z"/></svg>';
 
+// Recording dot inside a ring (player menu record row, Recordings tab).
+export const RECORD_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20zm0 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16zm0 3a5 5 0 1 1 0 10 5 5 0 0 1 0-10z"/></svg>';
+// Filled square (player menu stop-recording row).
+export const STOP_RECORD_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20zm0 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM8.5 8.5h7v7h-7z"/></svg>';
+// Two opposed arrows (player menu switch-player row).
+export const SWITCH_PLAYER_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M7 4 2.5 8.5 7 13v-3.5h10v-2H7zm10 7v3.5H7v2h10V20l4.5-4.5z"/></svg>';
+// Circular arrow (player menu reload-stream row).
+export const RELOAD_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z"/></svg>';
+// Stacked bars (player menu quality row).
+export const QUALITY_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M3 17h4v4H3zm7-6h4v10h-4zm7-7h4v17h-4z"/></svg>';
+
 // Replay arrow marking an aired (catch-up) programme in the EPG.
 export const REPLAY_ICON = '<svg class="epg-replay-glyph" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>';
 
-// Sync (two circular arrows) — the player OSD "Resync A/V" button.
-export const RESYNC_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0 0 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74A7.93 7.93 0 0 0 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>';
-
 // Sliders — the player OSD button that opens the player menu.
-export const PLAYER_MENU_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>';
+// The player's Title Info control: an "i" in a ring.
+export const INFO_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6"/><circle cx="12" cy="7.6" r="0.6" fill="currentColor"/></svg>';
+// The player's settings menu: the same gear as the tab bar's Settings.
+export const PLAYER_MENU_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M9.62 5.10L10.30 2.35L13.70 2.35L14.38 5.10L15.20 5.44L17.62 3.97L20.03 6.38L18.56 8.80L18.90 9.62L21.65 10.30L21.65 13.70L18.90 14.38L18.56 15.20L20.03 17.62L17.62 20.03L15.20 18.56L14.38 18.90L13.70 21.65L10.30 21.65L9.62 18.90L8.80 18.56L6.38 20.03L3.97 17.62L5.44 15.20L5.10 14.38L2.35 13.70L2.35 10.30L5.10 9.62L5.44 8.80L3.97 6.38L6.38 3.97L8.80 5.44Z"/><circle cx="12" cy="12" r="3.2"/></svg>';
+export const LIVE_CATEGORIES_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2.5 7.75 12 12.5l9.5-4.75z"/><path d="m2.5 12 9.5 4.75L21.5 12"/><path d="m2.5 16.25 9.5 4.75 9.5-4.75"/></svg>';
+export const EPISODES_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 5.5v1M4 11.5v1M4 17.5v1"/></svg>';
 
 // Reminder bell — dim on a future programme ("OK sets a reminder"), accent once
 // set; the state class drives the fill in CSS.

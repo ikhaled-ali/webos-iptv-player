@@ -25,6 +25,8 @@ export interface M3ULoadProgress {
   channelsProcessed: number;
   channelsKept: number;
   channelsDropped: number;
+  // The response's Content-Length; a compressed body can make it smaller than inputBytes.
+  totalBytes?: number;
 }
 const log = createLogger('M3ULoad');
 const CHANNEL_BATCH_SIZE = 512;
@@ -83,6 +85,7 @@ export async function fetchAndParseM3U(
       channelsProcessed: chunk.channelsEmitted + chunk.channelsDropped,
       channelsKept: chunk.channelsEmitted,
       channelsDropped: chunk.channelsDropped,
+      ...(chunk.totalBytes ? { totalBytes: chunk.totalBytes } : {}),
     });
   };
   let result: M3UWorkerResponse;
@@ -177,6 +180,7 @@ export async function fetchAndParseM3UInWorker(
   );
   let emittedChannels = 0;
   let inputBytes = 0;
+  let totalBytes = 0;
   let chunks = 0;
   let nextProgressBytes = PROGRESS_INTERVAL_BYTES;
   let reportedInputBytes = -1;
@@ -201,6 +205,7 @@ export async function fetchAndParseM3UInWorker(
               chunks,
               channelsEmitted: emittedChannels,
               channelsDropped: liveFilters.getDroppedCount(),
+              ...(totalBytes ? { totalBytes } : {}),
             };
             emitChunk(chunk);
             rememberProgress(chunk);
@@ -217,6 +222,7 @@ export async function fetchAndParseM3UInWorker(
   try {
     const response = await fetch(request.url, { signal: controller.signal });
     if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    totalBytes = contentLength(response);
     stage = 'read';
     reader = typeof response.body?.getReader === 'function'
       ? response.body.getReader()
@@ -293,6 +299,7 @@ export async function fetchAndParseM3UInWorker(
       chunks,
       channelsEmitted: emittedChannels,
       channelsDropped: liveFilters.getDroppedCount(),
+      ...(totalBytes ? { totalBytes } : {}),
     };
     if (force
       && progress.inputBytes === reportedInputBytes
@@ -310,6 +317,14 @@ export async function fetchAndParseM3UInWorker(
     reportedChannelsEmitted = chunk.channelsEmitted;
     reportedChannelsDropped = chunk.channelsDropped;
   }
+}
+
+function contentLength(response: Response): number {
+  const header = typeof response.headers?.get === 'function'
+    ? response.headers.get('content-length')
+    : null;
+  const length = header ? Number(header) : 0;
+  return length > 0 && Number.isFinite(length) ? length : 0;
 }
 
 interface XtreamM3ULiveFilters {

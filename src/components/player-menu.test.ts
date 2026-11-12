@@ -20,13 +20,13 @@ vi.mock('../services/playlist-service', () => ({
   },
 }));
 
-import { PlayerMenu } from './player-menu';
+import { PlayerMenu, type MenuRecordingState } from './player-menu';
 import { Focus } from '../navigation/focus-scope';
 import type { PlaybackRateState } from '../services/playback-rate';
 import type { QualityState } from '../utils/playback-quality';
 
-// Number of colour actions before the "Audio Track" row in the main menu.
-const MENU_ACTIONS = 4;
+// Rows before "Audio Track" in the main menu: the three keyed actions, Quality, Speed.
+const MENU_ACTIONS = 5;
 
 let container: HTMLElement;
 let el: HTMLElement;
@@ -46,6 +46,7 @@ let subtitleSearchAvailable: ReturnType<typeof vi.fn>;
 let openSubtitleSearch: ReturnType<typeof vi.fn>;
 let menu: PlayerMenu;
 let qualityState: QualityState;
+let recordingState: MenuRecordingState;
 let selectQuality: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
@@ -72,6 +73,7 @@ beforeEach(() => {
   subtitleSearchAvailable = vi.fn(() => false);
   openSubtitleSearch = vi.fn();
   qualityState = { options: [], selected: -1, loading: false };
+  recordingState = { available: true, active: false };
   selectQuality = vi.fn((index: number) => { qualityState.selected = index; });
   menu = new PlayerMenu(
     container, getCurrentChannel, onAction,
@@ -81,6 +83,7 @@ beforeEach(() => {
     getPlaybackRateState, selectPlaybackRate,
     subtitleSearchAvailable, openSubtitleSearch,
     () => qualityState, selectQuality,
+    () => recordingState,
   );
 });
 
@@ -146,7 +149,7 @@ describe('PlayerMenu', () => {
   it('renders the action items and the playing channel name on show', () => {
     menu.show();
     expect(menu.visible).toBe(true);
-    expect(items().map(i => i.dataset.menuAction)).toEqual(['red', 'green', 'yellow']);
+    expect(items().map(i => i.dataset.menuAction)).toEqual(['red', 'green', 'yellow', '__quality_open__', '__speed_open__']);
     expect(el.textContent).toContain('Alpha');
     expect(items()[0].classList.contains('focused')).toBe(true);
   });
@@ -173,7 +176,7 @@ describe('PlayerMenu', () => {
       menu.handleAction('up'); // already at 0
       expect(items()[0].classList.contains('focused')).toBe(true);
       for (let i = 0; i < 10; i++) menu.handleAction('down');
-      expect(items()[3].classList.contains('focused')).toBe(true);
+      expect(items()[4].classList.contains('focused')).toBe(true);
     });
 
     it('scrolls only the menu list to reveal the focused row', () => {
@@ -693,9 +696,12 @@ describe('PlayerMenu', () => {
   });
 
   describe('VOD mode (no channel)', () => {
-    beforeEach(() => getCurrentChannel.mockReturnValue(null));
+    beforeEach(() => {
+      getCurrentChannel.mockReturnValue(null);
+      recordingState = { available: false, active: false };
+    });
 
-    it('keeps the Quality color row in VOD mode, without Settings', () => {
+    it('shares the live rows except Record', () => {
       audioTracks = [
         { index: 0, label: 'Track 1', active: true, available: true },
         { index: 1, label: 'Track 2', active: false, available: true },
@@ -703,26 +709,30 @@ describe('PlayerMenu', () => {
       subtitleTracks = [{ index: 0, label: 'Track 1', active: false, available: true }];
       menu.show();
       const actions = items().map(i => i.dataset.menuAction);
-      expect(actions).not.toContain('red');   // Program Guide — no EPG for VOD
-      expect(actions).not.toContain('green');  // Toggle Favorite — channels only
-      expect(actions).toContain('yellow');
-      expect(actions).not.toContain('blue');   // Settings — the Blue key opens it
+      expect(actions).not.toContain('red');
+      expect(actions.slice(0, 3)).toEqual(['green', 'yellow', '__quality_open__']);
       expect(el.textContent).toContain('Quality');
-      expect(el.textContent).not.toContain('Settings');
       expect(el.textContent).toContain('Audio Track');
       expect(el.textContent).toContain('Subtitles');
       expect(el.textContent).not.toContain('Playing:'); // no channel name
     });
 
-    it('still shows Quality even without any tracks', () => {
+    it('opens Quality in place', () => {
       menu.show();
-      expect(items().map(i => i.dataset.menuAction)).toEqual(['yellow']);
+      el.querySelector<HTMLElement>('[data-menu-action="__quality_open__"]')!.click();
+      expect(el.querySelector('h2')?.textContent).toBe('Quality');
+      expect(onAction).not.toHaveBeenCalled();
     });
+  });
 
-    it('selecting Quality emits the color action to the host', () => {
+  describe('recording row', () => {
+    it('offers Stop recording while a recording runs', () => {
+      recordingState = { available: true, active: true };
       menu.show();
-      menu.handleAction('select');
-      expect(onAction).toHaveBeenCalledWith('yellow');
+      const row = el.querySelector<HTMLElement>('[data-menu-action="red"]')!;
+      expect(row.textContent).toContain('Stop recording');
+      row.click();
+      expect(onAction).toHaveBeenCalledWith('red');
     });
   });
 });

@@ -22,11 +22,11 @@ import { StorageService } from '../services/storage-service';
 import { RecentlyWatchedService, type RecentlyWatchedItem } from '../services/recently-watched';
 import { ChannelHealthService } from '../services/channel-health';
 import { groupIcon } from './group-icon';
-import { NAV_HORIZONTAL_ICON, favoriteIcon } from './icons';
+import { LIVE_CATEGORIES_ICON, NAV_HORIZONTAL_ICON, favoriteIcon } from './icons';
 import { backKey, okHint } from './key-hints';
 import { channelLockBadge, liveGroupLockBadge } from './parental-badge';
 import { showToast } from './toast';
-import { getLocale, t, tp, type SupportedLocale } from '../i18n';
+import { getLocale, t, type SupportedLocale } from '../i18n';
 import { ChannelListEditor } from './channel-list-editor';
 import { VirtualList } from '../utils/virtual-list';
 import { VirtualScrollGuard } from '../utils/virtual-scroll';
@@ -65,7 +65,6 @@ export interface ChannelListOptions {
     mode?: ChannelSelectionMode,
   ) => void;
   onChannelsChanged?: () => void;
-  onReloadPlaylists?: () => Promise<void>;
   onEpgMappingChanged?: () => void;
   onEpgOffsetChanged?: () => void;
   onEnterPreview?: () => boolean;
@@ -90,8 +89,8 @@ export class ChannelList {
     mode?: ChannelSelectionMode,
   ) => void;
   private onChannelsChanged: () => void;
-  private onReloadPlaylists?: () => Promise<void>;
-  private reloadingPlaylists = false;
+  // The first load is still running behind a dismissed progress panel.
+  private loadingChannels = false;
   private onEnterPreview: () => boolean;
   private onListFocus: () => void;
   private getPreviewHintState: () => PreviewHintState;
@@ -154,7 +153,6 @@ export class ChannelList {
     const {
       onChannelSelect,
       onChannelsChanged = () => {},
-      onReloadPlaylists,
       onEpgMappingChanged = () => {},
       onEpgOffsetChanged = () => {},
       onEnterPreview = () => false,
@@ -168,7 +166,6 @@ export class ChannelList {
     this.container = container;
     this.onChannelSelect = onChannelSelect;
     this.onChannelsChanged = onChannelsChanged;
-    this.onReloadPlaylists = onReloadPlaylists;
     this.onEnterPreview = onEnterPreview;
     this.onListFocus = onListFocus;
     this.getPreviewHintState = getPreviewHintState;
@@ -228,7 +225,6 @@ export class ChannelList {
       onEpgOffsetChanged,
       getCurrentGroup: () => this.currentGroup,
       getCurrentPlaylist: () => this.currentPlaylist,
-      requestEditMode: group => this.enterEditMode(group),
       rowPosition: key => this.rowPosition(key)?.position ?? -1,
       setLocation: (group, playlist) => {
         this.currentGroup = group;
@@ -318,10 +314,6 @@ export class ChannelList {
     }
     const showingRecent = this.currentGroup === 'builtin:recently-watched';
     const filteredChannels = PlaylistService.getByGroup(this.currentGroup, this.currentPlaylist || undefined);
-    const totalChannels = PlaylistService.getGroupCount(
-      'builtin:all',
-      this.currentPlaylist || undefined,
-    );
     const favs = StorageService.getFavorites();
     const editing = this.editor.isChannelEditing;
     const managingFavorites = this.editor.isManagingFavorites;
@@ -405,24 +397,9 @@ export class ChannelList {
         footer ? 'has-channel-hints' : ''}">
         <div class="sidebar" data-nav-container>
           <div class="sidebar-header">
-            <div class="channel-count">${tp('channel.count', totalChannels)}</div>
-            ${editing || showingRecent
-              ? html`<div class="channel-edit-btn-spacer" aria-hidden="true"></div>`
-              : html`
-                <button class="channel-edit-btn"
-                        data-key="edit-channels"
-                        data-focusable data-edit-channels
-                        aria-label="${t('settings.editChannelList')}"
-                        title="${t('settings.editChannelList')}"><img src="assets/icons/pencil.svg" alt=""></button>
-              `}
+            <span class="sidebar-label-icon">${raw(LIVE_CATEGORIES_ICON)}</span>
+            <h2 class="sidebar-label">${t('channel.liveCategories')}</h2>
           </div>
-          ${!editing && this.onReloadPlaylists ? html`
-            <button class="btn btn-secondary playlist-reload"
-                    data-key="reload-playlists" data-focusable data-reload-playlists
-                    aria-disabled="${String(this.reloadingPlaylists)}"
-                    aria-busy="${String(this.reloadingPlaylists)}">${
-                      t(this.reloadingPlaylists ? 'common.loading' : 'channel.reloadPlaylists')}</button>
-          ` : ''}
           ${showTabs ? html`
             <div class="playlist-tabs" data-edge-scroll>
               <div class="playlist-tab ${!this.currentPlaylist ? 'active' : ''}"
@@ -479,7 +456,8 @@ export class ChannelList {
                     </div>
                   `
                   : html`<div class="empty-state">${
-                    t(allSourcesDisabled ? 'channel.noEnabledSources' : 'channel.empty')
+                    t(this.loadingChannels ? 'common.loading'
+                      : allSourcesDisabled ? 'channel.noEnabledSources' : 'channel.empty')
                   }</div>`)}
           </div>
         </div>
@@ -637,6 +615,10 @@ export class ChannelList {
     return this.editor.isEditing;
   }
 
+  setLoading(loading: boolean): void {
+    this.loadingChannels = loading;
+  }
+
   private renderPreviewHints(): Safe | string {
     const state = this.getPreviewHintState();
     if (state === 'off') return '';
@@ -718,13 +700,6 @@ export class ChannelList {
         if (this.moveVirtualFocus((action === 'up' ? -1 : 1) * step)) return true;
         // The grid's last row holds focus rather than dropping into the hints.
         if (this.inGrid()) return true;
-        // Above the sidebar's top sits the tab bar, never the channel list.
-        if (action === 'up' && this.nav.focused?.closest('.sidebar')) {
-          const edit = this.container.querySelector<HTMLElement>('[data-edit-channels]');
-          if (!edit || edit === this.nav.focused) return false;
-          this.nav.focus(edit);
-          return true;
-        }
         return this.nav.move(action);
       }
       case 'left':
@@ -746,11 +721,7 @@ export class ChannelList {
         // A row a re-render removed is no longer what the list shows.
         if (!focused || !this.container.contains(focused)) break;
 
-        if (focused.dataset.reloadPlaylists !== undefined) {
-          void this.reloadPlaylists();
-        } else if (focused.dataset.editChannels !== undefined) {
-          this.enterEditMode();
-        } else if (focused.dataset.favoriteManage !== undefined) {
+        if (focused.dataset.favoriteManage !== undefined) {
           this.editor.enterFavoriteManagement();
         } else if (focused.dataset.playlist !== undefined) {
           this.currentPlaylist = focused.dataset.playlist;
@@ -809,12 +780,6 @@ export class ChannelList {
     const focused = this.nav.focused;
     if (!focused) return false;
 
-    if (focused.dataset.reloadPlaylists !== undefined) {
-      if (action === 'down') return this.focusActivePlaylist() || this.focusActiveGroup();
-      if (action === 'right') return this.focusFirstChannel();
-      if (action === 'left') return true;
-    }
-
     if (focused.dataset.playlist !== undefined) {
       const tabs = Array.from(
         this.container.querySelectorAll<HTMLElement>('.playlist-tab[data-playlist]'),
@@ -825,18 +790,10 @@ export class ChannelList {
         if (tabs[next]) this.nav.focus(tabs[next]);
         return true;
       }
-      if (action === 'up') {
-        if (this.focusReloadPlaylists()) return true;
-        const edit = this.container.querySelector<HTMLElement>('[data-edit-channels]');
-        if (edit) this.nav.focus(edit);
-        return !!edit;
-      }
+      // Above the playlist tabs sits the tab bar.
+      if (action === 'up') return false;
       if (action === 'down') return this.focusActiveGroup();
       return false;
-    }
-
-    if (action === 'down' && focused.dataset.editChannels !== undefined) {
-      return this.focusReloadPlaylists() || this.focusActivePlaylist() || this.focusFirstChannel();
     }
 
     if (action === 'left' && focused.closest('.channel-main')) {
@@ -849,30 +806,9 @@ export class ChannelList {
 
     if (action !== 'up') return false;
     if (focused.dataset.groupPosition === '0') {
-      return this.focusActivePlaylist() || this.focusReloadPlaylists();
+      return this.focusActivePlaylist();
     }
     return false;
-  }
-
-  private focusReloadPlaylists(): boolean {
-    const button = this.container.querySelector<HTMLElement>('[data-reload-playlists]');
-    if (!button) return false;
-    this.nav.focus(button);
-    return true;
-  }
-
-  private async reloadPlaylists(): Promise<void> {
-    if (this.reloadingPlaylists || !this.onReloadPlaylists) return;
-    this.reloadingPlaylists = true;
-    this.render(false);
-    try {
-      await this.onReloadPlaylists();
-    } catch {
-      showToast(t('app.loadFailed'));
-    } finally {
-      this.reloadingPlaylists = false;
-      this.render(false);
-    }
   }
 
   private focusActivePlaylist(): boolean {
@@ -902,15 +838,6 @@ export class ChannelList {
     }
     if (!active) return false;
     this.nav.focus(active);
-    return true;
-  }
-
-  private focusFirstChannel(): boolean {
-    const first = this.container.querySelector<HTMLElement>(
-      '.channel-main [data-list-position="0"]',
-    );
-    if (!first) return false;
-    this.nav.focus(first);
     return true;
   }
 

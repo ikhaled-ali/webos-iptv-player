@@ -31,6 +31,8 @@ let onSelectAccount: ReturnType<typeof vi.fn>;
 let onAccountMenuOpen: ReturnType<typeof vi.fn>;
 let onAccountMenuClose: ReturnType<typeof vi.fn>;
 let onLockNow: ReturnType<typeof vi.fn>;
+let onVoiceSearch: ReturnType<typeof vi.fn>;
+let onVoiceFocusLost: ReturnType<typeof vi.fn>;
 let bar: TabBar;
 
 beforeEach(() => {
@@ -45,9 +47,11 @@ beforeEach(() => {
   onAccountMenuOpen = vi.fn();
   onAccountMenuClose = vi.fn();
   onLockNow = vi.fn();
+  onVoiceSearch = vi.fn();
+  onVoiceFocusLost = vi.fn();
   bar = new TabBar({
     onSwitch, onEnter, onSearchQuery, onSearchLeave, onSearchClose, onSelectAccount, onAccountMenuOpen, onAccountMenuClose,
-    onLockNow,
+    onLockNow, onVoiceSearch, onVoiceFocusLost,
   });
   bar.setSections(true); // Xtream by default
   bar.setShown(true);
@@ -74,7 +78,7 @@ describe('TabBar', () => {
     const logo = document.querySelector('.tab-bar-brand > svg.app-logo');
     expect(logo?.getAttribute('aria-label')).toBe('iPlayer');
     expect(document.querySelector('.tab-bar-brand')?.children.length).toBe(1);
-    expect(items()).toEqual(['Live', 'Guide', 'Movies', 'Series', 'Search', 'Settings']);
+    expect(items()).toEqual(['Live', 'Guide', 'Movies', 'Series', 'Search', 'Voice search', 'Settings']);
     expect(focusedLabel()).toBe(null); // shown but not focused → no ring
     expect(document.body.classList.contains('tabbar-docked')).toBe(true);
   });
@@ -96,7 +100,7 @@ describe('TabBar', () => {
 
   it('renders only Live/Guide/Search/Settings for an M3U-only account', () => {
     bar.setSections(false);
-    expect(items()).toEqual(['Live', 'Guide', 'Search', 'Settings']);
+    expect(items()).toEqual(['Live', 'Guide', 'Search', 'Voice search', 'Settings']);
   });
 
   it('focus() puts the ring on the active tab', () => {
@@ -834,5 +838,144 @@ describe('TabBar parental lock', () => {
 
     bar.setParentalSession(false);
     expect(lock()).toBe(null);
+  });
+});
+
+describe('TabBar voice search', () => {
+  const mic = () => { Focus.flush(); return document.querySelector<HTMLElement>('[data-voice-search]'); };
+  const tip = () => document.querySelector<HTMLElement>('.tab-bar-voice-tip');
+  const input = () => document.querySelector<HTMLInputElement>('.tab-bar-search-input');
+  const expanded = () => !!document.querySelector('.tab-bar-search.expanded');
+  const focusMic = () => {
+    bar.setActive('search');
+    bar.focus();
+    press('right');
+  };
+
+  it('puts the mic between Search and Settings on the D-pad', () => {
+    focusMic();
+    expect(mic()?.classList.contains('focused')).toBe(true);
+    press('select');
+    expect(onVoiceSearch).toHaveBeenCalledWith('key');
+    expect(expanded()).toBe(false);
+    press('right');
+    expect(focusedLabel()).toBe('Settings');
+    press('left');
+    press('left');
+    expect(focusedLabel()).toBe('Search');
+  });
+
+  it('Down on the mic enters the shown section', () => {
+    bar.setActive('live');
+    bar.focus();
+    for (let i = 0; i < 5; i++) press('right');
+    expect(mic()?.classList.contains('focused')).toBe(true);
+    press('down');
+    expect(onVoiceSearch).not.toHaveBeenCalled();
+    expect(onEnter).toHaveBeenLastCalledWith('live', 'key');
+  });
+
+  it('a pointer click on the mic starts voice search and gives the mic the keys', () => {
+    bar.init();
+    const button = mic()!;
+    const origFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => button;
+    document.dispatchEvent(new MouseEvent('click', { clientX: 10, clientY: 10, bubbles: true }));
+    document.elementFromPoint = origFromPoint;
+    expect(onVoiceSearch).toHaveBeenCalledWith('pointer');
+    expect(onEnter).not.toHaveBeenCalled();
+    expect(bar.focused).toBe(true);
+    expect(mic()?.classList.contains('focused')).toBe(true);
+  });
+
+  it('shows a listening tooltip under the focused mic without opening the box', () => {
+    focusMic();
+    bar.setVoiceState('listening');
+    expect(tip()?.textContent).toBe('Listening…');
+    expect(mic()?.classList.contains('listening')).toBe(true);
+    expect(expanded()).toBe(false);
+    expect(onVoiceFocusLost).not.toHaveBeenCalled();
+  });
+
+  it('closes the tooltip and reports it when the mic loses focus', () => {
+    focusMic();
+    bar.setVoiceState('listening');
+    press('right');
+    expect(tip()).toBe(null);
+    expect(mic()?.classList.contains('listening')).toBe(false);
+    expect(onVoiceFocusLost).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes the tooltip when the bar gives up the keys', () => {
+    focusMic();
+    bar.setVoiceState('listening');
+    bar.blur();
+    expect(tip()).toBe(null);
+    expect(onVoiceFocusLost).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the heard words over the results with the keys left on the mic', () => {
+    focusMic();
+    bar.setVoiceState('listening');
+    bar.setVoiceState('idle');
+    bar.showVoiceQuery('Alpha');
+    expect(expanded()).toBe(true);
+    expect(input()?.value).toBe('Alpha');
+    expect(document.activeElement).not.toBe(input());
+    expect(onEnter).toHaveBeenCalledWith('search', 'key');
+    expect(mic()?.classList.contains('focused')).toBe(true);
+    expect(bar.focused).toBe(true);
+    expect(onVoiceFocusLost).not.toHaveBeenCalled();
+
+    press('select');
+    expect(onVoiceSearch).toHaveBeenLastCalledWith('key');
+  });
+
+  it('from the mic over results, Down goes into them and Back closes the search', () => {
+    focusMic();
+    bar.showVoiceQuery('Alpha');
+    press('down');
+    expect(onSearchLeave).toHaveBeenCalled();
+    expect(bar.focused).toBe(false);
+
+    focusMic();
+    bar.showVoiceQuery('Bravo');
+    press('back');
+    expect(expanded()).toBe(false);
+    expect(onSearchClose).toHaveBeenCalled();
+  });
+
+  it('Left from the mic over results puts the caret in the box', () => {
+    focusMic();
+    bar.showVoiceQuery('Alpha');
+    press('left');
+    expect(document.activeElement).toBe(input());
+    expect(input()?.value).toBe('Alpha');
+  });
+
+  it('opens the box without its caret, leaving the keys on the mic', () => {
+    focusMic();
+    bar.openSearchOnMic();
+    expect(expanded()).toBe(true);
+    expect(document.activeElement).not.toBe(input());
+    expect(onEnter).toHaveBeenCalledWith('search', 'key');
+    expect(mic()?.classList.contains('focused')).toBe(true);
+    expect(bar.micFocused).toBe(true);
+    bar.setVoiceState('listening');
+    expect(tip()?.textContent).toBe('Listening…');
+    expect(onVoiceFocusLost).not.toHaveBeenCalled();
+  });
+
+  it('shows the remote-mic hint, with the keys on the mic, until the user types', () => {
+    focusMic();
+    bar.openSearchOnMic();
+    bar.setVoiceState('hint');
+    expect(mic()?.classList.contains('focused')).toBe(true);
+    expect(input()?.placeholder).toBe('Hold the mic button on your remote');
+    const box = input()!;
+    box.value = 'a';
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    bar.refresh();
+    expect(box.placeholder).toBe('Search channels, movies, and series…');
   });
 });

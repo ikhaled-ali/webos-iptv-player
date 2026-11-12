@@ -3,6 +3,13 @@
 @font-face {
   font-family: 'SF Pro App';
   font-style: normal;
+  font-weight: 300;
+  src: url('../assets/fonts/SF-Pro-Display-Light.woff') format('woff');
+}
+
+@font-face {
+  font-family: 'SF Pro App';
+  font-style: normal;
   font-weight: 400;
   src: url('../assets/fonts/SF-Pro-Display-Regular.woff') format('woff');
 }
@@ -65,9 +72,8 @@
      The strong one is for glass controls over video, already tinted at rest. */
   --focus-tint: rgba(255, 255, 255, 0.18);
   --focus-tint-strong: rgba(255, 255, 255, 0.38);
-  /* The current section in the tab bar: the focus pill, stronger when focused. */
-  --active-tint: var(--focus-tint);
-  --active-tint-focused: var(--focus-tint-strong);
+  /* The current section's label in the tab bar; its glyph takes the accent. */
+  --active-text: var(--text-primary);
   /* Laid over the item's own fill as an image, so a selected or colored
      item keeps its color under the tint. */
   --focus-layer: linear-gradient(var(--focus-tint), var(--focus-tint));
@@ -161,6 +167,7 @@ html[data-animation="essential"] .osd-progress-bar {
    main-thread and raster time when disabled outright. */
 html[data-animation="essential"] .channel-item,
 html[data-animation="essential"] .catalog-poster-wrap,
+html[data-animation="essential"] .catalog-tile-name,
 html[data-animation="essential"] .catalog-cat,
 html[data-animation="essential"] .player-sidebar .sidebar-ch-item {
   transition: none !important;
@@ -508,6 +515,12 @@ button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggl
   border-radius: 3px;
 }
 
+/* Rails and tab strips scroll sideways by D-pad and wheel, and a cut-off item
+   at the edge already shows there is more: no horizontal bar anywhere. */
+::-webkit-scrollbar:horizontal {
+  height: 0;
+}
+
 #video-player {
   position: fixed;
   top: 0;
@@ -528,7 +541,8 @@ button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggl
 .reminder-prompt,
 .catchup-resume-prompt,
 .confirmation-prompt,
-.parental-pin-prompt {
+.parental-pin-prompt,
+.load-progress-prompt {
   position: fixed;
   top: 0;
   right: 0;
@@ -543,7 +557,8 @@ button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggl
 .reminder-prompt.hidden,
 .catchup-resume-prompt.hidden,
 .confirmation-prompt.hidden,
-.parental-pin-prompt.hidden {
+.parental-pin-prompt.hidden,
+.load-progress-prompt.hidden {
   display: none;
 }
 
@@ -604,6 +619,89 @@ button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggl
 
 .confirmation-btn.danger {
   color: var(--danger);
+}
+
+/* A prompt with more than two answers stacks them, full width. */
+.choice-dialog {
+  width: 720px;
+}
+.choice-buttons {
+  display: flex;
+  flex-direction: column;
+}
+.choice-buttons > .choice-btn + .choice-btn {
+  margin-top: 14px;
+}
+.choice-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  text-align: left;
+}
+.choice-detail {
+  flex-shrink: 0;
+  margin-left: 24px;
+  color: var(--text-muted);
+  font-size: 22px;
+}
+
+/* Load progress: one row per part, then the button that leaves it running. */
+.load-progress-dialog {
+  width: 760px;
+  max-width: none;
+}
+
+.load-progress-rows {
+  margin: 8px 0 32px;
+  text-align: left;
+}
+
+.load-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  min-height: 48px;
+}
+
+.load-progress-label {
+  flex: 0 0 auto;
+  min-width: calc(180px * var(--font-scale));
+  font-size: 24px;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.load-progress-track {
+  flex: 1 1 auto;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.load-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transform-origin: left center;
+  transition: transform 240ms ease-out;
+}
+
+.load-progress-value {
+  flex: 0 0 auto;
+  min-width: calc(96px * var(--font-scale));
+  text-align: right;
+  font-size: 22px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.load-progress-row[data-status="failed"] .load-progress-fill {
+  background: var(--text-muted);
+}
+
+.load-progress-row[data-status="failed"] .load-progress-value {
+  color: var(--text-muted);
 }
 
 /* EPG reminder bell badge — dim on any future program (affordance), accent once set */

@@ -86,7 +86,7 @@ test('loads and updates one account, preserves other sources, and remembers it a
   } finally {
     harness.release();
   }
-  await page.locator('#cancel-settings').click();
+  await page.keyboard.press('Escape');
   await expect(page.locator('.channel-main .channel-name')).toHaveText(['Channel 1', 'Channel 2']);
   const restart = harness.requests.length;
   await page.reload();
@@ -101,7 +101,7 @@ test('loads and updates one account, preserves other sources, and remembers it a
   await expect(retry.locator('.xtream-status')).toContainText('Unable to connect', { timeout: 15000 });
   await expect(retry.locator('.load-xtream')).toHaveText('Update');
   expect(harness.requests.slice(beforeFailure).every(request => request.startsWith('8102|'))).toBe(true);
-  await page.locator('#cancel-settings').click();
+  await page.keyboard.press('Escape');
   await expect(page.locator('.channel-main .channel-name')).toHaveText(['Channel 1', 'Channel 2']);
   await enterTab(page, 'settings');
   harness.hold();

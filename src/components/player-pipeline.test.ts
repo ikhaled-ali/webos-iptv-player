@@ -274,6 +274,31 @@ describe('PlayerPipeline desktop routing', () => {
     expect(pipeline.engineName).toBe('webOS');
   });
 
+  it('falls back through each untried player once, restarting after a manual switch', () => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('webOS');
+    const pipeline = new PlayerPipeline(callbacks());
+    const url = 'http://host/a.ts';
+    const hlsUrl = 'http://host/a.m3u8';
+    expect(pipeline.fallbackMode(url, null, hlsUrl)).toBe(true);
+    expect(pipeline.engineName).toBe('mpegts.js');
+    expect(pipeline.fallbackMode(url, null, hlsUrl)).toBe(true);
+    expect(pipeline.engineName).toBe('hls.js');
+    expect(pipeline.fallbackMode(url, null, hlsUrl)).toBe(false);
+    expect(pipeline.engineName).toBe('hls.js');
+
+    pipeline.cycleMode(url, null, hlsUrl);
+    expect(pipeline.engineName).toBe('webOS');
+    expect(pipeline.fallbackMode(url, null, hlsUrl)).toBe(true);
+    expect(pipeline.engineName).toBe('mpegts.js');
+
+    pipeline.clearFailedModes();
+    expect(pipeline.fallbackMode(url, null, hlsUrl)).toBe(true);
+    expect(pipeline.engineName).toBe('hls.js');
+    expect(pipeline.fallbackMode(url, null, hlsUrl)).toBe(true);
+    expect(pipeline.engineName).toBe('webOS');
+    expect(pipeline.fallbackMode('http://host/a.mp4', null)).toBe(false);
+  });
+
   it('uses a cached stream format when switching an extensionless channel', async () => {
     vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('webOS');
     vi.spyOn(streamCache, 'getCachedStreamMime').mockResolvedValue('video/mp2t');
@@ -370,6 +395,7 @@ describe('PlayerPipeline desktop routing', () => {
 
   it.each([false, true])('applies the selected prebuffer profile to HLS (%s)', async enabled => {
     installPreviewGlobals();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(contentTypeResponse('application/vnd.apple.mpegurl')));
     vi.spyOn(StorageService, 'getPrebuffering').mockReturnValue(enabled);
     const pipeline = new PlayerPipeline(callbacks());
     const video = videoElement();

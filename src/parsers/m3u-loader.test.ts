@@ -351,6 +351,19 @@ describe('fetchAndParseM3UInWorker', () => {
       channelsKept: 513,
       channelsDropped: 0,
     });
+    expect(progress.every(update => !('totalBytes' in update))).toBe(true);
+  });
+
+  it('reports the response length with each progress update when the server sends one', async () => {
+    const bytes = new TextEncoder().encode('#EXTM3U\n#EXTINF:-1,Alpha\nhttp://host/a\n');
+    const response = streamResponse([bytes]);
+    Object.assign(response, { headers: new Headers({ 'content-length': String(bytes.length) }) });
+    vi.stubGlobal('fetch', vi.fn(async () => response));
+    const progress: Array<{ inputBytes: number; totalBytes?: number }> = [];
+
+    await fetchAndParseM3U('http://host/list.m3u', 5000, undefined, '', update => progress.push(update));
+
+    expect(progress).toEqual([expect.objectContaining({ inputBytes: bytes.length, totalBytes: bytes.length })]);
   });
 
   it('reports the final count when every channel is filtered before 8 MiB', async () => {

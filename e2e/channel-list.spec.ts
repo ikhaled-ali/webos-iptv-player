@@ -36,6 +36,17 @@ test('a malicious channel name from the playlist is escaped, not executed', asyn
   expect(await page.evaluate(() => (window as unknown as { __xssfired?: boolean }).__xssfired)).toBeUndefined();
 });
 
+test('a cold start opens with the menu\'s first item, Live, focused', async ({ page }) => {
+  await routePlaylist(page, SEARCH_M3U);
+  await seedPlaylist(page);
+  await page.goto('/');
+
+  await expect(page.locator('#view-channels')).toBeVisible();
+  await expect(page.locator('.tab-bar-item').first()).toHaveAttribute('data-section', 'live');
+  await expect(page.locator('.tab-bar-item[data-section="live"].focused')).toHaveCount(1);
+  await expect(page.locator('#view-channels .focused')).toHaveCount(0);
+});
+
 test('the sidebar has no inline search magnifier or settings gear (moved to the tab bar)', async ({ page }) => {
   await routePlaylist(page, SEARCH_M3U);
   await seedPlaylist(page);
@@ -45,8 +56,8 @@ test('the sidebar has no inline search magnifier or settings gear (moved to the 
   await expect(page.locator('#view-channels .channel-search')).toHaveCount(0);
   await expect(page.locator('#view-channels .settings-btn')).toHaveCount(0);
   await expect(page.locator('.sidebar-title')).toHaveCount(0);
-  // The channel count remains in the sidebar.
-  await expect(page.locator('.channel-count')).toBeVisible();
+  // A plain label heads the group list.
+  await expect(page.locator('#view-channels .sidebar-label')).toHaveText('Live Categories');
 });
 
 test('selecting a group filters the channel list', async ({ page }) => {
@@ -506,15 +517,15 @@ test('Up at the top of the sidebar goes to the tab bar, not the scrolled list', 
   await page.keyboard.press('ArrowLeft');
   const group = page.locator('#view-channels .sidebar [data-group-position].focused');
   await expect(group).toHaveCount(1);
-  for (let i = 0; i < 10 && !(await page.locator('[data-edit-channels].focused').count()); i++) {
+  for (let i = 0; i < 10 && (await group.getAttribute('data-group-position')) !== '0'; i++) {
     await page.keyboard.press('ArrowUp');
   }
-  await expect(page.locator('[data-edit-channels]')).toHaveClass(/\bfocused\b/);
+  await expect(group).toHaveAttribute('data-group-position', '0');
   await page.keyboard.press('ArrowUp');
   await expect(page.locator('.tab-bar-item[data-section="live"].focused')).toHaveCount(1);
   await expect(page.locator('#view-channels .focused')).toHaveCount(0);
 
-  // Edit mode has no edit button: the top group hands off the same way.
+  // Edit mode: the top group hands off the same way.
   await page.keyboard.press('ArrowDown');
   await enterEditMode(page);
   const sidebarRing = page.locator('#view-channels .sidebar .focused');
@@ -1182,10 +1193,11 @@ test('a control hovered while the account menu held the keys lights once it hand
   await hoverCenter(page, '#view-channels .group-item[data-group-position="0"]');
   // Enter goes to the open menu, which closes and leaves the keys with the bar.
   await page.keyboard.press('Enter');
-  await hoverCenter(page, '#view-channels .channel-edit-btn');
-  await expect(page.locator('#view-channels .channel-edit-btn')).toHaveClass(/\bfocused\b/);
+  const hovered = '#view-channels .group-item[data-group-position="1"]';
+  await hoverCenter(page, hovered);
+  await expect(page.locator(hovered)).toHaveClass(/\bfocused\b/);
 
   await page.keyboard.press('ArrowDown');
-  await expect(page.locator('#view-channels .channel-edit-btn')).not.toHaveClass(/\bfocused\b/);
+  await expect(page.locator(hovered)).not.toHaveClass(/\bfocused\b/);
   await expect(page.locator('#view-channels .focused')).toHaveCount(1);
 });

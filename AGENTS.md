@@ -3,7 +3,7 @@
 IPTV player for LG webOS TVs. Vanilla TypeScript (no UI framework), bundled
 with esbuild and packaged as a webOS `.ipk`. A separate bundled webOS JS
 service (`bundled-service/`) provides LAN M3U uploads over Luna + HTTP. App
-id `com.lennylxx.iptv`; targets webOS 4+ (Chromium 53).
+id `com.ikhaled.iptv`; targets webOS 4+ (Chromium 53).
 
 ## Skills
 
@@ -165,7 +165,7 @@ build constant; `scripts/sync-version.mjs` runs on `npm version`.
 - **Config** (`src/config.ts`) — `CONFIG` holds key codes, refresh
   intervals, and player/EPG/storage constants. Prefer it over magic numbers.
 - **Bundled service** (`bundled-service/`) — Node.js 0.12.2 CommonJS service
-  `com.lennylxx.iptv.service` for LAN setup/uploads and dev-mode reminder
+  `com.ikhaled.iptv.service` for LAN setup/uploads and dev-mode reminder
   alerts. See `bundled-service/AGENTS.md`.
 
 ## Conventions

@@ -1,5 +1,5 @@
 import { CONFIG } from '../config';
-import type { Action, PlaylistEntry, SeriesCategory, SeriesItem, SeriesInfo, Episode, ResumeEntry, ResumeKind, VodQueueItem, WatchlistEntry } from '../types';
+import type { Action, PlaylistEntry, SeriesCategory, SeriesItem, SeriesInfo, Episode, ResumeEntry, ResumeKind, VodQueueItem, WatchlistEntry, VodDetails } from '../types';
 import { html, raw, Safe, visibleHeight } from '../utils/dom';
 import { morph } from '../utils/morph';
 import { StorageService } from '../services/storage-service';
@@ -37,6 +37,7 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
   private selectedSeason = 0;
   private detailLoading = false;
   private episodeFocusIndex = 0;
+  private resumeRequest = 0;
   private episodeSource: Episode[] | null = null;
   private measuredEpisodes = new Set<number>();
   private detailController: AbortController | null = null;
@@ -116,7 +117,7 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
 
   protected selectExtra(el: HTMLElement): boolean {
     if (el.dataset.action === 'watchlist') { this.toggleWatchlist(); return true; }
-    if (el.dataset.resumeEpisode !== undefined) { this.playResume(el.dataset.resumeEpisode); return true; }
+    if (el.dataset.resumeEpisode !== undefined) { void this.playResume(el.dataset.resumeEpisode); return true; }
     if (el.dataset.playEpisode !== undefined) { this.playEpisode(el.dataset.playEpisode); return true; }
     if (el.dataset.season !== undefined) { this.selectSeason(Number(el.dataset.season)); return true; }
     if (el.dataset.episodeId !== undefined) { this.playEpisode(el.dataset.episodeId); return true; }
@@ -195,8 +196,7 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
     return null;
   }
 
-  private findEpisode(episodeId: string): Episode | null {
-    const info = this.currentInfo;
+  private findEpisode(episodeId: string, info = this.currentInfo): Episode | null {
     if (!info) return null;
     for (const season of info.seasons) {
       const ep = (info.episodesBySeason[season] ?? []).find((e) => e.id === episodeId);
@@ -210,7 +210,7 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
     return ep.title ? `${series.name} — ${code} — ${ep.title}` : `${series.name} — ${code}`;
   }
 
-  private episodePlayback(series: SeriesItem, ep: Episode): VodQueueItem {
+  private episodePlayback(series: SeriesItem, ep: Episode, info = this.currentInfo): VodQueueItem {
     const a = this.account!;
     return {
       url: xtreamEpisodeUrl(this.creds(), ep.id, ep.containerExtension || 'mp4'),
@@ -224,20 +224,35 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
       subtitles: ep.subtitles,
       searchMeta: { season: ep.season, episode: ep.episode },
       watchlistOwner: { kind: 'series', itemId: series.seriesId },
+      details: this.episodeDetails(series, ep, info),
     };
   }
 
-  private allEpisodes(): Episode[] {
-    const info = this.currentInfo;
+  private episodeDetails(series: SeriesItem, ep: Episode, info: SeriesInfo | null): VodDetails {
+    const code = episodeCode(ep);
+    return {
+      title: ep.title || `${series.name} — ${code}`,
+      context: ep.title ? `${series.name} — ${code}` : '',
+      plot: ep.plot || info?.plot || '',
+      genre: info?.genre ?? '',
+      year: info ? (info.releaseDate.match(/\d{4}/) || [''])[0] || (info.year ? String(info.year) : '') : '',
+      rating: info?.rating || series.rating,
+      durationSecs: ep.durationSecs || (info?.episodeRunTimeMins ?? 0) * 60,
+      cast: info?.cast ?? '',
+      director: info?.director ?? '',
+    };
+  }
+
+  private allEpisodes(info = this.currentInfo): Episode[] {
     if (!info) return [];
     return info.seasons.reduce<Episode[]>(
       (all, season) => all.concat(info.episodesBySeason[season] ?? []), []);
   }
 
-  private episodesAfter(episodeId: string, series: SeriesItem): VodQueueItem[] {
-    const episodes = this.allEpisodes();
+  private episodesAfter(episodeId: string, series: SeriesItem, info = this.currentInfo): VodQueueItem[] {
+    const episodes = this.allEpisodes(info);
     const index = episodes.findIndex((ep) => ep.id === episodeId);
-    return index < 0 ? [] : episodes.slice(index + 1).map((ep) => this.episodePlayback(series, ep));
+    return index < 0 ? [] : episodes.slice(index + 1).map((ep) => this.episodePlayback(series, ep, info));
   }
 
   // The episode the detail's main button plays: the series' latest Continue
@@ -282,6 +297,7 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
       ...this.episodePlayback(series, ep),
       resumeSecs: saved ? saved.position : 0,
       episodeQueue: this.episodesAfter(ep.id, series),
+      seriesEpisodes: this.allEpisodes().map((episode) => this.episodePlayback(series, episode)),
     });
   }
 
@@ -290,13 +306,37 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
     return { baseUrl: a.url, username: a.xtream!.username, password: a.xtream!.password };
   }
 
-  // A Continue-rail tile carries only the resume entry (episode id + composed
-  // label + poster + stored container extension), not the owning series, so it
-  // resumes the episode directly using the stored ext (falling back to mp4).
-  private playResume(episodeId: string): void {
+  // A Continue-rail tile carries only the resume entry, so the owning series'
+  // info is loaded to give the player its episode list and details. Without
+  // it, the episode still resumes from the entry alone.
+  private async playResume(episodeId: string): Promise<void> {
     const a = this.account;
     const r = this.resume.find((e) => e.itemId === episodeId);
-    if (!a || !r) return;
+    const signal = this.requestSignal;
+    if (!a || !r || !signal) return;
+    const request = ++this.resumeRequest;
+    const seriesId = r.watchlistOwner?.itemId;
+    let info: SeriesInfo | null = null;
+    if (seriesId) {
+      try {
+        info = await loadSeriesInfo(a, seriesId, signal);
+      } catch (err) {
+        if (!this.requestFailed('Series resume load', err, signal)) return;
+      }
+    }
+    if (request !== this.resumeRequest || signal.aborted || this.account !== a) return;
+    const ep = info ? this.findEpisode(r.itemId, info) : null;
+    if (info && ep && seriesId) {
+      const series = this.resumeSeries(r, seriesId, ep, info);
+      this.handlers.onPlayVod({
+        ...this.episodePlayback(series, ep, info),
+        url: xtreamEpisodeUrl(this.creds(), r.itemId, r.ext || ep.containerExtension || 'mp4'),
+        resumeSecs: r.position,
+        episodeQueue: this.episodesAfter(ep.id, series, info),
+        seriesEpisodes: this.allEpisodes(info).map((episode) => this.episodePlayback(series, episode, info)),
+      });
+      return;
+    }
     this.handlers.onPlayVod({
       url: xtreamEpisodeUrl(this.creds(), r.itemId, r.ext || 'mp4'),
       title: r.name,
@@ -312,6 +352,22 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
       episodeQueue: r.episodeQueue,
       watchlistOwner: r.watchlistOwner,
     });
+  }
+
+  // The series a resume entry belongs to: the catalog's own item when loaded,
+  // else one rebuilt from the entry, its name cut from the composed label.
+  private resumeSeries(r: ResumeEntry, seriesId: string, ep: Episode, info: SeriesInfo): SeriesItem {
+    const known = this.findItem(r.categoryId ?? '', seriesId);
+    if (known) return known;
+    const cut = r.name.indexOf(` — ${episodeCode(ep)}`);
+    return {
+      accountId: r.accountId,
+      seriesId,
+      name: cut > 0 ? r.name.slice(0, cut) : r.name,
+      poster: info.poster || r.poster,
+      rating: info.rating,
+      categoryId: r.categoryId ?? '',
+    };
   }
 
   private resumeTile(r: ResumeEntry, managing = false): Safe {

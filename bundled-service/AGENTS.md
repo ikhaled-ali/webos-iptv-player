@@ -3,9 +3,9 @@
 Scoped to `bundled-service/`; the root `AGENTS.md` still applies.
 
 A sandbox-separate Node (CommonJS) webOS service,
-`com.lennylxx.iptv.service`. It hosts LAN phone setup and M3U uploads and,
+`com.ikhaled.iptv.service`. It hosts LAN phone setup and M3U uploads and,
 in Developer Mode, interactive program-reminder alerts. `src/index.ts` wires
-`lan/`, `setup/`, and `reminder/`.
+`lan/`, `setup/`, `reminder/`, and `recording/`.
 
 **Read `docs/lan-service.md` before changing it.**
 
@@ -20,7 +20,11 @@ It must run on webOS 4's Node.js 0.12.2:
 ## Contract with the app
 
 - **Luna:** `start` / `stop` / `heartbeat` / `serviceEvents` for LAN
-  changes; `getDevMode` / `fireReminderAlert` for reminders.
+  changes; `getDevMode` / `fireReminderAlert` for reminders;
+  `recordingLocations` / `startRecording` / `stopRecording` /
+  `recordingStatus` / `listRecordings` / `deleteRecording` for live TV
+  recording (`src/recording/`), which serves saved files to the app over
+  a token-guarded loopback HTTP server.
 - **HTTP:** phone setup pages and uploads.
 - Changes are pushed through `serviceEvents`; nothing polls.
 - The lifecycle follows the app's `visibilitychange`.

@@ -18,7 +18,7 @@ import {
   subscribeCdpLogs,
 } from './cdp-logs.mjs';
 
-const DEFAULT_APP_ID = 'com.lennylxx.iptv';
+const DEFAULT_APP_ID = 'com.ikhaled.iptv';
 const DEFAULT_PORT = 9998;
 const DEFAULT_SECONDS = 0;
 

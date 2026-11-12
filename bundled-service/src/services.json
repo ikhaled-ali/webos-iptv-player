@@ -1,9 +1,9 @@
 {
-  "id": "com.lennylxx.iptv.service",
+  "id": "com.ikhaled.iptv.service",
   "description": "Bundled webOS JS service for the IPTV player",
   "services": [
     {
-      "name": "com.lennylxx.iptv.service"
+      "name": "com.ikhaled.iptv.service"
     }
   ]
 }

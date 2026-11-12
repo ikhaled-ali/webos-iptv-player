@@ -93,6 +93,12 @@ export async function seedPlaylist(page: Page, url = PLAYLIST_URL): Promise<void
   }, url);
 }
 
+/** Opens the channel editor with the yellow key from the Live sidebar. */
+export async function enterChannelEditMode(page: Page): Promise<void> {
+  await page.locator('#view-channels .group-item').first().hover();
+  await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 405, bubbles: true })));
+}
+
 /** Enter a section via the docked tab bar (always visible for an Xtream account).
  *  Uses a coordinate mouse press so the click carries clientX/clientY for the tab
  *  bar's coordinate hit-test. */
@@ -190,7 +196,7 @@ function installRingAudit(recordNone: boolean): void {
   const w = window as unknown as { __ringAudit?: (entry: string) => void; __ringPending?: number };
   w.__ringPending = 0;
   const PROMPTS = '.confirmation-prompt, .catchup-resume-prompt, .reminder-prompt, '
-    + '.parental-pin-prompt, .live-category-picker';
+    + '.parental-pin-prompt, .live-category-picker, .load-progress-prompt';
   const visible = (el: Element): boolean => {
     const box = el.getBoundingClientRect();
     if (box.width === 0 || box.height === 0) return false;

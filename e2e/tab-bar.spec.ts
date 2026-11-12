@@ -73,6 +73,42 @@ test('the Guide tab opens the EPG below the docked bar, and Back returns to Live
   await expect(page.locator('.tab-bar-item[data-section="live"].active')).toHaveCount(1);
 });
 
+test('the current section is marked by its accent glyph alone, never a pill', async ({ page }) => {
+  await seedXtream(page);
+  await routeLiveManifest(page);
+  await page.goto('/');
+  await expect(page.locator('#view-channels')).toBeVisible();
+  await enterTab(page, 'epg');
+  await expect(page.locator('#view-epg')).toBeVisible();
+
+  const look = (section: string) => page.locator(`.tab-bar-item[data-section="${section}"]`).evaluate((el) => {
+    const icon = el.querySelector('.tab-bar-tab-icon')!;
+    const label = el.querySelector('.tab-bar-tab-label')!;
+    return {
+      icon: getComputedStyle(icon).color,
+      label: getComputedStyle(label).color,
+      pill: getComputedStyle(el, '::before').content,
+      accent: getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(),
+    };
+  });
+  // Neither hover nor focus is on the tab: the pointer leaves the bar.
+  await page.mouse.move(960, 900);
+  await expect(page.locator('.tab-bar-item[data-section="epg"]')).not.toHaveClass(/\bfocused\b/);
+  const guide = await look('epg');
+  const live = await look('live');
+  expect(guide.icon).not.toBe(live.icon);
+  expect(guide.label).toBe(live.label);
+  expect(guide.pill).toBe('none');
+  expect(await page.evaluate((accent) => {
+    const probe = document.createElement('span');
+    probe.style.color = accent;
+    document.body.appendChild(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  }, guide.accent)).toBe(guide.icon);
+});
+
 test('the Settings tab (after Series) opens the settings view', async ({ page }) => {
   await seedXtream(page);
   await routeLiveManifest(page);
@@ -211,7 +247,7 @@ test('no playlist or account configured shows Live/Guide/Settings/Search only (n
   await expect(page.locator('.account-avatar')).toHaveCount(0);
 });
 
-test('leaving Settings (Cancel) moves the active tab back to Live', async ({ page }) => {
+test('leaving Settings with Back moves the active tab back to Live', async ({ page }) => {
   await seedXtream(page);
   await routeLiveManifest(page);
   await page.goto('/');
@@ -221,8 +257,8 @@ test('leaving Settings (Cancel) moves the active tab back to Live', async ({ pag
   await expect(page.locator('#view-settings')).toBeVisible();
   await expect(page.locator('.tab-bar-item.active')).toHaveText('Settings');
 
-  // Cancel returns to the channel list — and the active tab follows.
-  await page.locator('#cancel-settings').click();
+  // Back returns to the channel list — and the active tab follows.
+  await page.keyboard.press('Escape');
   await expect(page.locator('#view-channels')).toBeVisible();
   await expect(page.locator('.tab-bar-item.active')).toHaveText('Live');
 });
@@ -403,20 +439,19 @@ test.describe('a pointer click on a section tab', () => {
       /event=nav\.focus\.shown via=key action=down consumed=yes/.test(text))).toBe(true);
   });
 
-  test('from the hovered edit button, shows no ring in Live until a key', async ({ page }) => {
+  test('from a hovered group, shows no ring in Live until a key', async ({ page }) => {
     await seedXtream(page);
     await routeLiveManifest(page);
     await page.goto('/');
     const rows = page.locator('#view-channels .channel-main [data-channel-index]');
-    const edit = page.locator('#view-channels .channel-edit-btn');
+    const group = page.locator('#view-channels .group-item').first();
     await expect(rows.first()).toBeVisible();
-    await pointAt(page, edit);
-    await expect(edit).toHaveClass(/\bfocused\b/);
+    await pointAt(page, group);
+    await expect(group).toHaveClass(/\bfocused\b/);
 
     await enterTab(page, 'live');
     await expect(page.locator('#view-channels .focused')).toHaveCount(0);
     await page.keyboard.press('ArrowDown');
-    await expect(rows.first()).toHaveClass(/\bfocused\b/);
     await expect(page.locator('#view-channels .focused')).toHaveCount(1);
   });
 
@@ -520,9 +555,9 @@ test.describe('hovering content after D-pad Up onto the tab bar', () => {
     await page.goto('/');
     await expect(page.locator('#view-channels .channel-item').first()).toBeVisible();
 
-    // Up onto Live, then Right along the bar to Settings.
+    // Up onto Live, then Right along the bar (past the mic) to Settings.
     await page.keyboard.press('ArrowUp');
-    for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowRight');
+    for (let i = 0; i < 6; i++) await page.keyboard.press('ArrowRight');
     await expect(page.locator('.tab-bar-item[data-section="settings"].focused')).toHaveCount(1);
     await expect(page.locator('#view-settings')).toBeVisible();
     const items = page.locator('#view-settings .settings-nav-item');
@@ -705,9 +740,9 @@ test.describe('switching sections from the bar with the D-pad', () => {
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('ArrowUp');
     await expect(page.locator('.tab-bar-item[data-section="settings"]')).toHaveClass(/\bfocused\b/);
-    for (const section of ['search', 'series', 'movies', 'epg', 'live']) {
+    for (const key of ['voice', 'search', 'series', 'movies', 'epg', 'live']) {
       await page.keyboard.press('ArrowLeft');
-      await expect(page.locator(`.tab-bar-item[data-section="${section}"]`)).toHaveClass(/\bfocused\b/);
+      await expect(page.locator(`.tab-bar-item[data-key="${key}"]`)).toHaveClass(/\bfocused\b/);
       await expect(page.locator('.focused:visible')).toHaveCount(1);
     }
     await expect(page.locator('#view-channels')).toBeVisible();

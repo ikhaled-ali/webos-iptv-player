@@ -1389,6 +1389,68 @@ export function catalogCacheGeneration(): number {
   return catalogGeneration;
 }
 
+// Removes the matching entries with their metadata and usage, then sweeps the
+// key ranges too, so an entry written without accounting goes as well.
+function deleteEntries(
+  matches: (store: CacheStore, key: string) => boolean,
+  ranges: Array<{ store: CacheStore; prefix: string }>,
+  keys: Array<{ store: CacheStore; key: string }> = [],
+): Promise<void> {
+  return enqueueMutation(async () => {
+    const db = await openDb();
+    if (!db) return;
+    await ensureMetadata();
+    const candidates = (await collectCandidates()).filter(candidate =>
+      typeof candidate.key === 'string' && matches(candidate.store, candidate.key));
+    await deleteCandidates(candidates);
+    const stores = Array.from(new Set([...ranges, ...keys].map(entry => entry.store)));
+    if (!stores.length) return;
+    const tx = db.transaction(stores, 'readwrite');
+    for (const { store, prefix } of ranges) {
+      tx.objectStore(store).delete(IDBKeyRange.bound(prefix, `${prefix}￿`));
+    }
+    for (const { store, key } of keys) tx.objectStore(store).delete(key);
+    await transactionDone(tx);
+  });
+}
+
+/** Delete one account's catalog lists and details, and the search indexes built on them. */
+export function clearCachedCatalogAccount(accountId: string): Promise<void> {
+  const prefix = `${accountId}|`;
+  const indexPrefix = `${CATALOG_STORE}|${prefix}`;
+  return deleteEntries(
+    (store, key) => (store === CATALOG_STORE && key.indexOf(prefix) === 0)
+      || (store === SEARCH_INDEX_STORE && key.indexOf(indexPrefix) === 0),
+    [{ store: CATALOG_STORE, prefix }, { store: SEARCH_INDEX_STORE, prefix: indexPrefix }],
+  );
+}
+
+/** Delete the cached guides of these URLs and the search indexes built on them. */
+export function clearCachedEpgSources(urls: string[]): Promise<void> {
+  if (!urls.length) return Promise.resolve();
+  const indexPrefixes = urls.map(url => `${EPG_STORE}|${url}|`);
+  return deleteEntries(
+    (store, key) => (store === EPG_STORE && urls.indexOf(key) >= 0)
+      || (store === SEARCH_INDEX_STORE && indexPrefixes.some(prefix => key.indexOf(prefix) === 0)),
+    indexPrefixes.map(prefix => ({ store: SEARCH_INDEX_STORE, prefix })),
+    urls.map(key => ({ store: EPG_STORE, key })),
+  );
+}
+
+export function deleteCachedChannelHealth(keys: string[]): Promise<void> {
+  if (!keys.length) return Promise.resolve();
+  const wanted = new Set(keys);
+  return deleteEntries(
+    (store, key) => store === CHANNEL_HEALTH_STORE && wanted.has(key),
+    [],
+    keys.map(key => ({ store: CHANNEL_HEALTH_STORE, key })),
+  );
+}
+
+export async function catalogCacheAvailable(): Promise<boolean> {
+  return (await openDb()) !== null;
+}
+
 export function clearCachedCatalog(): Promise<void> {
   catalogGeneration++;
   return clearStore(CATALOG_STORE);

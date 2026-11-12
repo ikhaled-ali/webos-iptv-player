@@ -228,7 +228,7 @@ test.describe('Settings navigation', () => {
     });
     expect(animationRow.optionsCenter).toBeCloseTo(animationRow.rowCenter, 0);
     await page.locator('#animation-mode [data-value="essential"]').click();
-    await page.locator('#cancel-settings').click();
+    await page.keyboard.press('Escape');
 
     await expect(page.locator('html')).toHaveAttribute('data-animation', 'essential');
     const durations = await page.evaluate(() => {
@@ -255,7 +255,7 @@ test.describe('Settings navigation', () => {
       `;
       document.body.appendChild(motionFixtures);
       const result = {
-        button: seconds(getComputedStyle(document.querySelector('#cancel-settings')!)
+        button: seconds(getComputedStyle(document.querySelector('#refresh-data')!)
           .transitionDuration),
         search: seconds(getComputedStyle(document.querySelector('.tab-bar-search-input')!)
           .transitionDuration),
@@ -405,55 +405,6 @@ test.describe('Settings navigation', () => {
       expect(layout.groupRight, locale).toBeLessThanOrEqual(layout.sectionRight);
       expect(layout.hintRight, locale).toBeLessThanOrEqual(layout.sectionRight);
     }
-  });
-
-  test('the action bar sits below the scroll viewport and stays put while scrolling', async ({ page }) => {
-    await page.goto('/');
-    const main = page.locator('.settings-main');
-    const scroll = page.locator('.settings-scroll');
-    const actions = page.locator('.settings-actions');
-
-    const [mainBox, scrollBox, actionBox] = await Promise.all([
-      main.boundingBox(),
-      scroll.boundingBox(),
-      actions.boundingBox(),
-    ]);
-    expect(mainBox).not.toBeNull();
-    expect(scrollBox).not.toBeNull();
-    expect(actionBox).not.toBeNull();
-    expect(actionBox!.x).toBeLessThanOrEqual(mainBox!.x);
-    expect(actionBox!.y).toBeGreaterThanOrEqual(scrollBox!.y + scrollBox!.height - 1);
-    expect(actionBox!.y + actionBox!.height).toBeLessThanOrEqual(mainBox!.y + mainBox!.height + 1);
-
-    // `position: sticky` is Chromium 56, so the bar must hold its place
-    // through the layout itself rather than through the scroll position.
-    await scroll.evaluate((el) => {
-      el.style.scrollBehavior = 'auto';
-      el.scrollTop = el.scrollHeight;
-    });
-    const scrolled = await actions.boundingBox();
-    expect(scrolled!.y).toBeCloseTo(actionBox!.y, 0);
-  });
-
-  test('clicking Cancel in settings (opened via the tab bar) returns to the channel list, not the player', async ({ page }) => {
-    await routePlaylist(page);
-    await seedPlaylist(page);
-    await page.goto('/');
-    await expect(page.locator('#view-channels')).toBeVisible();
-
-    // Open settings via the tab bar, then dismiss with Cancel.
-    await enterTab(page, 'settings');
-    await expect(page.locator('#view-settings')).toBeVisible();
-    await page.locator('#cancel-settings').click();
-
-    // Give the document-level deferred select (setTimeout 0) a chance to fire,
-    // then assert we still land on the channel list rather than the player.
-    // Before the fix, that second select fired on the channels view and played
-    // the focused channel.
-    await page.waitForTimeout(50);
-    await expect(page.locator('#view-channels')).toBeVisible();
-    await expect(page.locator('#view-player')).toBeHidden();
-    await expect(page.locator('#view-settings')).toBeHidden();
   });
 
   test('keeps Magic Remote hover separate from the weak scroll-position indicator', async ({ page }) => {
@@ -710,7 +661,7 @@ test.describe('Settings navigation', () => {
     // Live preview: the scale applies before saving.
     expect(await fontSize()).toBeCloseTo(base * 1.3, 1);
 
-    await page.locator('#cancel-settings').click();
+    await page.keyboard.press('Escape');
     await expect(page.locator('#view-channels')).toBeVisible();
 
     // Persisted across a relaunch and applied outside Settings, without
@@ -770,9 +721,10 @@ test.describe('Settings hover under the tab bar', () => {
     await expect.poll(() => lit(category)).toBe(true);
     await expect.poll(() => rings(page)).toHaveLength(1);
 
-    const save = page.locator('#cancel-settings');
-    await save.hover();
-    await expect.poll(() => rings(page)).toEqual(['cancel-settings']);
+    const other = page.locator('#view-settings .settings-nav-item').nth(2);
+    await other.hover();
+    await expect.poll(() => lit(other)).toBe(true);
+    await expect.poll(() => rings(page)).toHaveLength(1);
     expect(await lit(category)).toBe(false);
     await expect(page.locator('.tab-bar .account-menu')).toBeVisible();
   });
@@ -790,9 +742,10 @@ test.describe('Settings hover under the tab bar', () => {
     await page.keyboard.press('ArrowUp');
     await expect(page.locator('.tab-bar .focused')).toHaveCount(1);
 
-    const save = page.locator('#cancel-settings');
-    await save.hover();
-    await expect.poll(() => rings(page)).toEqual(['cancel-settings']);
+    const other = page.locator('#view-settings .settings-nav-item').nth(2);
+    await other.hover();
+    await expect.poll(() => lit(other)).toBe(true);
+    await expect.poll(() => rings(page)).toHaveLength(1);
     await expect(page.locator('#view-settings')).toHaveAttribute('data-ring-owner', '');
     await expect(page.locator('.tab-bar .focused')).toHaveCount(0);
   });
@@ -821,12 +774,12 @@ test.describe('Settings text fields', () => {
     await page.goto('/');
     await page.locator('[data-settings-target="subtitles"]').click();
     const field = page.locator('#subdl-key');
-    const save = page.locator('#cancel-settings');
+    const other = page.locator('[data-settings-target="general"]');
 
     await field.click();
     await expect(field).toBeFocused();
-    // While the caret is in the field, a hovered button is not lit beside it.
-    await save.hover();
+    // While the caret is in the field, a hovered control is not lit beside it.
+    await other.hover();
     await expect.poll(() => rings(page)).toEqual(['subdl-key']);
 
     await page.keyboard.press('Escape');
@@ -838,7 +791,7 @@ test.describe('Settings text fields', () => {
     await page.keyboard.press('ArrowUp');
     await expect(field).not.toBeFocused();
     await expect.poll(async () => (await rings(page)).length).toBe(1);
-    await expect(save).not.toHaveClass(/focused/);
+    await expect(other).not.toHaveClass(/focused/);
     await expect(field).not.toHaveClass(/focused/);
   });
 });
@@ -1236,7 +1189,7 @@ test.describe('Settings Xtream: add -> cancel -> re-enter', () => {
     await page.waitForSelector('#add-xtream');
   }
 
-  test("re-entering Settings after Cancel must NOT show a leftover Xtream card", async ({ page }) => {
+  test("re-entering Settings after Back must NOT show a leftover Xtream card", async ({ page }) => {
     await seedOneM3u(page);
     await page.goto('/');
 
@@ -1249,8 +1202,8 @@ test.describe('Settings Xtream: add -> cancel -> re-enter', () => {
     await page.click('#add-xtream');
     await expect(page.locator('#xtream-entries .xtream-card')).toHaveCount(1);
 
-    // 3) Cancel.
-    await page.click('#cancel-settings');
+    // 3) Leave with Back.
+    await page.keyboard.press('Escape');
     await expect(page.locator('#view-channels')).toBeVisible(); // back on channels
 
     // 4) Re-enter Settings.

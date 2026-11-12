@@ -212,7 +212,7 @@ describe('ares-inspect lifecycle', () => {
       const session = startNativeMetricWindow(10000, {
         spawn: (_file, args) => {
           expect(args[1]).toContain('WebAppMgr');
-          expect(args[1]).toContain("app_id='com.lennylxx.iptv'");
+          expect(args[1]).toContain("app_id='com.ikhaled.iptv'");
           expect(args[1]).toContain('*"--app-id=$app_id"*');
           expect(args[1]).toContain('/proc/$p/oom_score');
           expect(args[1]).toContain('MemAvailable');

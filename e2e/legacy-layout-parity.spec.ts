@@ -1,5 +1,5 @@
 import { writeProtectedLocal, installKeymanagerMock, readProtected } from './protected-storage';
-import { enterTab, test, expect, isChromium53, neuterVideo, routeLiveManifest, routePlaylist, type Page, openPlayerMenu } from './helpers';
+import { enterChannelEditMode, enterTab, test, expect, isChromium53, neuterVideo, routeLiveManifest, routePlaylist, type Page, openPlayerMenu } from './helpers';
 import { type Browser } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { findGappedLooseText, measureLooseText, newLegacyPage, pixelDiff } from './pixel-parity';
@@ -303,7 +303,7 @@ const M3U_SCREENS: Screen[] = [
     budget: 0,
     go: async (p) => {
       await enterTab(p, 'live');
-      await p.locator('[data-edit-channels]').click();
+      await enterChannelEditMode(p);
       await expect(p.locator('.channel-view.editing .edit-hints')).toBeVisible();
     },
   },

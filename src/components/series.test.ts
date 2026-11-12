@@ -163,6 +163,7 @@ describe('Series browse + grid', () => {
 
   it('resumes from Continue Watching with the saved subtitles and subtitle-search details', async () => {
     const subtitles = [{ id: 'sub1', name: 'Track 1', lang: 'l1', url: 'http://host/a' }];
+    catalogMock.loadSeriesInfo.mockResolvedValue(null);
     storageMock.getResumeList.mockReturnValue([{
       accountId: 'x1', kind: 'episode', itemId: 'e2', name: 'Series One — S1E2', poster: '', ext: 'mp4',
       position: 300, duration: 1500, updatedAt: 1, subtitles, searchMeta: { season: 1, episode: 2 },
@@ -172,9 +173,40 @@ describe('Series browse + grid', () => {
     container.querySelector<HTMLElement>('[data-resume-episode="e2"]')!
       .dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
     view.handleAction('select');
-    expect(handlers.onPlayVod).toHaveBeenCalledWith(expect.objectContaining({
+    await vi.waitFor(() => expect(handlers.onPlayVod).toHaveBeenCalledWith(expect.objectContaining({
       itemId: 'e2', resumeSecs: 300, subtitles, searchMeta: { season: 1, episode: 2 },
+    })));
+  });
+
+  it('resumes from Continue Watching with the episode list and details for the player', async () => {
+    const episodes = [1, 2, 3].map((n) => ({
+      id: `e${String(n)}`, title: `Episode ${String(n)}`, season: 1, episode: n, containerExtension: 'mp4',
+      durationSecs: 1500, plot: `Plot ${String(n)}`, poster: '', subtitles: [],
     }));
+    catalogMock.loadSeriesInfo.mockResolvedValue({
+      plot: '', cast: '', director: '', genre: '', releaseDate: '', episodeRunTimeMins: 0, poster: '',
+      rating: '', imdbId: '', tmdbId: '', year: 0, seasons: [1], episodesBySeason: { 1: episodes },
+    });
+    storageMock.getResumeList.mockReturnValue([{
+      accountId: 'x1', kind: 'episode', itemId: 'e2', name: 'Series One — S1E2 — Episode 2', poster: '',
+      ext: 'mp4', position: 300, duration: 1500, updatedAt: 1, categoryId: '1',
+      watchlistOwner: { kind: 'series', itemId: 's1' },
+    }]);
+    const { view, handlers } = await openWith();
+    container.querySelector<HTMLElement>('[data-resume-episode="e2"]')!
+      .dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
+    view.handleAction('select');
+    await vi.waitFor(() => expect(handlers.onPlayVod).toHaveBeenCalled());
+    const played = handlers.onPlayVod.mock.calls[0][0] as {
+      itemId: string; resumeSecs: number; details?: { plot: string; context: string };
+      seriesEpisodes?: { itemId: string }[]; episodeQueue?: { itemId: string }[];
+    };
+    expect(catalogMock.loadSeriesInfo).toHaveBeenCalledWith(account, 's1', expect.anything());
+    expect(played.itemId).toBe('e2');
+    expect(played.resumeSecs).toBe(300);
+    expect(played.details).toEqual(expect.objectContaining({ plot: 'Plot 2', context: 'Series One — S1E2' }));
+    expect(played.seriesEpisodes?.map((item) => item.itemId)).toEqual(['e1', 'e2', 'e3']);
+    expect(played.episodeQueue?.map((item) => item.itemId)).toEqual(['e3']);
   });
 
   it('restores its own saved sort field and direction', async () => {

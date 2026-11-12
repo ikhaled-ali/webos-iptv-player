@@ -5,6 +5,7 @@ import { createLogger } from '../utils/logger';
 import { isMpdText } from '../utils/url';
 import {
   clearCachedChannelHealth,
+  deleteCachedChannelHealth,
   getCachedChannelHealth,
   setCachedChannelHealth,
 } from './idb-cache';
@@ -235,6 +236,13 @@ class ChannelHealthServiceImpl {
   reset(): void {
     this.records = {};
     this.initializePromise = Promise.resolve();
+  }
+
+  async forget(keys: string[]): Promise<void> {
+    if (!keys.length) return;
+    await this.initialize();
+    for (const key of keys) delete this.records[key];
+    await deleteCachedChannelHealth(keys);
   }
 
   async checkAll(channels: Channel[], options: CheckOptions = {}): Promise<ChannelHealthSummary> {

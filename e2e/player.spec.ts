@@ -62,12 +62,13 @@ test('playback color keys keep the same channel and status clears after playing'
   await page.keyboard.press('Enter');
   await expect(page.locator('#view-player')).toBeVisible();
   const channel = await page.locator('.osd-channel-name').textContent();
-  await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 403, bubbles: true })));
+  // Green switches the player, Yellow reloads the stream.
+  await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 404, bubbles: true })));
   await expect(page.locator('#view-player')).toBeVisible();
   await expect(page.locator('#view-epg')).toBeHidden();
   await expect(page.locator('.osd-channel-name')).toHaveText(channel!);
   await page.locator('#video-player').evaluate(video => { video.dataset.beforeRetry = 'true'; });
-  await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 404, bubbles: true })));
+  await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 405, bubbles: true })));
   await expect(page.locator('#video-player')).not.toHaveAttribute('data-before-retry', 'true');
   await expect(page.locator('.player-status')).toBeVisible();
   await page.locator('#video-player').dispatchEvent('playing');
@@ -86,7 +87,7 @@ test('live playback keeps the current channel after reconnect attempts are exhau
   const attempts = page.locator('#live-reconnect-attempts');
   await attempts.locator('.dropdown-trigger').click();
   await attempts.locator('[data-dropdown-value="1"]').click();
-  await page.locator('#cancel-settings').click();
+  await page.keyboard.press('Escape');
   await expect(page.locator('#view-channels')).toBeVisible();
   await page.keyboard.press('Enter');
   await expect(page.locator('.osd-channel-name')).toHaveText('Channel One');
@@ -591,9 +592,11 @@ test('the right-edge player menu opens and lists its color actions', async ({ pa
 
   const menu = page.locator('#player-menu');
   await expect(menu).toBeVisible();
-  await expect(menu.locator('.menu-item')).toHaveCount(3);
+  await expect(menu.locator('.menu-item')).toHaveCount(4);
+  await expect(menu).toContainText('Record');
   await expect(menu).toContainText('Switch player');
-  await expect(menu).toContainText('Retry channel');
+  await expect(menu).toContainText('Reload stream');
+  await expect(menu).toContainText('Quality');
   await expect(menu).not.toContainText('Settings');
 
   // The first item is focused on open; Down moves focus to the second.
@@ -984,7 +987,7 @@ test('a long player-menu list scrolls with the Magic-Remote wheel, not the chann
   await expect(page.locator('.osd-channel-number')).toHaveText('1');
 });
 
-test('yellow opens quality with Auto without replacing the native player or source', async ({ page }) => {
+test('the panel opens quality with Auto without replacing the native player or source', async ({ page }) => {
   // Smoke-exercises the player OSD render path (player.ts renderOSD) at runtime.
   await routePlaylist(page);
   // Serve a minimal segment-less *live* manifest so hls.js reaches MANIFEST_PARSED
@@ -1006,11 +1009,17 @@ test('yellow opens quality with Auto without replacing the native player or sour
   await expect(osd.locator('.osd-channel-name')).toHaveText('Channel One');
   await expect(osd.locator('.osd-channel-number')).toHaveText('1');
 
-  await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 403, bubbles: true })));
+  await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 404, bubbles: true })));
   await expect(page.locator('#video-player source')).toHaveAttribute('src', /one\.m3u8$/);
   const source = await page.locator('#video-player source').getAttribute('src');
   await page.locator('#video-player').evaluate(video => video.setAttribute('data-quality-player', 'same'));
-  await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 405, bubbles: true })));
+  await openPlayerMenu(page);
+  // Record, Switch player, Reload stream, then Quality.
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
+  await expect(page.locator('#player-menu .menu-item.focused')).toHaveAttribute('data-menu-action', '__quality_open__');
+  await page.keyboard.press('Enter');
   const menu = page.locator('#player-menu');
   await expect(menu).toBeVisible();
   await expect(menu.locator('h2')).toHaveText('Quality');

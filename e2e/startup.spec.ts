@@ -252,7 +252,7 @@ test('dev-mode query replaces the reminder fallback activity', async ({ page }) 
   expect(devAlert.name).toBe(fallback.name);
   expect(fallback.replace).toBe(true);
   expect(devAlert.replace).toBe(true);
-  expect(devAlert.method).toBe('luna://com.lennylxx.iptv.service/fireReminderAlert');
+  expect(devAlert.method).toBe('luna://com.ikhaled.iptv.service/fireReminderAlert');
 });
 
 test('an expired playlist cache boots at once and refreshes in the background', async ({ page }) => {

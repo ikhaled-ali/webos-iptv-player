@@ -277,7 +277,7 @@ test.describe('EPG time zone', () => {
     await page.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { keyCode: 406, bubbles: true })));
     await expect(page.locator('#view-settings')).toBeVisible();
     await page.locator('#tz-mode [data-value="feed"]').click();
-    await page.locator('#cancel-settings').click();
+    await page.keyboard.press('Escape');
     await expect(page.locator('#view-channels')).toBeVisible();
 
     await openEpg(page);

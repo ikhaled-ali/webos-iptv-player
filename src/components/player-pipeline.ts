@@ -169,6 +169,7 @@ export class PlayerPipeline {
   private playReadyDrm = new PlayReadyDrm();
   private activeDrm = '';
   private selectedMode: PlaybackMode | null = null;
+  private failedModes: PlaybackMode[] = [];
   private activeMode: PlaybackMode = isWebOS() ? 'native' : 'hls';
   private detectedMime = '';
   private hlsUrl = '';
@@ -211,6 +212,7 @@ export class PlayerPipeline {
 
   resetMode(): void {
     this.selectedMode = null;
+    this.failedModes = [];
     this.detectedMime = '';
     this.hlsUrl = '';
     this.qualityChoice = null;
@@ -226,14 +228,33 @@ export class PlayerPipeline {
       : mode === 'hls' ? 'hls.js' : mode === 'mpegts' ? 'mpegts.js' : 'Shaka';
   }
 
-  isManualAlternative(): boolean {
-    return this.selectedMode !== null && this.selectedMode !== 'native';
-  }
+  clearFailedModes(): void { this.failedModes = []; }
 
   cycleMode(url: string, extras: Record<string, string> | null, alternativeHlsUrl = ''): void {
+    const modes = this.playbackModes(url, extras, alternativeHlsUrl);
+    const index = modes.indexOf(this.selectedMode ?? this.activeMode);
+    this.failedModes = [];
+    this.selectMode(modes[(index + 1) % modes.length], alternativeHlsUrl);
+  }
+
+  // Marks the current player failed and selects the next untried one; false
+  // once every player this stream allows has failed.
+  fallbackMode(url: string, extras: Record<string, string> | null, alternativeHlsUrl = ''): boolean {
+    const modes = this.playbackModes(url, extras, alternativeHlsUrl);
+    const current = this.selectedMode ?? this.activeMode;
+    if (!this.failedModes.includes(current)) this.failedModes.push(current);
+    const index = modes.indexOf(current);
+    const next = [...modes.slice(index + 1), ...modes.slice(0, index + 1)]
+      .find(mode => !this.failedModes.includes(mode));
+    if (!next) return false;
+    this.selectMode(next, alternativeHlsUrl);
+    return true;
+  }
+
+  private playbackModes(url: string, extras: Record<string, string> | null, alternativeHlsUrl: string): PlaybackMode[] {
     const mime = streamUrlMime(url) || streamMime(this.detectedMime);
     const drm = parseDrmConfig(extras);
-    const modes: PlaybackMode[] = drm?.type === 'playready' || drm?.type === 'unsupported'
+    return drm?.type === 'playready' || drm?.type === 'unsupported'
       ? ['native']
       : isShakaDrmConfig(drm) ? ['shaka']
       : mime === 'application/dash+xml' ? ['native', 'shaka']
@@ -242,10 +263,12 @@ export class PlayerPipeline {
         ? (alternativeHlsUrl ? ['native', 'mpegts', 'hls'] : ['native', 'mpegts'])
       : mime && !mime.includes('octet-stream') ? ['native']
       : ['native', 'hls', 'mpegts'];
-    const index = modes.indexOf(this.selectedMode ?? this.activeMode);
-    this.selectedMode = modes[(index + 1) % modes.length];
-    this.activeMode = this.selectedMode;
-    this.hlsUrl = this.selectedMode === 'hls' ? alternativeHlsUrl : '';
+  }
+
+  private selectMode(mode: PlaybackMode, alternativeHlsUrl: string): void {
+    this.selectedMode = mode;
+    this.activeMode = mode;
+    this.hlsUrl = mode === 'hls' ? alternativeHlsUrl : '';
     this.qualityChoice = null;
   }
 

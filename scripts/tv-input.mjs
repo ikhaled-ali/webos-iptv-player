@@ -27,7 +27,7 @@ import { formatOptions, parseArgs } from './cli-args.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const TV_SCRIPT = join(SCRIPT_DIR, 'tv.sh');
-const DEFAULT_APP_ID = 'com.lennylxx.iptv';
+const DEFAULT_APP_ID = 'com.ikhaled.iptv';
 const DEFAULT_PORT = 9998;
 const SCREEN = { width: 1920, height: 1080 };
 const MOVE_TOLERANCE = 1;

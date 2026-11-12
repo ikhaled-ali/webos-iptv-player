@@ -14,58 +14,39 @@
   overflow: hidden;
 }
 
+/* The icon column lines up with the group rows' icons below it. */
 .sidebar-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 16px 24px;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 22px 24px 18px 26px;
   border-bottom: 1px solid var(--border);
 }
 
-.channel-count {
-  font-size: 20px;
-  color: var(--text-muted);
-}
-
-.playlist-reload {
+.sidebar-label-icon {
+  width: 28px;
   flex-shrink: 0;
-  margin: 16px 24px;
-  min-height: 54px;
-  white-space: normal;
-}
-
-.playlist-reload[aria-disabled="true"] {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.channel-edit-btn {
-  width: 42px;
-  height: 42px;
-  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: var(--text-secondary);
-  background: transparent;
-  border: 2px solid transparent;
-  border-radius: var(--radius);
 }
 
-.channel-edit-btn-spacer {
-  width: 42px;
-  height: 42px;
-  flex-shrink: 0;
-}
-
-.channel-edit-btn:hover,
-.channel-edit-btn.focused {
-  color: var(--accent);
-  background-image: var(--focus-layer);
-}
-
-.channel-edit-btn img {
+.sidebar-label-icon svg {
+  width: 26px;
+  height: 26px;
   display: block;
-  width: 100%;
-  height: 100%;
-  transform: scaleX(-1);
+}
+
+.sidebar-label {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 24px;
+  font-weight: 300;
+  line-height: 1.25;
+  color: var(--text-primary);
 }
 
 /* Playlist tabs */

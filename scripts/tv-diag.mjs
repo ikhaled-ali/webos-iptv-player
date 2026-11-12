@@ -17,7 +17,7 @@ import {
 } from './cdp-logs.mjs';
 import { formatOptions, parseArgs } from './cli-args.mjs';
 
-const DEFAULT_APP_ID = 'com.lennylxx.iptv';
+const DEFAULT_APP_ID = 'com.ikhaled.iptv';
 const DEFAULT_PORT = 9998;
 const DEFAULT_TIMEOUT_MS = 30000;
 const DEFAULT_DURATION_MS = 15000;

@@ -1,6 +1,7 @@
 import {
   test,
   expect,
+  enterChannelEditMode,
   enterTab,
   isChromium53,
   neuterVideo,
@@ -1186,7 +1187,7 @@ test('channel editing and Reset Customization ask for the PIN while live locks a
   const prompt = page.locator('.parental-pin-prompt');
 
   await enterTab(page, 'live');
-  await page.locator('[data-edit-channels]').click();
+  await enterChannelEditMode(page);
   await expect(prompt).toBeVisible();
   await expect(prompt.locator('h2')).toContainText('Edit Channel List');
   await expect(page.locator('.channel-view.editing')).toHaveCount(0);

@@ -98,10 +98,6 @@
   background: var(--bg-secondary);
 }
 
-.epg-playlist-tabs::-webkit-scrollbar {
-  display: none;
-}
-
 .epg-playlist-tabs .playlist-tab {
   padding: 9px 14px;
   font-size: 17px;

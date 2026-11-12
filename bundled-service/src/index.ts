@@ -2,14 +2,16 @@
  * Bundled webOS JS service for the IPTV player — thin entry point.
  *
  * Resolves the data dir, binds the Luna service, and wires up each feature
- * module: LAN setup/uploads (HTTP + Luna; see lan/ and setup/) and reminder
- * alerts (dev-mode interactive createAlert; see reminder/). Off webOS (local
+ * module: LAN setup/uploads (HTTP + Luna; see lan/ and setup/), reminder
+ * alerts (dev-mode interactive createAlert; see reminder/), and live TV
+ * recording (see recording/). Off webOS (local
  * testing) it falls back to a direct upload HTTP listener.
  */
 
 import { registerLanService, startLanStandalone } from './lan/service';
 import { resolveDataDir } from './upload/store';
 import { registerReminderService } from './reminder/service';
+import { registerRecordingService } from './recording/service';
 
 // Service id from services.json — the file webOS hubd reads to register
 // this service on the Luna bus. Passing anything else into `new Service()`
@@ -33,8 +35,10 @@ if (Service) {
   try {
     const service = new Service(SERVICE_ID);
     console.log('[service] registered with Luna as ' + SERVICE_ID);
-    registerLanService(service, DATA_DIR, SERVICE_ID.replace(/\.service$/, ''));
+    const appId = SERVICE_ID.replace(/\.service$/, '');
+    registerLanService(service, DATA_DIR, appId);
     registerReminderService(service);
+    registerRecordingService(service, appId);
   } catch (e) {
     console.error('[service] failed to register Luna service:', e);
     throw e;

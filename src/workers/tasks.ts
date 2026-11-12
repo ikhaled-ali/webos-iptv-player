@@ -38,6 +38,7 @@ export type M3UWorkerChunk =
       chunks: number;
       channelsEmitted: number;
       channelsDropped: number;
+      totalBytes?: number;
     }
   | {
       kind: 'progress';
@@ -45,6 +46,7 @@ export type M3UWorkerChunk =
       chunks: number;
       channelsEmitted: number;
       channelsDropped: number;
+      totalBytes?: number;
     };
 
 export interface XMLTVWorkerRequest {

@@ -22,7 +22,7 @@ import {
   resolveConfiguredDeviceIp,
 } from './cdp-client.mjs';
 
-const DEFAULT_APP_ID = 'com.lennylxx.iptv';
+const DEFAULT_APP_ID = 'com.ikhaled.iptv';
 const DEFAULT_PORT = 9998;
 
 const usage = 'Usage: tv-eval.mjs [--app <id>] [--port '

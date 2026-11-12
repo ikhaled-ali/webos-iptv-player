@@ -30,7 +30,7 @@ See [storage protection](storage-and-data.md#encryption-at-rest).
 ```
 ┌──────────────────┐  Luna  ┌─────────────────────────────┐  HTTP  ┌──────────────────┐
 │ App (browser)    │◀──────▶│  Bundled service            │◀──────▶│  Phone / laptop  │
-│  src/app.ts      │        │  com.lennylxx.iptv.service  │  LAN   │  setup page      │
+│  src/app.ts      │        │  com.ikhaled.iptv.service  │  LAN   │  setup page      │
 │  LAN clients     │        │  lan/ + setup/ + upload/    │        │  (/setup)        │
 └──────────────────┘        └─────────────────────────────┘        └──────────────────┘
             ▲                             │

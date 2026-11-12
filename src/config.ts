@@ -83,8 +83,6 @@ export const CONFIG = {
     DVR_LIVE_EDGE: 10,          // within this many seconds of the window end counts as "at live"
     DVR_GO_LIVE_PAD: 3,         // Go-to-Live seeks to seekable.end minus this (s), avoiding a stall at the edge
     DVR_OLDEST_PAD: 3,          // Rewind stays inside the sliding window so its next refresh cannot strand playback
-    RESYNC_SEEK_BACK: 0.5,      // manual A/V resync: seconds to seek back to force a native-pipeline flush
-    RESYNC_TIMEOUT: 8000,       // ms safety cap to clear the "Resyncing…" message if `playing` never fires
     PLAYBACK_RATE_MEDIA_POLL_MS: 250, // wait cadence for the native pipeline's video.mediaId
     PLAYBACK_RATE_MEDIA_TIMEOUT: 5000, // max wait for video.mediaId before rejecting a rate change
     PLAYBACK_RATE_LUNA_TIMEOUT: 3000, // max wait for com.webos.media/setPlayRate
@@ -110,6 +108,13 @@ export const CONFIG = {
     MAX_RETAINED_PROGRAMMES: 120_000,
     // Visibility and mapping edits arrive one per keypress; coalesce them.
     CHANNEL_CHANGE_RELOAD_DELAY: 2000,
+  },
+
+  // The load progress panel: shown only for a load that takes a while, and
+  // held briefly at 100% before it closes on its own.
+  LOAD_PROGRESS: {
+    SHOW_DELAY_MS: 1500,
+    HIDE_DELAY_MS: 800,
   },
 
   // Xtream Movies/Series catalog + resume tuning.
@@ -168,6 +173,14 @@ export const CONFIG = {
     EXPANSION_FACTOR: 5,        // grow retained results near a virtual window boundary
     RESULT_CAP: 50_000,         // final per-group cap after progressive expansion
     HISTORY_MAX_ENTRIES: 10,    // recent searches kept
+    LAUNCH_QUERY_MAX_LENGTH: 200, // longest query a launch param may fill in
+  },
+
+  VOICE: {
+    // Longest a recognizer may take to start before the next one is tried.
+    START_TIMEOUT_MS: 3000,
+    // Longest a direct recognizer request waits for its reply.
+    LISTEN_TIMEOUT_MS: 15_000,
   },
 
   CHANNEL_HEALTH: {

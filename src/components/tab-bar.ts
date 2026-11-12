@@ -3,8 +3,8 @@ import { html, raw, type Safe } from '../utils/dom';
 import { morph } from '../utils/morph';
 import { clockTime, onClockTick } from '../utils/clock';
 import {
-  APP_LOGO, SEARCH_ICON, SETTINGS_ICON, UNLOCK_ICON,
-  TAB_GUIDE_ICON, TAB_LIVE_ICON, TAB_MOVIES_ICON, TAB_SERIES_ICON, weatherIcon,
+  APP_LOGO, MIC_ICON, SEARCH_ICON, SETTINGS_ICON, UNLOCK_ICON,
+  RECORD_ICON, TAB_GUIDE_ICON, TAB_LIVE_ICON, TAB_MOVIES_ICON, TAB_SERIES_ICON, weatherIcon,
 } from './icons';
 import type { Weather } from '../services/weather-service';
 import { AccountSwitcher, type AccountMenuCloseReason } from './account-switcher';
@@ -32,14 +32,17 @@ type SearchCollapseReason = 'toggle' | 'back' | 'escape' | 'dismiss' | 'hidden' 
 // to, and whether it needs an Xtream account.
 export const SECTIONS = [
   { id: 'live', labelKey: 'nav.live', view: 'channels', xtreamOnly: false },
-  { id: 'epg', labelKey: 'nav.epg', view: 'epg', xtreamOnly: false },
-  { id: 'movies', labelKey: 'nav.movies', view: 'movies', xtreamOnly: true },
   { id: 'series', labelKey: 'nav.series', view: 'series', xtreamOnly: true },
+  { id: 'movies', labelKey: 'nav.movies', view: 'movies', xtreamOnly: true },
+  { id: 'epg', labelKey: 'nav.epg', view: 'epg', xtreamOnly: false },
+  { id: 'recordings', labelKey: 'nav.recordings', view: 'recordings', xtreamOnly: false },
   { id: 'search', labelKey: 'nav.search', view: 'search', xtreamOnly: false },
   { id: 'settings', labelKey: 'nav.settings', view: 'settings', xtreamOnly: false },
 ] as const;
 
 export type Section = typeof SECTIONS[number]['id'];
+type RingKey = Section | 'voice' | 'lock-now' | 'account-avatar';
+export type VoiceSearchState = 'idle' | 'listening' | 'hint';
 type SectionDef = typeof SECTIONS[number];
 
 const TAB_ICONS: Partial<Record<Section, string>> = {
@@ -47,12 +50,15 @@ const TAB_ICONS: Partial<Record<Section, string>> = {
   epg: TAB_GUIDE_ICON,
   movies: TAB_MOVIES_ICON,
   series: TAB_SERIES_ICON,
+  recordings: RECORD_ICON,
 };
 
 // Xtream accounts get the full set; M3U-only accounts have no VOD/series catalog,
-// so they see Live, Guide, Settings and Search only.
-const FULL_SECTIONS: readonly SectionDef[] = SECTIONS;
-const LITE_SECTIONS: readonly SectionDef[] = SECTIONS.filter((s) => !s.xtreamOnly);
+// so they see Live, Guide, Settings and Search only. Recordings shows only
+// while there is at least one.
+function visibleSections(hasXtream: boolean, hasRecordings: boolean): readonly SectionDef[] {
+  return SECTIONS.filter((s) => (hasXtream || !s.xtreamOnly) && (hasRecordings || s.id !== 'recordings'));
+}
 
 // The section a view belongs to (null for the chromeless player / loading
 // views, which own no tab).
@@ -61,7 +67,6 @@ export function sectionForView(view: string): Section | null {
 }
 
 interface TabBarHandlers {
-  onSwitch: (section: Section) => void;
   // `pointer`: a click on the tab, which the pointer still rests on.
   onEnter: (section: Section, via: 'key' | 'pointer') => void;
   // The search query changed (typed / cleared); the host shows the results view
@@ -73,6 +78,10 @@ interface TabBarHandlers {
   // The search box was closed (Back / Escape / toggle): restore the view the
   // search was opened from.
   onSearchClose: () => void;
+  // The mic beside the magnifier was activated.
+  onVoiceSearch: (via: 'key' | 'pointer') => void;
+  // The mic lost focus while listening; its tooltip has closed.
+  onVoiceFocusLost: () => void;
   // A different Xtream account was chosen in the avatar dropdown.
   onSelectAccount: (accountId: string) => void;
   // The avatar dropdown opened; overlays above the tab bar must give way.
@@ -93,8 +102,9 @@ export class TabBar {
   private el: HTMLElement | null = null;
   private weather: Weather | null = null;
   private handlers: TabBarHandlers;
-  private sections: readonly SectionDef[] = FULL_SECTIONS;
+  private sections: readonly SectionDef[] = visibleSections(true, false);
   private hasXtream = true;
+  private hasRecordings = false;
   private _shown = false;   // docked & visible on the current view
   private _focused = false; // holds input focus (ring + key capture)
   private active: Section = 'live';
@@ -103,6 +113,7 @@ export class TabBar {
   private expandGeneration = 0;
   private expandStartedAt = 0;
   private searchBound = false;
+  private voiceState: VoiceSearchState = 'idle';
   private switcher: AccountSwitcher | null = null;
   private accounts: PlaylistEntry[] = [];
   private selectedAccountId = '';
@@ -130,24 +141,36 @@ export class TabBar {
   // keeps Search active, so the host shouldn't re-sync the active tab then).
   get searchOpen(): boolean { return this.searchExpanded; }
   get accountMenuOpen(): boolean { return !!this.switcher?.menuOpen; }
+  get micFocused(): boolean { return this._focused && this.onVoice(); }
   get activeSection(): Section { return this.active; }
 
   refresh(): void { this.render(); }
 
   private get accountShown(): boolean { return this.accounts.length > 0; }
-  // Focus targets = the sections, then "Lock now" and the account avatar when present.
-  private ringLength(): number {
-    return this.sections.length + (this.lockShown ? 1 : 0) + (this.accountShown ? 1 : 0);
+  // Focus targets in bar order: the sections with voice search after Search,
+  // then "Lock now" and the account avatar when present.
+  private ring(): RingKey[] {
+    const keys: RingKey[] = [];
+    for (const s of this.sections) {
+      keys.push(s.id);
+      if (s.id === 'search') keys.push('voice');
+    }
+    if (this.lockShown) keys.push('lock-now');
+    if (this.accountShown) keys.push('account-avatar');
+    return keys;
   }
-  private onLock(): boolean { return this.lockShown && this.focusIndex === this.sections.length; }
-  private onAccount(): boolean {
-    return this.accountShown
-      && this.focusIndex === this.sections.length + (this.lockShown ? 1 : 0);
+  private ringLength(): number { return this.ring().length; }
+  private ringIndex(key: RingKey): number { return Math.max(0, this.ring().indexOf(key)); }
+  private onLock(): boolean { return this.focusKey() === 'lock-now'; }
+  private onAccount(): boolean { return this.focusKey() === 'account-avatar'; }
+  private onVoice(): boolean { return this.focusKey() === 'voice'; }
+  private focusKey(): RingKey {
+    return this.ring()[this.focusIndex] ?? this.active;
   }
-  private focusKey(): string {
-    if (this.onLock()) return 'lock-now';
-    if (this.onAccount()) return 'account-avatar';
-    return this.sections[this.focusIndex]?.id ?? this.active;
+  // Keep the focused target across a ring change, or fall back to the active tab.
+  private keepFocusKey(key: RingKey): void {
+    const index = this.ring().indexOf(key);
+    this.focusIndex = index >= 0 ? index : this.ringIndex(this.active);
   }
 
   // The bar owns the keys exactly while its scope is on the stack.
@@ -161,28 +184,32 @@ export class TabBar {
   // Shown while a parental PIN entry keeps locked content open.
   setParentalSession(active: boolean): void {
     if (this.lockShown === active) return;
+    const key = this.focusKey();
     this.lockShown = active;
-    if (this.focusIndex >= this.sections.length) {
-      this.focusIndex = Math.max(0, this.sections.findIndex((s) => s.id === this.active));
-    }
+    this.keepFocusKey(key);
     if (this._shown) this.render();
+  }
+
+  setRecordings(hasRecordings: boolean): void {
+    if (this.hasRecordings === hasRecordings) return;
+    this.hasRecordings = hasRecordings;
+    this.setSections(this.hasXtream);
   }
 
   setSections(hasXtream: boolean): void {
     this.hasXtream = hasXtream;
-    this.sections = hasXtream ? FULL_SECTIONS : LITE_SECTIONS;
+    this.sections = visibleSections(hasXtream, this.hasRecordings);
     if (!this.sections.some((s) => s.id === this.active)) this.active = 'live';
-    this.focusIndex = Math.max(0, this.sections.findIndex((s) => s.id === this.active));
+    this.focusIndex = this.ringIndex(this.active);
     if (this._shown) this.render();
   }
 
   setAccounts(accounts: PlaylistEntry[], selectedId: string): void {
+    // If the avatar just disappeared while focused on it, park focus on the active tab.
+    const key = this.focusKey();
     this.accounts = accounts;
     this.selectedAccountId = selectedId;
-    // If the avatar just disappeared while focused on it, park focus on the active tab.
-    if (!this.accountShown && this.focusIndex >= this.sections.length + (this.lockShown ? 1 : 0)) {
-      this.focusIndex = Math.max(0, this.sections.findIndex((s) => s.id === this.active));
-    }
+    this.keepFocusKey(key);
     this.switcher?.setAccounts(accounts, selectedId);
     if (this._shown) this.render();
   }
@@ -203,7 +230,7 @@ export class TabBar {
   setActive(section: Section): void {
     if (section !== 'search' && this.searchExpanded) this.dropSearch('section-change');
     this.active = section;
-    this.focusIndex = Math.max(0, this.sections.findIndex((s) => s.id === section));
+    this.focusIndex = this.ringIndex(section);
     if (this._shown) this.render();
   }
 
@@ -213,6 +240,7 @@ export class TabBar {
   private dropSearch(reason: SearchCollapseReason): void {
     log.debug('Search box collapsed', 'event=search.box.collapsed', `reason=${reason}`);
     this.searchExpanded = false;
+    this.voiceState = 'idle';
     this.resetSearchInput();
   }
 
@@ -249,7 +277,7 @@ export class TabBar {
   focus(): void {
     if (!this._shown) return;
     this.setFocused(true);
-    this.focusIndex = Math.max(0, this.sections.findIndex((s) => s.id === this.active));
+    this.focusIndex = this.ringIndex(this.active);
     this.render();
     if (this.active === 'search' && this.searchExpanded) {
       this.el?.querySelector<HTMLInputElement>('.tab-bar-search-input')?.focus();
@@ -281,6 +309,15 @@ export class TabBar {
         if (this.searchExpanded) this.focus();
         return;
       }
+      if (hit?.closest('[data-voice-search]')) {
+        // The mic keeps the keys, so OK listens again and its tooltip stays.
+        this.el?.querySelector<HTMLInputElement>('.tab-bar-search-input')?.blur();
+        this.focusIndex = this.ringIndex('voice');
+        this.setFocused(true);
+        this.render();
+        this.handlers.onVoiceSearch('pointer');
+        return;
+      }
       const item = hit?.closest<HTMLElement>('.tab-bar-item');
       if (!item || !item.dataset.section) return;
       const section = item.dataset.section as Section;
@@ -291,7 +328,7 @@ export class TabBar {
         return;
       }
       this.active = section;
-      this.focusIndex = Math.max(0, this.sections.findIndex((s) => s.id === section));
+      this.focusIndex = this.ringIndex(section);
       this.dropFocus();
       this.handlers.onEnter(section, 'pointer');
     });
@@ -352,12 +389,19 @@ export class TabBar {
 
   handleAction(action: Action): void {
     if (!this._focused) return;
-    if (this.searchExpanded) {
+    if (this.searchExpanded && this.focusKey() === 'search') {
       // Reached only when the input lost DOM focus (e.g. to a pointer click),
       // since the global handler leaves keys typed into it alone.
       if (action === 'back') this.collapseSearch('back');
       else if (action === 'down' || action === 'select') this.leaveSearchInput();
       else this.el?.querySelector<HTMLInputElement>('.tab-bar-search-input')?.focus();
+      return;
+    }
+    // Elsewhere on the bar over open results (the mic after a voice search):
+    // Down goes into the results and Back closes the search, as from the box.
+    if (this.searchExpanded && (action === 'down' || action === 'back')) {
+      if (action === 'back') this.collapseSearch('back');
+      else this.leaveSearchInput();
       return;
     }
     switch (action) {
@@ -379,8 +423,16 @@ export class TabBar {
           }
         } else if (this.onAccount()) {
           this.switcher?.openMenu('key');
-        } else if (this.sections[this.focusIndex].id === 'search') {
-          this.expandSearch('key');
+        } else if (this.onVoice()) {
+          if (action === 'select') this.handlers.onVoiceSearch('key');
+          else this.enterActive();
+        } else if (this.focusKey() === 'search') {
+          if (action === 'select') this.expandSearch('key');
+          else this.enterActive();
+        } else if (action === 'select') {
+          // OK opens the focused section; moving along the bar never does.
+          this.active = this.focusKey() as Section;
+          this.enterActive();
         } else {
           this.enterActive();
         }
@@ -395,37 +447,31 @@ export class TabBar {
     }
   }
 
+  // Down and Back return to the shown section, wherever the bar's focus was.
   private enterActive(): void {
+    this.focusIndex = this.ringIndex(this.active);
     this.dropFocus();
     this.handlers.onEnter(this.active, 'key');
   }
 
-  // Moving onto a section switches it live; moving onto the avatar or the
-  // lock only re-renders.
+  // Moving along the bar only moves the focus; OK opens the section. Back
+  // onto the open box puts the caret in it.
   private afterMove(): void {
-    if (this.onAccount() || this.onLock()) this.render();
-    else this.commitSwitch();
-  }
-
-  private commitSwitch(): void {
-    // Back onto the shown section from the avatar or the lock: nothing to switch.
-    if (this.sections[this.focusIndex].id === this.active) {
-      this.render();
-      return;
-    }
-    this.active = this.sections[this.focusIndex].id;
     this.render();
-    this.handlers.onSwitch(this.active);
+    if (this.searchExpanded && this.focusKey() === 'search') {
+      this.el?.querySelector<HTMLInputElement>('.tab-bar-search-input')?.focus();
+    }
   }
 
   // Expand the inline search box: slide it out from the magnifier toward
   // Settings and focus it. The host keeps the current view; results only appear
   // (over it) once a query is typed.
-  private expandSearch(mode: 'key' | 'pointer'): void {
+  private expandSearch(mode: 'key' | 'pointer', focusInput = true): void {
     log.debug('Search box expanded', 'event=search.box.expanded', `mode=${mode}`);
     this.active = 'search';
-    this.focusIndex = this.sections.findIndex((s) => s.id === 'search');
+    this.focusIndex = this.ringIndex('search');
     this.searchExpanded = true;
+    this.voiceState = 'idle';
     this.setFocused(true);
     this.render();
     const input = this.el?.querySelector<HTMLInputElement>('.tab-bar-search-input');
@@ -436,7 +482,36 @@ export class TabBar {
     this.expandStartedAt = Date.now();
     // After sizing the box, so the host can hang recent searches from it.
     this.handlers.onEnter('search', mode); // host remembers the current view + preps results
-    input?.focus();
+    if (focusInput) input?.focus();
+  }
+
+  // Open the search box for a query from outside (a launch param, voice).
+  openSearch(): void {
+    if (!this.searchExpanded) this.expandSearch('key');
+  }
+
+  // Listening shows a tooltip under the focused mic; a hint in the box says how
+  // to speak when the app can't listen itself.
+  setVoiceState(state: VoiceSearchState): void {
+    if (state === this.voiceState) return;
+    this.voiceState = state;
+    this.render();
+  }
+
+  // Open the search box without its caret, leaving the keys on the mic.
+  openSearchOnMic(): void {
+    if (!this.searchExpanded) this.expandSearch('key', false);
+    this.el?.querySelector<HTMLInputElement>('.tab-bar-search-input')?.blur();
+    this.focusIndex = this.ringIndex('voice');
+    this.setFocused(true);
+    this.render();
+  }
+
+  // Show what was said in the box over its results, with the keys left on the
+  // mic so OK can listen again.
+  showVoiceQuery(query: string): void {
+    this.openSearchOnMic();
+    this.setSearchQuery(query);
   }
 
   closeSearch(): void {
@@ -480,6 +555,7 @@ export class TabBar {
   private collapseSearch(reason: SearchCollapseReason): void {
     log.debug('Search box collapsed', 'event=search.box.collapsed', `reason=${reason}`);
     this.searchExpanded = false;
+    this.voiceState = 'idle';
     const input = this.el?.querySelector<HTMLInputElement>('.tab-bar-search-input');
     if (input) { input.value = ''; input.style.width = ''; input.blur(); }
     // The bar keeps the keys over the restored view, which Down resumes.
@@ -539,6 +615,10 @@ export class TabBar {
 
   private render(): void {
     if (!this.el) return;
+    // The tooltip lives only while the mic has the keys.
+    const voiceLost = this.voiceState === 'listening' && !(this._shown && this._focused && this.onVoice());
+    if (voiceLost) this.voiceState = 'idle';
+    const listening = this.voiceState === 'listening';
     morph(this.el, html`
       <div class="tab-bar-inner" data-nav-container>
         <span class="tab-bar-brand">${raw(APP_LOGO)}</span>
@@ -550,6 +630,8 @@ export class TabBar {
         `;
         })}
         <div class="tab-bar-search ${this.searchExpanded ? 'expanded' : ''}" data-key="search-slot" data-morph-preserve></div>
+        <button class="tab-bar-item tab-bar-icon voice-search ${listening ? 'listening' : ''}"
+                data-key="voice" data-voice-search aria-label="${t('search.voice')}">${raw(MIC_ICON)}${listening ? html`<span class="tab-bar-voice-tip" role="status">${t('search.listening')}</span>` : ''}</button>
         <button class="tab-bar-item tab-bar-icon ${this.active === 'settings' ? 'active' : ''}"
                 data-key="settings" data-section="settings" aria-label="${t('nav.settings')}">${raw(SETTINGS_ICON)}</button>
         ${this.lockShown ? html`
@@ -563,10 +645,11 @@ export class TabBar {
     `);
     this.mountSearch();
     this.mountAccount();
+    if (voiceLost) this.handlers.onVoiceFocusLost();
     if (!this._focused) return;
     this.scope.focus(this.focusKey(), 'key');
     // The box's caret marks where the keys go.
-    if (this.searchExpanded) this.scope.conceal();
+    if (this.searchExpanded && this.focusKey() === 'search') this.scope.conceal();
   }
 
   // The search slot's children are owned here (preserved from morph): build the
@@ -590,7 +673,7 @@ export class TabBar {
       if (!this.searchBound) { this.bindSearchInput(input); this.searchBound = true; }
     }
     const input = wrap.querySelector<HTMLInputElement>('.tab-bar-search-input')!;
-    input.placeholder = this.searchPlaceholder();
+    input.placeholder = this.voiceState === 'hint' ? t('search.voiceHint') : this.searchPlaceholder();
     const btn = wrap.querySelector<HTMLElement>('.search-icon')!;
     btn.classList.toggle('active', this.active === 'search');
   }
@@ -605,6 +688,7 @@ export class TabBar {
 
   private bindSearchInput(input: HTMLInputElement): void {
     input.addEventListener('input', () => {
+      if (this.voiceState === 'hint') this.voiceState = 'idle';
       this.handlers.onSearchQuery(input.value);
     });
     // The global key handler ignores INPUT keydowns, so the box owns Enter/Down
@@ -636,7 +720,7 @@ export class TabBar {
           // its keys come back to the avatar when the menu closes.
           if (!this._focused || !this.onAccount()) {
             this.el?.querySelector<HTMLInputElement>('.tab-bar-search-input')?.blur();
-            this.focusIndex = this.sections.length + (this.lockShown ? 1 : 0);
+            this.focusIndex = this.ringIndex('account-avatar');
             this.setFocused(true);
             this.render();
           }

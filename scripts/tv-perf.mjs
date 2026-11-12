@@ -25,7 +25,7 @@ import {
 } from './cdp-logs.mjs';
 import { formatOptions, parseArgs } from './cli-args.mjs';
 
-const DEFAULT_APP_ID = 'com.lennylxx.iptv';
+const DEFAULT_APP_ID = 'com.ikhaled.iptv';
 
 export const PERFORMANCE_SPEC = {
   maxPositionals: 0,

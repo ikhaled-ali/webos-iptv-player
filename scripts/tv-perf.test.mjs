@@ -944,8 +944,8 @@ describe('parsePerformanceArgs', () => {
       intervalMs: 1000,
       durationMs: null,
       mode: 'monitor',
-      appId: 'com.lennylxx.iptv',
-      target: 'com.lennylxx.iptv',
+      appId: 'com.ikhaled.iptv',
+      target: 'com.ikhaled.iptv',
       targetSelection: 'legacy-tv-app',
     });
   });

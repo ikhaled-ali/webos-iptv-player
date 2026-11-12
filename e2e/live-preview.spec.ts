@@ -245,7 +245,7 @@ test('Settings saves On across reload and keeps Off after Close', async ({ page 
   await expect(page.locator(`${toggle} .active`)).toHaveAttribute('data-value', 'off');
   await page.locator(`${toggle} [data-value="on"]`).click();
   expect(await page.evaluate(() => localStorage.getItem('iptv_live_preview'))).toBe('true');
-  await page.locator('#cancel-settings').click();
+  await page.keyboard.press('Escape');
   expect(await page.evaluate(() => localStorage.getItem('iptv_live_preview'))).toBe('true');
   await page.reload();
   await expect(page.locator(ROW)).toHaveCount(2);
@@ -253,7 +253,7 @@ test('Settings saves On across reload and keeps Off after Close', async ({ page 
   await enterTab(page, 'settings');
   await page.locator('[data-settings-target="playback"]').click();
   await page.locator(`${toggle} [data-value="off"]`).click();
-  await page.locator('#cancel-settings').click();
+  await page.keyboard.press('Escape');
   expect(await page.evaluate(() => localStorage.getItem('iptv_live_preview'))).toBe('false');
   await page.locator(ROW).first().click();
   await expect(page.locator('#view-player')).toBeVisible();
@@ -894,7 +894,7 @@ test('Stop removes preview and section returns do not restart it', async ({ page
   });
   await selectFirst(page);
   await enterTab(page, 'settings');
-  await page.locator('#cancel-settings').click();
+  await page.keyboard.press('Escape');
   await expect(page.locator('#view-channels')).toBeVisible();
   await expect(page.locator(PANEL)).toBeHidden();
 });
@@ -968,7 +968,7 @@ test.describe('display timezone', () => {
 
     await enterTab(page, 'settings');
     await page.locator('#tz-mode [data-value="feed"]').click();
-    await page.locator('#cancel-settings').click();
+    await page.keyboard.press('Escape');
     await selectFirst(page);
     await expect(page.locator(`${PANEL} .live-preview-program time`).first())
       .toHaveText('13:00–14:00');

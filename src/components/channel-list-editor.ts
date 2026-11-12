@@ -40,7 +40,6 @@ interface ChannelListEditorOptions {
   // A row's place in its list, whether or not it is rendered; -1 if absent.
   rowPosition: (key: string) => number;
   // Edit mode behind the parental guard; never call enterEditMode directly.
-  requestEditMode: (group: ChannelGroupId) => void;
 }
 
 const EPG_OPTION_HEIGHT = 72;
@@ -762,9 +761,7 @@ export class ChannelListEditor {
   private activateFavoriteTarget(): void {
     const focused = this.nav.focused;
     if (!focused) return;
-    if (focused.dataset.editChannels !== undefined) {
-      this.options.requestEditMode(this.options.getCurrentGroup());
-    } else if (focused.dataset.playlist !== undefined) {
+    if (focused.dataset.playlist !== undefined) {
       this.options.setLocation('builtin:all', focused.dataset.playlist);
       this.favoriteSelection = null;
       this.options.render();

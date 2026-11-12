@@ -484,7 +484,7 @@ function formatExpiry(expiresAt: number | null): string {
 }
 
 // Autosave keeps Settings open; loading sources and the exit actions belong to App.
-export type SaveAction = 'reload' | 'apply' | 'autosave' | 'reset' | 'cancel' | 'edit-channels';
+export type SaveAction = 'reload' | 'apply' | 'autosave' | 'reset' | 'edit-channels';
 
 export class Settings {
   private container: HTMLElement;
@@ -1222,10 +1222,6 @@ export class Settings {
               ${CONFIG.APP_NAME} v${CONFIG.VERSION}
             </div>
           </div>
-
-          <div class="settings-actions" data-nav-container>
-            <button class="btn btn-secondary btn-large" data-focusable id="cancel-settings">${t('common.close')}</button>
-          </div>
         </div>
       </div>
     `);
@@ -1531,8 +1527,6 @@ export class Settings {
       this.selectThemeSwatch(el, via);
     } else if (el.id === 'load-playlists') {
       this.save(true);
-    } else if (el.id === 'cancel-settings') {
-      this.onSave('cancel');
     } else if (el.id === 'refresh-data') {
       this.save(true);
     } else if (el.id === 'clear-cache') {
@@ -2145,7 +2139,7 @@ export class Settings {
   private leftPeer(el: HTMLElement | null): HTMLElement | null {
     if (!el) return null;
     const group = el.closest<HTMLElement>(
-      '.toggle-group, .theme-swatch-grid, .settings-row, .xtream-fields, .xtream-card-foot, .settings-actions, .epg-offset-controls',
+      '.toggle-group, .theme-swatch-grid, .settings-row, .xtream-fields, .xtream-card-foot, .epg-offset-controls',
     );
     if (!group) return null;
     const rect = el.getBoundingClientRect();
@@ -2689,6 +2683,14 @@ export class Settings {
     } finally {
       this.loadingAccounts.delete(id);
       this.updateAccountButtons();
+    }
+  }
+
+  /** Drop the time corrections of guides that went with a removed account. */
+  forgetEpgOffsets(urls: string[]): void {
+    for (const url of urls) {
+      delete this.epgOffsets[url];
+      delete this.storedEpgOffsets[url];
     }
   }
 

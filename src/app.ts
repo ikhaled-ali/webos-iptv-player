@@ -5,7 +5,14 @@ import { uploadEncryptionKey } from './services/credential-vault';
 import { CONFIG } from './config';
 import { KeyHandler } from './navigation/key-handler';
 import { PlaylistService } from './services/playlist-service';
-import { refreshAccountCatalog } from './services/xtream-catalog';
+import {
+  onCatalogLoadProgress,
+  preloadAccountCatalog,
+  refreshAccountCatalog,
+  type CatalogPreloadOutcome,
+} from './services/xtream-catalog';
+import { isXtreamRequestCancelled } from './services/xtream-client';
+import { forgetXtreamAccounts, removedXtreamAccountIds } from './services/account-removal';
 import { EpgService } from './services/epg-service';
 import { ChannelHealthService } from './services/channel-health';
 import { StorageService } from './services/storage-service';
@@ -36,10 +43,21 @@ import { SearchHistoryDropdown } from './components/search-history-dropdown';
 import { showToast } from './components/toast';
 import { showNumberEntry, hideNumberEntry } from './components/number-entry';
 import { ReminderService } from './services/reminder-service';
+import { routeLaunchParams, type LaunchVia } from './services/launch-intent';
+import { startVoiceSearch, type VoiceOutcome, type VoiceSession } from './services/voice-input';
 import { ReminderPrompt } from './components/reminder-prompt';
 import { ReminderManager } from './components/reminder-manager';
+import { RecordingController } from './components/recording-controller';
+import { RECORDINGS_ACCOUNT, RecordingsView } from './components/recordings-view';
 import { ParentalControls } from './components/parental-controls';
 import { ParentalPinPrompt } from './components/parental-pin-prompt';
+import { LoadProgressPanel } from './components/load-progress-panel';
+import {
+  channelLoadFraction,
+  fractionOf,
+  LoadProgressTracker,
+  type LoadPart,
+} from './utils/load-progress';
 import {
   liveParentalRequest,
   ParentalControlService,
@@ -70,7 +88,7 @@ import { getLocale, initLocale, resolveLocale, setLocale, t, tp } from './i18n';
 const log = createLogger('App');
 
 type ViewName = 'channels' | 'player' | 'epg' | 'settings' | 'parental-controls' | 'reminders'
-  | 'loading' | 'movies' | 'series' | 'search';
+  | 'loading' | 'movies' | 'series' | 'search' | 'recordings';
 
 class App {
   private views!: Record<ViewName, HTMLElement>;
@@ -89,6 +107,8 @@ class App {
   private parentalPinPrompt = new ParentalPinPrompt();
   private sidebar!: Sidebar;
   private menu!: PlayerMenu;
+  private recording!: RecordingController;
+  private recordings!: RecordingsView;
   private reminderPrompt = new ReminderPrompt();
   private reminderManager!: ReminderManager;
   private reminderManagerOrigin: 'settings' | 'epg' = 'settings';
@@ -98,6 +118,9 @@ class App {
   private movies!: Movies;
   private series!: Series;
   private lastSearchQuery = '';
+  // Set before the session starts: an engine may answer before it returns.
+  private voiceListening = false;
+  private voiceSession: VoiceSession | null = null;
   private enterChannelsAfterUploadSync = false;
   private remindersInitialized = false;
   private bundledServiceStarting = false;
@@ -108,6 +131,11 @@ class App {
   private playlistRefreshPromise: Promise<void> | null = null;
   // The load confirmation toast owns the screen until loadData() settles.
   private loadingData = false;
+  private readonly loadProgress = new LoadProgressTracker();
+  private loadPanel!: LoadProgressPanel;
+  private loadPanelTimer: ReturnType<typeof setTimeout> | null = null;
+  // The user sent the current load to the background; it stays out of sight.
+  private loadPanelDismissed = false;
   private dataLoadRevision = 0;
   private epgRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   private epgRefreshIntervalMs: number | null | undefined;
@@ -120,8 +148,11 @@ class App {
     await initSecurePersistence();
     await StorageService.init();
     ParentalControlService.reload();
-    StorageService.setPlaylistsReplacedHandler((previous, next) =>
-      ParentalControlService.reviewChangedSources(previous, next));
+    StorageService.setPlaylistsReplacedHandler((previous, next) => {
+      ParentalControlService.reviewChangedSources(previous, next);
+      const removed = removedXtreamAccountIds(previous, next);
+      if (removed.length) this.forgetRemovedAccounts(removed);
+    });
     ParentalControlService.setChallengeHandler(request =>
       this.parentalPinPrompt.showChallenge(request));
     StorageService.setWriteFailureHandler(() => showToast(t('app.saveFailed')));
@@ -141,6 +172,7 @@ class App {
       movies: $('#view-movies')!,
       series: $('#view-series')!,
       search: $('#view-search')!,
+      recordings: $('#view-recordings')!,
       loading: $('#view-loading')!,
     };
 
@@ -152,12 +184,6 @@ class App {
         onChannelsChanged: () => {
           this.player.syncCurrentIndex();
           this.scheduleEpgReload();
-        },
-        onReloadPlaylists: async () => {
-          await this.queuePlaylistRefresh();
-          if (PlaylistService.hasFailedSource(StorageService.getPlaylists().map(source => source.id))) {
-            showToast(t('app.loadFailed'));
-          }
         },
         onEpgMappingChanged: () => this.scheduleEpgReload(),
         onEpgOffsetChanged: () => {
@@ -272,7 +298,7 @@ class App {
     this.player.setMenuOpener(() => {
       this.sidebar.hide();
       this.menu.show();
-    });
+    }, () => this.menu.visible);
     this.menu = new PlayerMenu(
       this.views.player,
       () => this.player.getCurrentChannel(),
@@ -289,7 +315,39 @@ class App {
       () => this.player.openSubtitleSearch(),
       () => this.player.getQualityState(),
       index => this.player.selectQuality(index),
+      () => ({ available: this.recording.canRecord(), active: this.recording.recording }),
     );
+    this.recording = new RecordingController(this.views.player, {
+      target: () => this.player.recordingTarget(),
+      onRecordingsChanged: () => { void this.recordings.refresh(); },
+      onStateChanged: () => this.menu.refresh(),
+    });
+    this.player.setLeaveGuard(
+      (next, proceed) => this.recording.guard(next, proceed),
+      () => this.recording.stopAndSave(),
+    );
+    this.recordings = new RecordingsView(this.views.recordings, {
+      onRevealTabBar: () => this.leaveUp(),
+      onBack: () => this.goLive(),
+      onCountChanged: (count) => this.tabBar?.setRecordings(count > 0),
+      onPlay: (entry, resumeSecs) => {
+        this.player.playVod({
+          url: entry.url,
+          title: entry.programTitle || entry.channelName,
+          poster: entry.logo,
+          accountId: RECORDINGS_ACCOUNT,
+          itemId: entry.id,
+          kind: 'vod',
+          subtitles: [],
+          resumeSecs,
+          onBack: () => {
+            this.showView('recordings');
+            void this.recordings.open();
+          },
+        });
+      },
+    });
+    this.menu.setOnHide(() => this.player.panelClosed());
 
     this.movies = new Movies(this.views.movies, {
       onRevealTabBar: () => this.leaveUp(),
@@ -363,7 +421,6 @@ class App {
       onDismiss: () => this.tabBar.closeSearch(),
     });
     this.tabBar = new TabBar({
-      onSwitch: (section) => this.switchSection(section),
       onEnter: (section, via) => this.enterSection(section, via),
       onSearchQuery: (query) => this.handleSearchQuery(query),
       onSearchLeave: () => {
@@ -374,6 +431,8 @@ class App {
         return this.openHistoryDropdown() && this.historyDropdown.focusFirst();
       },
       onSearchClose: () => this.handleSearchClose(),
+      onVoiceSearch: () => this.toggleVoiceSearch(),
+      onVoiceFocusLost: () => this.cancelVoiceSearch(),
       onSelectAccount: (id) => this.selectXtreamAccount(id),
       onAccountMenuOpen: () => this.historyDropdown.close('account-menu'),
       onAccountMenuClose: (reason, hit) => {
@@ -404,6 +463,8 @@ class App {
       FocusRing.sync();
       Focus.input();
     });
+    this.loadPanel = new LoadProgressPanel(() => this.dismissLoadProgress());
+    this.loadProgress.onChange(() => this.syncLoadPanel());
     this.initFocusScopes();
     FocusRing.install(() => {
       const owner = Focus.owner();
@@ -417,12 +478,21 @@ class App {
     this.enterChannelsAfterUploadSync = StorageService.getPlaylists().length === 0;
     this.bindBundledServiceLifecycle();
     this.bindReminderLifecycle();
+    // The Recordings tab shows once the service lists any; a drive plugged in
+    // while away can add some.
+    void this.recordings.refresh();
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') void this.recordings.refresh();
+    });
     // Register a retail-safe callback immediately. If Developer Mode is
     // detected below, the same named activities are replaced with alerts.
     ReminderService.reschedulePending();
     await this.loadData();
     // Cold launch from a "Watch now" alert: channels are loaded now, so tune.
-    this.handleLaunchParams(this.coldLaunchParams());
+    this.handleLaunchParams(this.coldLaunchParams(), 'launch');
+    // A cold start onto the channels opens on the menu's first item, Live.
+    // A load sent to the background already put the user there.
+    if (!this.loadPanelDismissed && this.isCurrentView('channels')) this.tabBar.focus();
     // Spawning the service process can synchronously stall Luna on a cold TV.
     // Keep LAN setup off the critical path so cached channels render first.
     const bundledServiceReady = this.startBundledService();
@@ -880,6 +950,7 @@ class App {
 
   private loadXtreamAccount(id: string): Promise<void> {
     const previous = this.playlistRefreshPromise;
+    let progress = 0;
     const task = (async () => {
       if (previous) await previous.catch(() => undefined);
       const account = StorageService.getPlaylists().find(source => source.id === id);
@@ -889,7 +960,10 @@ class App {
       this.stopPlaylistRefresh();
       this.stopEpgRefresh();
       this.dataLoadRevision++;
-      await PlaylistService.refreshSource(id);
+      progress = this.beginLoadProgress(['channels', 'movies', 'series'], true);
+      await PlaylistService.refreshSource(id, update =>
+        this.loadProgress.update(progress, 'channels', channelLoadFraction(update)));
+      this.loadProgress.settle(progress, 'channels', true);
       await ChannelHealthService.initialize();
       this.player.syncCurrentIndex();
       this.channelList.render();
@@ -900,9 +974,13 @@ class App {
       this.tabBar.setSections(accounts.length > 0);
       this.tabBar.setAccounts(accounts, this.activeXtreamAccount()?.id ?? '');
       await EpgService.updateSources(this.epgSources(), PlaylistService.getEpgEligibleChannels());
+      const catalog = this.trackCatalogProgress(account.id, progress);
       const results = await Promise.all([
         EpgService.refresh(() => this.refreshEpgDependentViews(), true, id),
-        refreshAccountCatalog(account),
+        refreshAccountCatalog(account, catalog.settle).then(
+          (complete) => { catalog.finish(); return complete; },
+          (err: unknown) => { catalog.finish(err); throw err; },
+        ),
       ]);
       this.refreshEpgDependentViews();
       this.search.invalidateCatalog();
@@ -921,7 +999,14 @@ class App {
       this.schedulePlaylistRefresh(true, StorageService.getPlaylistRefreshIntervalMs() ?? undefined);
       this.scheduleEpgRefresh(true, StorageService.getEpgRefreshIntervalMs() ?? undefined);
     };
-    return task.then(settled, err => { settled(); throw err; });
+    return task.then(settled, err => {
+      // A failed account load says why in Settings; its progress just goes.
+      if (progress && this.loadProgress.isCurrent(progress) && !this.loadProgress.settled) {
+        this.loadProgress.cancel(progress);
+      }
+      settled();
+      throw err;
+    });
   }
 
   private async refreshPlaylistInBackground(): Promise<void> {
@@ -961,10 +1046,17 @@ class App {
     }
   }
 
-  private async loadData(forceEpgRefresh = false): Promise<void> {
+  // Only a load started from Settings (a playlist added, an account loaded
+  // or updated) shows the progress panel; launch keeps the loading screen.
+  private async loadData(
+    forceEpgRefresh = false,
+    fromSettings = this.isCurrentView('settings'),
+  ): Promise<void> {
     const done = log.time('loadData');
     const revision = ++this.dataLoadRevision;
     this.loadingData = true;
+    this.loadPanelDismissed = false;
+    let progress = 0;
     show(this.views.loading);
     this.showView('loading');
     this.stopEpgRefresh();
@@ -994,17 +1086,31 @@ class App {
         return;
       }
 
+      const xtreamAccounts = StorageService.getPlaylists()
+        .filter((p) => p.source === 'xtream' && p.xtream && isSourceEnabled(p));
+      const catalogAccount = this.activeXtreamAccount();
+      progress = this.beginLoadProgress(
+        catalogAccount ? ['channels', 'movies', 'series'] : ['channels'],
+        fromSettings,
+      );
+      // Set before the channels land, so a load sent to the background
+      // leaves Movies and Series one key away.
+      this.tabBar.setSections(StorageService.getPlaylists()
+        .some((p) => p.source === 'xtream' && isSourceEnabled(p)));
+      this.tabBar.setAccounts(xtreamAccounts, catalogAccount?.id ?? '');
+
       const loadingText = $('#loading-text');
       if (loadingText) loadingText.textContent = t('app.loadingChannels');
       let lastProgressAt = 0;
-      await PlaylistService.load(progress => {
+      await PlaylistService.load(update => {
+        this.loadProgress.update(progress, 'channels', channelLoadFraction(update));
         if (!loadingText) return;
         const now = Date.now();
         if (now - lastProgressAt < 250) return;
         lastProgressAt = now;
         loadingText.textContent = t('app.loadingChannelsProgress', {
-          processed: progress.channelsProcessed,
-          kept: progress.channelsKept,
+          processed: update.channelsProcessed,
+          kept: update.channelsKept,
         });
       });
       this.player.syncCurrentIndex();
@@ -1019,15 +1125,12 @@ class App {
         EpgService.reset();
       }
       const epgChannels = PlaylistService.getEpgEligibleChannels();
+      this.loadProgress.settle(progress, 'channels', true);
 
-      const hasXtream = StorageService.getPlaylists()
-        .some((p) => p.source === 'xtream' && isSourceEnabled(p));
-      this.tabBar.setSections(hasXtream);
-      const xtreamAccounts = StorageService.getPlaylists()
-        .filter((p) => p.source === 'xtream' && p.xtream && isSourceEnabled(p));
-      this.tabBar.setAccounts(xtreamAccounts, this.activeXtreamAccount()?.id ?? '');
-
-      this.showView('channels');
+      // A load sent to the background left the user wherever they went.
+      const released = !this.isCurrentView('loading');
+      if (!released) this.showView('channels');
+      this.channelList.setLoading(false);
       this.channelList.render();
 
       showToast(tp('app.channelsLoaded', PlaylistService.channels.length));
@@ -1037,7 +1140,7 @@ class App {
       this.scanReminders();
       ReminderService.reschedulePending();
 
-      if (StorageService.getAutoPlay()) {
+      if (!released && StorageService.getAutoPlay()) {
         // The per-stream key survives customization and provider reshuffles.
         const lastCh = PlaylistService.resolveLastChannelIndex(
           StorageService.getLastChannelKey(),
@@ -1055,16 +1158,118 @@ class App {
       void this.restoreEpgAfterChannels(epgSources, epgChannels, forceEpgRefresh, revision);
       this.schedulePlaylistRefresh(true);
       this.searchPrewarm.schedule('startup');
+      if (catalogAccount) this.preloadCatalog(catalogAccount, progress);
     } catch (err) {
+      this.loadProgress.cancel(progress);
       log.error('loadData failed:', err);
       this.showView('settings');
       this.settings.render();
       showToast(t('app.loadFailed'));
     } finally {
       this.loadingData = false;
+      this.channelList.setLoading(false);
       hide(this.views.loading);
       done();
     }
+  }
+
+  // The panel waits a moment, so a load from cache never flashes it.
+  private beginLoadProgress(parts: LoadPart[], showPanel: boolean): number {
+    this.clearLoadPanelTimer();
+    // A dismissal holds for its own load only; while the channels still load
+    // behind one, the keys stay released.
+    if (!this.loadingData) this.loadPanelDismissed = false;
+    const session = this.loadProgress.start(parts);
+    if (!showPanel) {
+      if (this.loadPanel.visible) this.loadPanel.hide();
+      return session;
+    }
+    this.loadPanelTimer = setTimeout(() => {
+      this.loadPanelTimer = null;
+      if (!this.loadProgress.isCurrent(session) || this.loadProgress.settled
+        || this.loadPanelDismissed) return;
+      this.loadPanel.show(this.loadProgress.rows());
+    }, CONFIG.LOAD_PROGRESS.SHOW_DELAY_MS);
+    return session;
+  }
+
+  private syncLoadPanel(): void {
+    const rows = this.loadProgress.rows();
+    if (!this.loadPanel.visible) return;
+    if (!rows.length) {
+      this.clearLoadPanelTimer();
+      this.loadPanel.hide();
+      return;
+    }
+    this.loadPanel.update(rows);
+    if (!this.loadProgress.settled) return;
+    // Hold the finished rows long enough to read, then step aside.
+    this.clearLoadPanelTimer();
+    this.loadPanelTimer = setTimeout(() => {
+      this.loadPanelTimer = null;
+      if (this.loadProgress.settled) this.loadPanel.hide();
+    }, CONFIG.LOAD_PROGRESS.HIDE_DELAY_MS);
+  }
+
+  private clearLoadPanelTimer(): void {
+    if (this.loadPanelTimer === null) return;
+    clearTimeout(this.loadPanelTimer);
+    this.loadPanelTimer = null;
+  }
+
+  private dismissLoadProgress(): void {
+    this.loadPanelDismissed = true;
+    this.clearLoadPanelTimer();
+    if (!this.loadingData || !this.isCurrentView('loading')) return;
+    // The channels are still loading: open Live now; the list fills in once they land.
+    hide(this.views.loading);
+    this.channelList.setLoading(true);
+    this.showView('channels');
+    this.channelList.render();
+    this.tabBar.focus();
+  }
+
+  // Fill a cold Movies and Series catalog after the channels, so Search and
+  // the progress panel have it; a cached one counts as loaded.
+  private preloadCatalog(account: PlaylistEntry, session: number): void {
+    const catalog = this.trackCatalogProgress(account.id, session);
+    const { movies, series } = preloadAccountCatalog(account);
+    const track = (resource: 'vod_all' | 'series_all', task: Promise<CatalogPreloadOutcome>): Promise<void> =>
+      task.then(
+        outcome => {
+          if (outcome === 'skipped') this.loadProgress.drop(session, resource === 'vod_all' ? 'movies' : 'series');
+          else catalog.settle(resource);
+        },
+        (err: unknown) => catalog.settle(resource, err),
+      );
+    void Promise.all([track('vod_all', movies), track('series_all', series)]).then(() => catalog.finish());
+  }
+
+  // Moves the Movies and Series rows with the account's category loads.
+  // `finish` settles a row nothing reported on, then stops listening.
+  private trackCatalogProgress(accountId: string, session: number): {
+    settle: (resource: 'vod_all' | 'series_all', error?: unknown) => void;
+    finish: (error?: unknown) => void;
+  } {
+    const part = (resource: 'vod_all' | 'series_all'): LoadPart => resource === 'vod_all' ? 'movies' : 'series';
+    const off = onCatalogLoadProgress(update => {
+      if (update.accountId !== accountId) return;
+      this.loadProgress.update(session, part(update.resource),
+        fractionOf(update.categoriesDone, update.categoriesTotal));
+    });
+    const settle = (resource: 'vod_all' | 'series_all', error?: unknown): void => {
+      // Cleared or replaced by an account update or removal, which owns it now.
+      if (error !== undefined && isXtreamRequestCancelled(error)) this.loadProgress.drop(session, part(resource));
+      else this.loadProgress.settle(session, part(resource), error === undefined);
+    };
+    return {
+      settle,
+      finish: (error?: unknown) => {
+        off();
+        settle('vod_all', error);
+        settle('series_all', error);
+      },
+    };
   }
 
   private async restoreEpgAfterChannels(
@@ -1140,6 +1345,8 @@ class App {
     applyAnimationMode(StorageService.getAnimationMode());
     this.player.closeSubtitleSearch(); // never let the subtitle overlay linger across a view change
     this.player.closeSubtitleOffset(); // never let the subtitle-sync overlay linger across a view change
+    this.player.closeTitleInfo();
+    this.player.closeEpisodes();
     this.epgGrid.dismissPrompt(); // never let the catch-up prompt linger across a view change
     this.search.dismissPrompt();
     this.settings.dismissPrompt();
@@ -1159,6 +1366,7 @@ class App {
     // The docked tab bar shows on the section views and hides on the full-screen
     // player / EPG (and the loading splash), which render edge-to-edge.
     const section = sectionForView(name);
+    if (name !== 'search') this.cancelVoiceSearch();
     this.tabBar.setShown(section !== null);
 
     // Focus the channel entry point on entry — but not while the tab bar holds
@@ -1227,6 +1435,11 @@ class App {
       this.showView('settings');
       return;
     }
+    if (section === 'recordings') {
+      this.showView('recordings');
+      void this.recordings.open();
+      return;
+    }
     // Search: keep the current view, under the recent-searches dropdown; the
     // results view covers it once a query is typed (handleSearchQuery).
     // Remember where to return to.
@@ -1246,8 +1459,9 @@ class App {
     this.lastSearchQuery = '';
     this.tabBar.afterSearchExpanded(() => {
       const skip = this.lastSearchQuery.trim() ? 'typed'
-        : this.historyDropdown.isOpen ? 'open'
-          : this.tabBar.accountMenuOpen ? 'account-menu' : '';
+        : this.voiceListening || this.tabBar.micFocused ? 'voice'
+          : this.historyDropdown.isOpen ? 'open'
+            : this.tabBar.accountMenuOpen ? 'account-menu' : '';
       if (skip) {
         log.debug('Recent searches deferred open skipped', 'event=search.history.open.skipped', `reason=${skip}`);
         return;
@@ -1260,6 +1474,7 @@ class App {
   // current one while non-empty; when cleared, restore the underlying view
   // and drop the recent searches back down over it.
   private handleSearchQuery(query: string): void {
+    this.cancelVoiceSearch();
     this.lastSearchQuery = query;
     this.search.scheduleQuery(query);
     const hasQuery = query.trim().length > 0;
@@ -1314,6 +1529,7 @@ class App {
   // The search box was closed: clear it and return to the view it opened from
   // (showView re-syncs the active tab, since the box is already collapsed).
   private handleSearchClose(): void {
+    this.cancelVoiceSearch();
     this.search.deactivate();
     this.search.setQuery('');
     this.restoreViewBeforeSearch();
@@ -1448,6 +1664,31 @@ class App {
     return sources;
   }
 
+  // A removed account's channels, guide, catalog, and history go at once, not
+  // at the next refresh; the Movies and Series tabs follow the accounts left.
+  private forgetRemovedAccounts(ids: string[]): void {
+    const removal = forgetXtreamAccounts(ids, () =>
+      EpgService.updateSources(this.epgSources(), PlaylistService.getEpgEligibleChannels()));
+    // Sources can change before init builds the views.
+    if (!this.tabBar) return;
+    this.settings.forgetEpgOffsets(removal.epgUrls);
+    this.search.invalidateCatalog();
+    for (const id of ids) {
+      this.movies.invalidateAccount(id);
+      this.series.invalidateAccount(id);
+    }
+    const accounts = StorageService.getPlaylists()
+      .filter(source => source.source === 'xtream' && source.xtream && isSourceEnabled(source));
+    this.tabBar.setSections(StorageService.getPlaylists()
+      .some(source => source.source === 'xtream' && isSourceEnabled(source)));
+    this.tabBar.setAccounts(accounts, this.activeXtreamAccount()?.id ?? '');
+    this.player.syncCurrentIndex();
+    this.channelList.render();
+    this.sidebar.refresh();
+    this.livePreview?.refresh();
+    void removal.done.then(() => this.refreshEpgDependentViews(), () => undefined);
+  }
+
   private activeXtreamAccount(): PlaylistEntry | null {
     const accounts = StorageService.getPlaylists()
       .filter((p) => p.source === 'xtream' && p.xtream && isSourceEnabled(p));
@@ -1546,24 +1787,95 @@ class App {
     });
     // "Watch now" on a dev-mode reminder alert relaunches us with a channel key.
     document.addEventListener('webOSRelaunch', (e) => {
-      this.handleLaunchParams((e as CustomEvent).detail);
+      this.handleLaunchParams((e as CustomEvent).detail, 'relaunch');
     });
   }
 
+  // webOS 22+ names the system object webOSSystem; older TVs only have PalmSystem.
   private coldLaunchParams(): unknown {
-    const w = window as unknown as { PalmSystem?: { launchParams?: string } };
-    return w.PalmSystem?.launchParams;
+    const w = window as unknown as {
+      webOSSystem?: { launchParams?: string };
+      PalmSystem?: { launchParams?: string };
+    };
+    return w.webOSSystem?.launchParams ?? w.PalmSystem?.launchParams;
   }
 
-  private handleLaunchParams(raw: unknown): void {
+  private handleLaunchParams(raw: unknown, via: LaunchVia): void {
+    routeLaunchParams(raw, via, {
+      reminder: (params) => this.handleReminderLaunch(params),
+      search: (query) => this.openSearchWithQuery(query),
+    });
+  }
+
+  private openSearchBox(): void {
+    if (!sectionForView(this.viewStack[this.viewStack.length - 1])) {
+      this.sidebar.hide();
+      this.menu.hide();
+      this.player.stop();
+      this.showView('channels');
+      this.channelList.render();
+    }
+    if (!this.tabBar.searchOpen) this.tabBar.openSearch();
+  }
+
+  // The mic beside Search: open the search box with the keys left on the mic,
+  // listen under a tooltip, then show the results for what was said, so OK
+  // can listen again. A second press, or the mic losing focus, stops it.
+  private toggleVoiceSearch(): void {
+    if (this.voiceListening) {
+      this.cancelVoiceSearch();
+      return;
+    }
+    this.tabBar.openSearchOnMic();
+    this.voiceListening = true;
+    this.tabBar.setVoiceState('listening');
+    const session = startVoiceSearch((outcome) => this.finishVoiceSearch(outcome));
+    if (this.voiceListening) this.voiceSession = session;
+  }
+
+  // Nothing heard leaves the box as it was. No engine: the box's hint says to
+  // use the remote's mic, which fills the box once it has the caret.
+  private finishVoiceSearch(outcome: VoiceOutcome): void {
+    if (!this.voiceListening) return;
+    this.voiceListening = false;
+    this.voiceSession = null;
+    this.tabBar.setVoiceState(outcome.kind === 'unavailable' ? 'hint' : 'idle');
+    if (outcome.kind === 'text') {
+      this.tabBar.showVoiceQuery(outcome.text);
+      this.handleSearchQuery(outcome.text);
+    }
+  }
+
+  private cancelVoiceSearch(): void {
+    if (!this.voiceListening) return;
+    const session = this.voiceSession;
+    this.voiceListening = false;
+    this.voiceSession = null;
+    session?.cancel();
+    this.tabBar.setVoiceState('idle');
+  }
+
+  private handleReminderLaunch(raw: unknown): boolean {
     const idx = ReminderService.resolveLaunchChannel(raw);
     if (idx >= 0) {
       log.info('Reminder launch — tuning channel index', idx);
       this.playChannel(idx);
-      return;
+      return true;
     }
     const concealed = ReminderService.resolveConcealedLaunchChannel(raw);
-    if (concealed) this.playConcealedReminder(concealed.key, concealed.channel);
+    if (!concealed) return false;
+    this.playConcealedReminder(concealed.key, concealed.channel);
+    return true;
+  }
+
+  // A launcher (a deep link) or voice asked for a query: open the search box
+  // over a section view with it filled in, as a recent-search pick does.
+  private openSearchWithQuery(query: string): void {
+    this.openSearchBox();
+    this.tabBar.setSearchQuery(query);
+    this.tabBar.blur();
+    this.handleSearchQuery(query);
+    this.search.focusFirstResult();
   }
 
   // The PIN prompt keeps the hidden channel's name out, as the notification did.
@@ -1635,6 +1947,7 @@ class App {
       series: this.series.focusScope,
       search: this.search.focusScope,
       reminders: this.reminderManager.focusScope,
+      recordings: this.recordings.focusScope,
     };
     for (const name of Object.keys(this.views) as ViewName[]) {
       views.set(name, own[name]
@@ -1650,7 +1963,11 @@ class App {
   }
 
   private handleKey(action: Action, event?: NumberEvent): void {
-    if (this.loadingData) return;
+    if (this.loadingData && !this.loadPanelDismissed) {
+      // Until the channels are in, only the progress panel takes keys.
+      if (this.loadPanel.visible) this.loadPanel.handleAction(action);
+      return;
+    }
     const currentView = this.viewStack[this.viewStack.length - 1];
     const owner = Focus.owner();
 
@@ -1669,20 +1986,21 @@ class App {
 
     const playbackKeys = !owner || owner.id === 'view.player' || owner.id === 'player.controls'
       || owner.id === 'player.menu' || owner.id === 'player.sidebar';
+    // Red records the live channel, Green switches the player, Yellow
+    // reloads the stream; the menu lists the same actions.
     if (currentView === 'player' && playbackKeys
         && (action === 'red' || action === 'green' || action === 'yellow')) {
       this.sidebar.hide();
-      if (action === 'yellow') {
-        this.player.hideOSD();
-        this.menu.showQuality();
+      this.menu.hide();
+      if (action === 'red') {
+        if (this.recording.recording || this.recording.canRecord()) this.recording.toggle();
         return;
       }
-      this.menu.hide();
       this.player.handleAction(action);
       return;
     }
-    // Live has no menu button in its OSD: Blue opens and closes the menu.
-    if (currentView === 'player' && playbackKeys && action === 'blue' && !this.player.isVod()) {
+    // Blue opens and closes the full control panel, live and VOD alike.
+    if (currentView === 'player' && playbackKeys && action === 'blue') {
       this.sidebar.hide();
       if (this.menu.visible) this.menu.hide();
       else {
@@ -1713,7 +2031,8 @@ class App {
     // Global shortcuts
     // While the channel list is in edit mode the color keys belong to the editor.
     const editingChannels = currentView === 'channels' && this.channelList.isEditing;
-    if (action === 'red' && currentView !== 'epg' && currentView !== 'player' && !editingChannels) {
+    if (action === 'red' && currentView !== 'epg' && currentView !== 'player'
+        && currentView !== 'recordings' && !editingChannels) {
       this.sidebar.hide();
       this.menu.hide();
       this.player.stop();
@@ -1765,6 +2084,10 @@ class App {
       }
       if (currentView === 'reminders') {
         this.reminderManager.handleAction('back');
+        return;
+      }
+      if (currentView === 'recordings') {
+        this.recordings.handleAction('back');
         return;
       }
       if (currentView === 'channels') {
@@ -1849,6 +2172,9 @@ class App {
       case 'reminders':
         this.reminderManager.handleAction(action);
         break;
+      case 'recordings':
+        this.recordings.handleAction(action);
+        break;
     }
   }
 
@@ -1873,7 +2199,7 @@ class App {
         const overMenu = !!(e.target as HTMLElement).closest('.player-menu');
         if (overMenu) {
           this.menu.resetTimer();
-        } else if (e.clientX < 1540) {
+        } else if (e.clientX < this.menu.left()) {
           this.menu.hide();
         }
       }
@@ -1922,21 +2248,20 @@ class App {
       location.reload();
       return;
     }
-    if (action !== 'cancel') {
-      const locale = resolveLocale(StorageService.getLocalePreference());
-      if (locale !== getLocale()) {
-        setLocale(locale);
-        this.tabBar.refresh();
-        ReminderService.reschedulePending();
-        if (automatic) this.settings.render();
-      }
-      // Republish on 'apply' too: subtitle credentials and other display-only
-      // settings never reach the phone page otherwise. Advisory, so it never
-      // holds up closing Settings.
-      void SetupClient.publishState();
+    const locale = resolveLocale(StorageService.getLocalePreference());
+    if (locale !== getLocale()) {
+      setLocale(locale);
+      this.tabBar.refresh();
+      ReminderService.reschedulePending();
+      if (automatic) this.settings.render();
     }
+    // Republish on 'apply' too: subtitle credentials and other display-only
+    // settings never reach the phone page otherwise. Advisory, so it never
+    // holds up closing Settings.
+    void SetupClient.publishState();
     if (action === 'reload') {
       if (this.loadingData) return;
+      const fromSettings = this.isCurrentView('settings');
       this.loadingData = true;
       const loadingText = $('#loading-text');
       if (loadingText) loadingText.textContent = t('app.loadingChannels');
@@ -1945,7 +2270,7 @@ class App {
       this.search.invalidateCatalog();
       try {
         await Promise.all([clearCachedPlaylist(), clearCachedCatalog()]);
-        await this.loadData(true);
+        await this.loadData(true, fromSettings);
       } catch (err) {
         log.error('Playlist reload failed:', err);
         this.showView('settings');

@@ -1,8 +1,17 @@
 import type { Action, AudioTrackOption, Channel, SubtitleTrackOption } from '../types';
 import { CONFIG } from '../config';
-import { $, html, inShownView, onceTransitionEnd, raw, withInstantScroll } from '../utils/dom';
+import { $, html, inShownView, onceTransitionEnd, raw, withInstantScroll, type Safe } from '../utils/dom';
 import { morph } from '../utils/morph';
-import { AUDIO_ICON, SPEED_ICON, SUBTITLE_ICON } from './icons';
+import {
+  AUDIO_ICON,
+  QUALITY_ICON,
+  RECORD_ICON,
+  RELOAD_ICON,
+  SPEED_ICON,
+  STOP_RECORD_ICON,
+  SUBTITLE_ICON,
+  SWITCH_PLAYER_ICON,
+} from './icons';
 import { t } from '../i18n';
 import {
   PLAYBACK_RATES,
@@ -14,15 +23,11 @@ import { qualityLabel, type QualityState } from '../utils/playback-quality';
 
 const AUTO_HIDE_MS = 5000;
 
-const MENU_ITEMS = [
-  { action: 'red', color: 'red', labelKey: 'player.switchPlayer' },
-  { action: 'green', color: 'green', labelKey: 'player.retry' },
-  { action: 'yellow', color: 'yellow', labelKey: 'player.quality' },
-] as const;
-
-const VOD_MENU_ITEMS = [
-  { action: 'yellow', color: 'yellow', labelKey: 'player.quality' },
-] as const;
+export interface MenuRecordingState {
+  // Whether the playing stream can be recorded at all (live, not catch-up).
+  available: boolean;
+  active: boolean;
+}
 
 // Sentinel data-menu-action values for the non-color rows.
 const OPEN_AUDIO = '__audio_open__';
@@ -35,6 +40,7 @@ const OPEN_SEARCH = '__subs_search__';
 const OPEN_SPEED = '__speed_open__';
 const PICK_SPEED = '__speed_rate__';
 const PICK_QUALITY = '__quality_pick__';
+const OPEN_QUALITY = '__quality_open__';
 
 /**
  * The action overlay shown on the right edge during playback. Owns its own
@@ -64,6 +70,7 @@ export class PlayerMenu {
   private selectPlaybackRate: (rate: PlaybackRate) => Promise<boolean>;
   private isVisible = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private onHide: () => void = () => {};
   private focusIdx = 0;
   private mode: 'main' | 'audio' | 'subtitles' | 'speed' | 'quality' = 'main';
   private cancelHide: (() => void) | null = null;
@@ -86,6 +93,7 @@ export class PlayerMenu {
     openSubtitleSearch: () => void,
     private getQualityState: () => QualityState = () => ({ options: [], selected: -1, loading: false }),
     private selectQuality: (index: number) => void = () => {},
+    private getRecordingState: () => MenuRecordingState = () => ({ available: false, active: false }),
   ) {
     this.getCurrentChannel = getCurrentChannel;
     this.onAction = onAction;
@@ -105,6 +113,16 @@ export class PlayerMenu {
 
   get visible(): boolean {
     return this.isVisible;
+  }
+
+  setOnHide(onHide: () => void): void {
+    this.onHide = onHide;
+  }
+
+  // The panel's resting left edge (its slide doesn't move it); the pointer
+  // leaving past it closes the menu.
+  left(): number {
+    return this.el ? this.el.offsetLeft : 1920;
   }
 
   show(): void {
@@ -153,6 +171,7 @@ export class PlayerMenu {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    this.onHide();
   }
 
   // Re-reads player state, e.g. after a speed change was found not to apply.
@@ -297,6 +316,8 @@ export class PlayerMenu {
       this.openSubtitles();
     } else if (action === OPEN_SPEED) {
       this.openSpeed();
+    } else if (action === OPEN_QUALITY) {
+      this.openQuality();
     } else if (action === BACK) {
       this.openMain();
     } else if (action === PICK_AUDIO) {
@@ -362,6 +383,10 @@ export class PlayerMenu {
 
   showQuality(): void {
     this.show();
+    this.openQuality();
+  }
+
+  private openQuality(): void {
     this.mode = 'quality';
     this.render();
     const selected = this.getQualityState().selected;
@@ -430,58 +455,65 @@ export class PlayerMenu {
 
     const ch = this.getCurrentChannel();
     const chName = ch?.name || '';
-    const rows = ch ? MENU_ITEMS : VOD_MENU_ITEMS;
     const tracks = this.getAudioTracks();
     const activeTrack = tracks.find(t => t.active);
     const subtitles = this.getSubtitleTracks();
     const activeSub = subtitles.find(t => t.active);
     const speed = this.getPlaybackRateState();
+    const quality = this.getQualityState();
+    const recording = this.getRecordingState();
+    const selectedQuality = quality.options.find(option => option.index === quality.selected);
+    const qualityValue = quality.selected === -1 || !selectedQuality
+      ? t('player.qualityAuto')
+      : qualityLabel(selectedQuality) || t('player.qualityOriginal');
 
     const audioShown = tracks.length >= 2;
 
+    // Live and VOD share one panel: icon, label, value, and the color key
+    // that does the same thing from the remote.
     morph(el, html`
       <div class="menu-header">
         <h2>${t('player.menu')}</h2>
         ${chName ? html`<div class="menu-subtitle">${t('player.playing', { name: chName })}</div>` : ''}
       </div>
       <div class="menu-items">
-        ${rows.map((item) => html`
-          <div class="menu-item"
-               data-key="${item.action}"
-               data-focusable data-menu-action="${item.action}">
-            <span class="menu-dot ${item.color}"></span>
-            <span class="menu-item-label">${t(item.labelKey)}</span>
-          </div>
-        `)}
-        ${speed.available ? html`
-          <div class="menu-item"
-               data-key="${OPEN_SPEED}"
-               data-focusable data-menu-action="${OPEN_SPEED}">
-            <span class="menu-icon speed">${raw(SPEED_ICON)}</span>
-            <span class="menu-item-label">${t('player.playbackSpeed')}</span>
-            <span class="menu-item-value">${speed.rate}x</span>
-          </div>
-        ` : ''}
-        ${audioShown ? html`
-          <div class="menu-item"
-               data-key="${OPEN_AUDIO}"
-               data-focusable data-menu-action="${OPEN_AUDIO}">
-            <span class="menu-icon audio">${raw(AUDIO_ICON)}</span>
-            <span class="menu-item-label">${t('player.audioTrack')}</span>
-            <span class="menu-item-value">${activeTrack?.label || ''}</span>
-          </div>
-        ` : ''}
-        ${subtitles.length >= 1 || this.subtitleSearchAvailable() ? html`
-          <div class="menu-item"
-               data-key="${OPEN_SUBS}"
-               data-focusable data-menu-action="${OPEN_SUBS}">
-            <span class="menu-icon subtitle">${raw(SUBTITLE_ICON)}</span>
-            <span class="menu-item-label">${t('player.subtitles')}</span>
-            <span class="menu-item-value">${activeSub?.label || t('common.off')}</span>
-          </div>
-        ` : ''}
+        ${recording.available ? this.row('red', recording.active ? 'recording' : 'record',
+          raw(recording.active ? STOP_RECORD_ICON : RECORD_ICON),
+          t(recording.active ? 'player.stopRecording' : 'player.record'), '', 'red') : ''}
+        ${this.row('green', 'switch', raw(SWITCH_PLAYER_ICON), t('player.switchPlayer'),
+          quality.player ?? '', 'green')}
+        ${this.row('yellow', 'reload', raw(RELOAD_ICON), t('player.reloadStream'), '', 'yellow')}
+        ${this.row(OPEN_QUALITY, 'quality', raw(QUALITY_ICON), t('player.quality'), qualityValue)}
+        ${speed.available
+          ? this.row(OPEN_SPEED, 'speed', raw(SPEED_ICON), t('player.playbackSpeed'), `${speed.rate}x`)
+          : ''}
+        ${audioShown
+          ? this.row(OPEN_AUDIO, 'audio', raw(AUDIO_ICON), t('player.audioTrack'), activeTrack?.label || '')
+          : ''}
+        ${subtitles.length >= 1 || this.subtitleSearchAvailable()
+          ? this.row(OPEN_SUBS, 'subtitle', raw(SUBTITLE_ICON), t('player.subtitles'),
+            activeSub?.label || t('common.off'))
+          : ''}
       </div>
     `);
+  }
+
+  private row(
+    action: string,
+    icon: string,
+    glyph: Safe,
+    label: string,
+    value: string,
+    key?: 'red' | 'green' | 'yellow',
+  ) {
+    return html`
+      <div class="menu-item" data-key="${action}" data-focusable data-menu-action="${action}">
+        <span class="menu-icon ${icon}">${glyph}</span>
+        <span class="menu-item-label">${label}</span>
+        <span class="menu-item-value">${value}</span>
+        ${key ? html`<span class="menu-key-dot ${key}" aria-hidden="true"></span>` : ''}
+      </div>
+    `;
   }
 
   private renderSpeed(): void {

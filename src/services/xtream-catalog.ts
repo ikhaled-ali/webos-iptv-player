@@ -5,7 +5,9 @@ import {
   XtreamRequestError,
 } from './xtream-client';
 import {
+  catalogCacheAvailable,
   catalogCacheGeneration,
+  clearCachedCatalogAccount,
   getCachedCatalog,
   getCachedCatalogMetadata,
   setCachedCatalog,
@@ -161,6 +163,28 @@ export function onCatalogListRefreshed(listener: (key: string, changed?: boolean
   };
 }
 
+export interface CatalogLoadProgress {
+  accountId: string;
+  resource: 'vod_all' | 'series_all';
+  categoriesDone: number;
+  categoriesTotal: number;
+}
+
+const progressListeners: Array<(progress: CatalogLoadProgress) => void> = [];
+
+/** Called as a whole catalog's categories load, cached ones included. */
+export function onCatalogLoadProgress(listener: (progress: CatalogLoadProgress) => void): () => void {
+  progressListeners.push(listener);
+  return () => {
+    const index = progressListeners.indexOf(listener);
+    if (index >= 0) progressListeners.splice(index, 1);
+  };
+}
+
+function notifyLoadProgress(progress: CatalogLoadProgress): void {
+  for (const listener of progressListeners.slice()) listener(progress);
+}
+
 // Refresh independently of the view. Unchanged catalogs only renew freshness,
 // preserving the payload version and its prepared worker index.
 function refreshListInBackground<T>(
@@ -230,6 +254,7 @@ async function cachedList<T>(
   signal: AbortSignal | undefined,
   refetch: RefetchList<T>,
   allowEmpty = false,
+  preloading = false,
 ): Promise<T[]> {
   const generation = generationFor(key);
   ensureCatalogActive(generation, signal);
@@ -245,6 +270,14 @@ async function cachedList<T>(
   const pending = accountRefreshes.get(generation.account);
   if (pending) {
     await pending;
+    ensureCatalogActive(generation, signal);
+    const restored = await getCachedCatalog<T[]>(key);
+    if (restored) return restored.data;
+  }
+  // Share a cold whole-catalog load the app started on account load.
+  const preload = preloading ? undefined : catalogPreloads.get(key);
+  if (preload) {
+    await preload.catch(() => undefined);
     ensureCatalogActive(generation, signal);
     const restored = await getCachedCatalog<T[]>(key);
     if (restored) return restored.data;
@@ -273,9 +306,10 @@ async function cachedItem<T>(
   signal: AbortSignal | undefined,
   refetch: () => Promise<T | null>,
 ): Promise<T | null> {
-  ensureActive(signal);
+  const generation = generationFor(key);
+  ensureCatalogActive(generation, signal);
   const cached = await getCachedCatalog<T>(key);
-  ensureActive(signal);
+  ensureCatalogActive(generation, signal);
   if (cached && fresh(cached.timestamp)) { log.debug('hit', key); return cached.data; }
   let data: T | null;
   try {
@@ -294,7 +328,7 @@ async function cachedItem<T>(
     }
     throw err;
   }
-  ensureActive(signal);
+  ensureCatalogActive(generation, signal);
   if (data) {
     await setCachedCatalog(key, data, StorageService.getXtreamCatalogRefreshIntervalMs());
     log.debug('fetched', key);
@@ -586,6 +620,10 @@ async function fetchCatalogPartitions<T extends { categoryId: string }>(
   const categoryIds = Array.from(new Set(categories.data.map(category => category.id)));
   const start = Math.max(0, categoryIds.indexOf(cursor?.data.nextCategory ?? ''));
   const partitions = new Map<string, CatalogPartition<T>>();
+  const reportProgress = (): void => notifyLoadProgress({
+    accountId, resource, categoriesDone: partitions.size, categoriesTotal: categoryIds.length,
+  });
+  reportProgress();
   let next = 0;
   let lastStarted: string | null = null;
   const load = async (): Promise<void> => {
@@ -603,6 +641,7 @@ async function fetchCatalogPartitions<T extends { categoryId: string }>(
         oldPartitions.get(categoryId),
       );
       partitions.set(categoryId, partition);
+      reportProgress();
     }
   };
   const loads: Array<Promise<void>> = [];
@@ -676,62 +715,134 @@ async function fetchCatalogPartitions<T extends { categoryId: string }>(
   };
 }
 
+function wholeVodCatalog(account: PlaylistEntry): RefetchList<VodItem> {
+  return (requestSignal, cached) => {
+    const client = clientFor(account);
+    return fetchWholeCatalog(
+      account.id,
+      'vod_all',
+      requestSignal,
+      client.getVodStreams,
+      client.getVodCategories,
+      item => item.streamId,
+      cached?.data,
+    );
+  };
+}
+
+function wholeSeriesCatalog(account: PlaylistEntry): RefetchList<SeriesItem> {
+  return (requestSignal, cached) => {
+    const client = clientFor(account);
+    return fetchWholeCatalog(
+      account.id,
+      'series_all',
+      requestSignal,
+      client.getSeries,
+      client.getSeriesCategories,
+      item => item.seriesId,
+      cached?.data,
+    );
+  };
+}
+
 export function loadAllVodStreams(
   account: PlaylistEntry,
   signal?: AbortSignal,
 ): Promise<VodItem[]> {
-  return cachedList(
-    `${account.id}|vod_all`,
-    signal,
-    (requestSignal, cached) => {
-      const client = clientFor(account);
-      return fetchWholeCatalog(
-        account.id,
-        'vod_all',
-        requestSignal,
-        client.getVodStreams,
-        client.getVodCategories,
-        item => item.streamId,
-        cached?.data,
-      );
-    },
-  );
+  return cachedList(`${account.id}|vod_all`, signal, wholeVodCatalog(account));
 }
 
 export function loadAllSeries(
   account: PlaylistEntry,
   signal?: AbortSignal,
 ): Promise<SeriesItem[]> {
-  return cachedList(
-    `${account.id}|series_all`,
-    signal,
-    (requestSignal, cached) => {
-      const client = clientFor(account);
-      return fetchWholeCatalog(
-        account.id,
-        'series_all',
-        requestSignal,
-        client.getSeries,
-        client.getSeriesCategories,
-        item => item.seriesId,
-        cached?.data,
-      );
-    },
-  );
+  return cachedList(`${account.id}|series_all`, signal, wholeSeriesCatalog(account));
 }
 
-export function refreshAccountCatalog(account: PlaylistEntry): Promise<boolean> {
+// `cached`: any copy was already stored, even a stale one, which the sections
+// and Search refresh on their own schedule. `skipped`: nothing can be stored.
+export type CatalogPreloadOutcome = 'loaded' | 'cached' | 'skipped';
+
+const catalogPreloads = new Map<string, Promise<CatalogPreloadOutcome>>();
+
+function preloadList<T>(
+  key: string,
+  resource: 'vod_all' | 'series_all',
+  refetch: RefetchList<T>,
+): Promise<CatalogPreloadOutcome> {
+  const pending = catalogPreloads.get(key);
+  if (pending) return pending;
+  const started = Date.now();
+  const task = (async (): Promise<CatalogPreloadOutcome> => {
+    // Without a store every boot would fetch the whole catalog again.
+    if (!await catalogCacheAvailable()) return 'skipped';
+    if (await getCachedCatalogMetadata(key)) return 'cached';
+    await cachedList(key, undefined, refetch, false, true);
+    return 'loaded';
+  })().catch((err: unknown) => {
+    if (!isXtreamRequestCancelled(err)) {
+      log.warn(
+        'Catalog preload failed',
+        'event=xtream.catalog.preload.failed',
+        `resource=${resource}`,
+        `reason=${err instanceof XtreamRequestError ? err.code : 'exception'}`,
+        `elapsedMs=${String(Date.now() - started)}`,
+      );
+    }
+    throw err;
+  });
+  catalogPreloads.set(key, task);
+  const done = (): void => {
+    if (catalogPreloads.get(key) === task) catalogPreloads.delete(key);
+  };
+  task.then(done, done);
+  return task;
+}
+
+/** Fill an account's cold Movies and Series catalogs, which Search then shares. */
+export function preloadAccountCatalog(account: PlaylistEntry): {
+  movies: Promise<CatalogPreloadOutcome>;
+  series: Promise<CatalogPreloadOutcome>;
+} {
+  return {
+    movies: preloadList(`${account.id}|vod_all`, 'vod_all', wholeVodCatalog(account)),
+    series: preloadList(`${account.id}|series_all`, 'series_all', wholeSeriesCatalog(account)),
+  };
+}
+
+/**
+ * Cancel a removed account's catalog work before it writes again, then delete
+ * what it stored, search indexes included.
+ */
+export function forgetAccountCatalog(accountId: string): Promise<void> {
+  accountRevisions.set(accountId, (accountRevisions.get(accountId) ?? 0) + 1);
+  accountRefreshes.delete(accountId);
+  for (const key of Array.from(catalogPreloads.keys())) {
+    if (key.indexOf(`${accountId}|`) === 0) catalogPreloads.delete(key);
+  }
+  return clearCachedCatalogAccount(accountId);
+}
+
+// `onSettled` hears each catalog finish, with the error of one that failed;
+// a call that joins an update in flight hears nothing.
+export function refreshAccountCatalog(
+  account: PlaylistEntry,
+  onSettled?: (resource: 'vod_all' | 'series_all', error?: unknown) => void,
+): Promise<boolean> {
   const pending = accountRefreshes.get(account.id);
   if (pending) return pending;
   accountRevisions.set(account.id, (accountRevisions.get(account.id) ?? 0) + 1);
-  const task = runAccountCatalogRefresh(account);
+  const task = runAccountCatalogRefresh(account, onSettled);
   accountRefreshes.set(account.id, task);
   const done = (): void => { accountRefreshes.delete(account.id); };
   void task.then(done, done);
   return task;
 }
 
-async function runAccountCatalogRefresh(account: PlaylistEntry): Promise<boolean> {
+async function runAccountCatalogRefresh(
+  account: PlaylistEntry,
+  onSettled?: (resource: 'vod_all' | 'series_all', error?: unknown) => void,
+): Promise<boolean> {
   const generation = generationFor(account.id);
   const client = clientFor(account);
   const refresh = async <T extends { categoryId: string }>(
@@ -741,15 +852,21 @@ async function runAccountCatalogRefresh(account: PlaylistEntry): Promise<boolean
     itemId: (item: T) => string,
   ): Promise<boolean> => {
     const key = `${account.id}|${resource}`;
-    const cached = await getCachedCatalog<T[]>(key);
-    const result = await fetchWholeCatalog(
-      account.id, resource, undefined, fetchItems, fetchCategories, itemId, cached?.data, true,
-    );
-    ensureCatalogActive(generation);
-    await storeList(key, result);
-    notifyListWritten(key);
-    for (const listener of refreshListeners) listener(key);
-    return result.state?.complete !== false;
+    try {
+      const cached = await getCachedCatalog<T[]>(key);
+      const result = await fetchWholeCatalog(
+        account.id, resource, undefined, fetchItems, fetchCategories, itemId, cached?.data, true,
+      );
+      ensureCatalogActive(generation);
+      await storeList(key, result);
+      notifyListWritten(key);
+      for (const listener of refreshListeners) listener(key);
+      onSettled?.(resource);
+      return result.state?.complete !== false;
+    } catch (err) {
+      onSettled?.(resource, err);
+      throw err;
+    }
   };
   const results = await Promise.all([
     refresh('vod_all', client.getVodStreams, client.getVodCategories, item => item.streamId),

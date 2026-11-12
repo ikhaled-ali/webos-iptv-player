@@ -202,66 +202,11 @@ function hover(el: HTMLElement): void {
 }
 
 describe('ChannelList.render', () => {
-  it('reloads once while busy and keeps the reload button focused', async () => {
-    let finish!: () => void;
-    const reload = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));
-    list = new ChannelList(container, { onChannelSelect: onSelect, onReloadPlaylists: reload });
+  it('labels the group list without reload or edit buttons', () => {
     list.render();
-    const button = container.querySelector<HTMLElement>('[data-reload-playlists]')!;
-    expect(button.textContent).toBe('Reload playlists');
-    hover(button);
-    list.handleAction('select');
-    list.handleAction('select');
-    expect(reload).toHaveBeenCalledTimes(1);
-    expect(button.textContent).toBe('Loading…');
-    expect(button.getAttribute('aria-busy')).toBe('true');
-    expect(ringed(button)).toBe(true);
-    finish();
-    await Promise.resolve();
-    expect(button.getAttribute('aria-busy')).toBe('false');
-    expect(button.textContent).toBe('Reload playlists');
-    expect(ringed(button)).toBe(true);
-    expect(onSelect).not.toHaveBeenCalled();
-  });
-
-  it.each([false, true])('reaches reload above groups and playlist tabs (tabs=%s)', (tabs) => {
-    if (tabs) playlistMock.playlistTabs = [{ id: 'p1', name: 'List 1' }, { id: 'p2', name: 'List 2' }];
-    list = new ChannelList(container, {
-      onChannelSelect: onSelect,
-      onReloadPlaylists: vi.fn().mockResolvedValue(undefined),
-    });
-    list.render();
-    hover(container.querySelector<HTMLElement>('[data-group-position="0"]')!);
-    list.handleAction('up');
-    if (tabs) {
-      expect(ringed(container.querySelector('.playlist-tab.active'))).toBe(true);
-      list.handleAction('up');
-    }
-    expect(ringed(container.querySelector('[data-reload-playlists]'))).toBe(true);
-    list.handleAction('down');
-    expect(ringed(container.querySelector(tabs ? '.playlist-tab.active' : '[data-group-position="0"]')))
-      .toBe(true);
-  });
-
-  it('clears the busy state after a failed pointer reload so it can be retried', async () => {
-    const reload = vi.fn().mockRejectedValue(new Error('unavailable'));
-    list = new ChannelList(container, { onChannelSelect: onSelect, onReloadPlaylists: reload });
-    list.render();
-    const button = container.querySelector<HTMLElement>('[data-reload-playlists]')!;
-    const original = document.elementFromPoint;
-    document.elementFromPoint = () => button;
-    try {
-      container.dispatchEvent(new MouseEvent('click', { clientX: 10, clientY: 10, bubbles: true }));
-    } finally {
-      document.elementFromPoint = original;
-    }
-    await Promise.resolve();
-    expect(reload).toHaveBeenCalledOnce();
-    expect(button.getAttribute('aria-busy')).toBe('false');
-    expect(toastMock.showToast).toHaveBeenCalledWith('Unable to load the playlist. Check the URL and try again.');
-    list.handleAction('select');
-    expect(reload).toHaveBeenCalledTimes(2);
-    await Promise.resolve();
+    expect(container.querySelector('.sidebar-header')?.textContent?.trim()).toBe('Live Categories');
+    expect(container.querySelector('.sidebar-header [data-focusable]')).toBeNull();
+    expect(container.querySelector('.channel-view button.btn')).toBeNull();
   });
 
   it('omits the live-preview toolbar when the setting is off', () => {
@@ -340,7 +285,7 @@ describe('ChannelList.render', () => {
 
     const original = Element.prototype.getBoundingClientRect;
     Element.prototype.getBoundingClientRect = function stub(this: Element): DOMRect {
-      const collapsed = this.classList.contains('channel-edit-btn');
+      const collapsed = this.classList.contains('channel-item');
       const size = collapsed ? 0 : 100;
       return { width: size, height: size, top: 0, left: 0, bottom: size, right: size } as DOMRect;
     };
@@ -353,7 +298,6 @@ describe('ChannelList.render', () => {
       data.channels.push(...savedChannels);
     }
 
-    expect(ringed(container.querySelector('.channel-edit-btn'))).toBe(false);
     expect(ringed(container.querySelector('.group-item'))).toBe(true);
   });
 
@@ -368,9 +312,9 @@ describe('ChannelList.render', () => {
     expect(container.querySelector('.settings-btn')).toBeNull();
   });
 
-  it('renders the channel count and all channels for the default group', () => {
+  it('renders the Categories label and all channels for the default group', () => {
     list.render();
-    expect(container.querySelector('.channel-count')?.textContent).toBe('3 channels');
+    expect(container.querySelector('.sidebar-label')?.textContent).toBe('Live Categories');
     expect(channelItems()).toHaveLength(3);
     expect(container.textContent).toContain('Alpha');
   });
@@ -393,26 +337,6 @@ describe('ChannelList.render', () => {
     expect(container.querySelector('[data-group="source:News"] .group-name')?.textContent)
       .toBe('News');
     expect(container.querySelector('.edit-text-input')).toBeNull();
-  });
-
-  it('opens channel editing from the pencil button', () => {
-    list.render();
-    const edit = container.querySelector<HTMLElement>('.channel-edit-btn');
-    expect(edit?.querySelector('img')?.getAttribute('src')).toBe('assets/icons/pencil.svg');
-    hover(edit!);
-    list.handleAction('select');
-    expect(list.isEditing).toBe(true);
-    expect(container.querySelector('.channel-edit-btn')).toBeNull();
-  });
-
-  it('uses the singular channel count for a one-channel playlist', () => {
-    const removed = playlistMock.channels.splice(1);
-    try {
-      list.render();
-      expect(container.querySelector('.channel-count')?.textContent).toBe('1 channel');
-    } finally {
-      playlistMock.channels.push(...removed);
-    }
   });
 
   it('renders no inline search magnifier (the tab bar owns search)', () => {
@@ -760,8 +684,6 @@ describe('ChannelList.render', () => {
     list.render();
     hover(container.querySelector<HTMLElement>('[data-group="builtin:recently-watched"]')!);
     list.handleAction('select');
-    expect(container.querySelector('.channel-edit-btn')).toBeNull();
-    expect(container.querySelector('.channel-edit-btn-spacer')).not.toBeNull();
     list.handleAction('yellow');
     expect(list.isEditing).toBe(false);
     expect(container.querySelector('.edit-hints')).toBeNull();

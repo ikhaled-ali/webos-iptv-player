@@ -1341,9 +1341,8 @@ describe('Settings editing', () => {
     });
   });
 
-  it('Close exits; refresh reloads', () => {
-    click('#cancel-settings');
-    expect(onSave).toHaveBeenLastCalledWith('cancel');
+  it('has no Close button; refresh reloads', () => {
+    expect(container.querySelector('#cancel-settings')).toBeNull();
     click('#refresh-data');
     expect(onSave).toHaveBeenLastCalledWith('reload');
   });
@@ -1594,12 +1593,10 @@ describe('Settings.save', () => {
     expect(activeValue()).toBe(enabled ? 'off' : 'on');
   });
 
-  it.each([false, true])('keeps an immediately saved live preview change from %s on Close', (enabled) => {
+  it.each([false, true])('keeps an immediately saved live preview change from %s', (enabled) => {
     state.livePreview = enabled;
     settings.render();
     click(`#live-preview-setting [data-value="${enabled ? 'off' : 'on'}"]`);
-    click('#cancel-settings');
-    expect(onSave).toHaveBeenCalledWith('cancel');
     expect(storageMock.setLivePreview).toHaveBeenCalledWith(!enabled);
     expect(state.livePreview).toBe(!enabled);
     settings.render();
@@ -1628,10 +1625,8 @@ describe('Settings.save', () => {
       .toBe(enabled ? 'off' : 'on');
   });
 
-  it('keeps an immediately saved prebuffering change on Close', () => {
+  it('keeps an immediately saved prebuffering change', () => {
     click('#prebuffering-setting [data-value="off"]');
-    click('#cancel-settings');
-    expect(onSave).toHaveBeenCalledWith('cancel');
     expect(storageMock.setPrebuffering).toHaveBeenCalledWith(false);
     expect(state.prebuffering).toBe(false);
     settings.render();

@@ -694,6 +694,9 @@ export interface VodQueueItem {
 export interface WatchlistOwner {
   kind: 'series';
   itemId: string;
+  // The series' own name and poster, so the player can add it to the Watchlist.
+  name?: string;
+  poster?: string;
 }
 
 // A VOD playback request handed to the player's VOD mode. The player derives no

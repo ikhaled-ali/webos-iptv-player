@@ -78,7 +78,7 @@ describe('TabBar', () => {
     const logo = document.querySelector('.tab-bar-brand > svg.app-logo');
     expect(logo?.getAttribute('aria-label')).toBe('iPlayer');
     expect(document.querySelector('.tab-bar-brand')?.children.length).toBe(1);
-    expect(items()).toEqual(['Live', 'Guide', 'Movies', 'Series', 'Search', 'Voice search', 'Settings']);
+    expect(items()).toEqual(['Home', 'Live', 'Guide', 'Movies', 'Series', 'Search', 'Voice search', 'Settings']);
     expect(focusedLabel()).toBe(null); // shown but not focused → no ring
     expect(document.body.classList.contains('tabbar-docked')).toBe(true);
   });
@@ -100,7 +100,7 @@ describe('TabBar', () => {
 
   it('renders only Live/Guide/Search/Settings for an M3U-only account', () => {
     bar.setSections(false);
-    expect(items()).toEqual(['Live', 'Guide', 'Search', 'Voice search', 'Settings']);
+    expect(items()).toEqual(['Home', 'Live', 'Guide', 'Search', 'Voice search', 'Settings']);
   });
 
   it('focus() puts the ring on the active tab', () => {

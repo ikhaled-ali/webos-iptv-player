@@ -919,6 +919,13 @@ export class ChannelList {
   }
 
   /** On entering the view: the entry point, or with `resume` where focus was left, brought into view. */
+  // Open a group from outside the list (Home's See all).
+  showGroup(group: ChannelGroupId): void {
+    this.currentGroup = group;
+    this.render();
+    this.highlightEntryPoint();
+  }
+
   highlightEntryPoint(resume = false): void {
     this.focusScope.enter(resume ? 'back' : 'key');
   }

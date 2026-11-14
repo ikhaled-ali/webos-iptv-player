@@ -8,18 +8,20 @@ import { morph } from '../utils/morph';
 import { clockTime, onClockTick } from '../utils/clock';
 import { formatDuration, formatPosition, formatTime, getProgress } from '../utils/time';
 import { t, tp } from '../i18n';
-import { EPISODES_ICON, INFO_ICON, NEXT_EPISODE_ICON, PAUSE_ICON, PLAY_ICON, PLAYER_MENU_ICON, seekIcon } from './icons';
+import {
+  EPISODES_ICON, INFO_ICON, NEXT_EPISODE_ICON, PAUSE_ICON, PLAY_ICON, PLAYER_MENU_ICON, seekIcon, watchlistIcon,
+} from './icons';
 
 /** A movie/episode control a remote key also drives, lit briefly when it does. */
 export type VodControl = 'rewind' | 'playpause' | 'forward';
 const PRESS_MS = 220;
 
 /** An OSD control the D-pad can hold, by its `data-key`. */
-export type OsdControl = 'seek' | 'rewind' | 'playpause' | 'forward' | 'skipintro' | 'info' | 'golive' | 'menu' | 'episodes' | 'next';
+export type OsdControl = 'seek' | 'rewind' | 'playpause' | 'forward' | 'skipintro' | 'info' | 'watchlist' | 'golive' | 'menu' | 'episodes' | 'next';
 // The bar is its own row above the buttons, wherever it is drawn.
 const CONTROL_ROWS: readonly (readonly OsdControl[])[] = [
   ['seek'],
-  ['rewind', 'playpause', 'forward', 'skipintro', 'info', 'golive', 'menu', 'episodes', 'next'],
+  ['rewind', 'playpause', 'forward', 'skipintro', 'info', 'watchlist', 'golive', 'menu', 'episodes', 'next'],
 ];
 
 export interface PlayerOsdSnapshot {
@@ -38,6 +40,8 @@ export interface PlayerOsdSnapshot {
   vodInIntro: boolean;
   /** The title has details, so the controls offer Title Info. */
   vodHasInfo: boolean;
+  /** Whether the title (an episode's series) is on the Watchlist; null when it can't be. */
+  vodWatchlisted: boolean | null;
   /** An episode of a series whose episode list the player holds. */
   vodHasEpisodes: boolean;
   upNextSeconds: number;
@@ -75,6 +79,7 @@ export interface PlayerOsdOptions {
   onNextEpisode: () => void;
   onSkipIntro: () => void;
   onShowInfo: () => void;
+  onToggleWatchlist: () => void;
   onShowEpisodes: () => void;
   onOpenMenu: () => void;
   onSurfaceClick: () => void;
@@ -285,6 +290,7 @@ export class PlayerOsd {
       case 'next': this.callbacks.onNextEpisode(); break;
       case 'skipintro': this.callbacks.onSkipIntro(); break;
       case 'info': this.callbacks.onShowInfo(); break;
+      case 'watchlist': this.callbacks.onToggleWatchlist(); break;
       case 'episodes': this.callbacks.onShowEpisodes(); break;
     }
   }
@@ -522,6 +528,11 @@ export class PlayerOsd {
                     aria-label="${t('player.titleInfo')}">
               ${raw(INFO_ICON)}
             </button>` : ''}
+          ${state.vodWatchlisted !== null ? html`
+            <button class="osd-vod-btn osd-vod-btn--small" data-watchlist data-focusable data-key="watchlist"
+                    aria-label="${t(state.vodWatchlisted ? 'catalog.removeWatchlist' : 'catalog.addWatchlist')}">
+              ${raw(watchlistIcon(state.vodWatchlisted))}
+            </button>` : ''}
           <button class="osd-vod-btn osd-vod-btn--small" data-menu data-focusable data-key="menu"
                   aria-label="${t('player.menu')}">
             ${raw(PLAYER_MENU_ICON)}
@@ -625,6 +636,7 @@ export class PlayerOsd {
       if (this.hitsControl('[data-next-episode]', x, y)) { this.callbacks.onNextEpisode(); return; }
       if (this.hitsControl('[data-skip-intro]', x, y)) { this.callbacks.onSkipIntro(); return; }
       if (this.hitsControl('[data-info]', x, y)) { this.callbacks.onShowInfo(); return; }
+      if (this.hitsControl('[data-watchlist]', x, y)) { this.callbacks.onToggleWatchlist(); return; }
       if (this.hitsControl('[data-episodes]', x, y)) { this.callbacks.onShowEpisodes(); return; }
     }
     if (this.hitsControl('[data-playpause]', x, y)) this.callbacks.onPauseToggle();

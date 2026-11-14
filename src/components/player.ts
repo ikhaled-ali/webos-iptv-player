@@ -10,6 +10,7 @@ import type {
   SubtitleTrackOption,
   VodPlayback,
   VodQueueItem,
+  WatchlistEntry,
   XtreamCatchupSource,
 } from '../types';
 import {
@@ -73,6 +74,8 @@ export class Player {
   private tracks: PlayerTracks;
   private playbackRate: PlaybackRateController;
   private osd: PlayerOsd;
+  private watchlistFor: VodPlayback | null = null;
+  private watchlistCached: WatchlistEntry | null = null;
   private readonly status: PlayerStatus;
   private currentChannel: Channel | null = null;
   private currentIndex = -1;
@@ -223,6 +226,7 @@ export class Player {
       onNextEpisode: () => this.playNextEpisode(),
       onSkipIntro: () => this.skipIntro(),
       onShowInfo: () => this.showTitleInfo(),
+      onToggleWatchlist: () => this.toggleWatchlist(),
       onShowEpisodes: () => this.showEpisodes(),
       onOpenMenu: () => this.openMenu(),
       onSurfaceClick: () => this.surfaceClick(),
@@ -1076,6 +1080,47 @@ export class Player {
   }
 
   private titleInfo: VodInfoOverlay | null = null;
+
+  // The catalog title the playing item belongs to: the movie itself, or an
+  // episode's series. Null for anything outside an Xtream catalog (recordings).
+  private watchlistTarget(): WatchlistEntry | null {
+    const v = this.vod;
+    if (!v) return null;
+    if (this.watchlistFor === v) return this.watchlistCached;
+    this.watchlistFor = v;
+    this.watchlistCached = null;
+    const xtream = StorageService.getPlaylists()
+      .some(p => p.id === v.accountId && p.source === 'xtream');
+    const owner = v.watchlistOwner;
+    if (!xtream || (v.kind === 'episode' && !owner)) return null;
+    const common = {
+      accountId: v.accountId,
+      rating: v.details?.rating ?? '',
+      categoryId: v.categoryId ?? '',
+      addedAt: 0,
+    };
+    this.watchlistCached = owner
+      ? { ...common, kind: 'series', itemId: owner.itemId, name: owner.name || v.title, poster: owner.poster || v.poster }
+      : {
+        ...common, kind: 'vod', itemId: v.itemId, name: v.details?.title || v.title, poster: v.poster,
+        containerExtension: /\.([a-z0-9]+)(?:\?|$)/i.exec(v.url)?.[1] ?? 'mp4',
+      };
+    return this.watchlistCached;
+  }
+
+  private watchlistState(): boolean | null {
+    const target = this.watchlistTarget();
+    return target ? StorageService.isWatchlisted(target.accountId, target.kind, target.itemId) : null;
+  }
+
+  private toggleWatchlist(): void {
+    const target = this.watchlistTarget();
+    if (!target) return;
+    const result = StorageService.toggleWatchlist({ ...target, addedAt: Date.now() });
+    showToast(t(result === 'full' ? 'catalog.watchlistFull'
+      : result === 'added' ? 'catalog.watchlistAdded' : 'catalog.watchlistRemoved'));
+    if (this.osd.isVisible()) this.osd.render();
+  }
 
   private showTitleInfo(): void {
     const v = this.vod;
@@ -1943,6 +1988,7 @@ export class Player {
       vodTitle: this.vod?.title ?? null,
       vodInIntro: this.vodInIntro(),
       vodHasInfo: !!this.vod?.details,
+      vodWatchlisted: this.watchlistState(),
       vodHasEpisodes: this.vod?.kind === 'episode' && (this.vod.seriesEpisodes?.length ?? 0) > 0,
       vodHasNext: this.vod?.kind === 'episode' && (this.vod.episodeQueue?.length ?? 0) > 0,
       upNextSeconds: this.upNextSeconds,

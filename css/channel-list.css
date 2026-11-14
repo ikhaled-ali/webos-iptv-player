@@ -111,9 +111,15 @@
   gap: 12px;
 }
 
-/* Selected, not focused: a quiet fill, with the icon in the accent. */
+/* Like the tab bar: the selected group keeps a tinted fill; focus fades it
+   to white with black content. */
 .group-item.active {
-  background: var(--bg-tertiary);
+  background-color: var(--focus-tint);
+}
+
+.group-item.focused:not(.grabbed) {
+  background-color: #fff;
+  color: #000;
 }
 
 .group-icon {
@@ -124,14 +130,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: color var(--transition);
 }
 
-.group-item.active .group-icon {
-  color: var(--accent);
-}
-
-.group-item.focused .group-icon {
-  color: #fff;
+.group-item.focused:not(.grabbed) .group-icon,
+.group-item.focused:not(.grabbed) .group-count {
+  color: #000;
 }
 
 .group-icon .group-logo {
@@ -153,6 +157,7 @@
   color: var(--text-muted);
   min-width: 40px;
   text-align: right;
+  transition: color var(--transition);
 }
 
 /* Channel main area */
@@ -237,9 +242,49 @@
   height: 84px;
 }
 
+/* Like the tab bar: the playing channel keeps a tinted fill; focus fades
+   it to white with black text. A tile colors only its name area, below
+   the art. */
 .channel-item.playing {
-  background: rgb(var(--accent-rgb) / 0.08);
-  border-color: var(--accent-dim);
+  background-color: var(--focus-tint);
+}
+
+.channel-item.focused:not(.grabbed):not(.favorite-selected) {
+  background-color: rgba(255, 255, 255, 0.8);
+  color: #000;
+}
+
+/* A tile paints only its name area: white under the art would leak a seam
+   around it while the tile scales. */
+.channel-item.channel-tile.playing {
+  background-color: var(--bg-secondary);
+}
+
+.channel-item.channel-tile.playing .channel-info {
+  background-color: var(--focus-tint);
+}
+
+.channel-item.channel-tile.focused:not(.grabbed):not(.favorite-selected) {
+  background-color: var(--bg-secondary);
+}
+
+.channel-item.channel-tile.focused:not(.grabbed):not(.favorite-selected) .channel-info {
+  background-color: rgba(255, 255, 255, 0.8);
+}
+
+.channel-item.focused:not(.grabbed):not(.favorite-selected) .channel-number,
+.channel-item.focused:not(.grabbed):not(.favorite-selected) .channel-now,
+.channel-item.focused:not(.grabbed):not(.favorite-selected) .playing-indicator {
+  color: inherit;
+}
+
+/* The tile's number and status sit on the art, which stays dark. */
+.channel-item.channel-tile.focused .channel-tile-art .channel-number {
+  color: var(--text-muted);
+}
+
+.channel-item.channel-tile.focused .channel-tile-art .playing-indicator {
+  color: var(--text-primary);
 }
 
 .channel-item.recent-catchup {
@@ -354,7 +399,7 @@
 
 .playing-indicator {
   font-size: 20px;
-  color: var(--accent);
+  color: var(--text-primary);
   animation: pulse 1.5s ease-in-out infinite;
 }
 
@@ -381,7 +426,7 @@
   contain: layout style;
   /* The focused tile grows; a tile never slides into place. Only transform
      and the shadow layer's opacity move, so both stay on the compositor. */
-  transition: transform 300ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: transform 300ms cubic-bezier(0.22, 1, 0.36, 1), color var(--transition);
 }
 
 /* The shadow is its own layer, faded in: animating box-shadow itself
@@ -473,7 +518,14 @@ html[data-animation="reduced"] .channel-main.channel-main-grid {
 }
 
 .channel-tile .channel-info {
+  position: absolute;
+  top: 112px; /* below .channel-tile-art */
+  right: 0;
+  bottom: 0;
+  left: 0;
   padding: 12px 16px 0;
+  border-radius: 0 0 6px 6px;
+  transition: background-color var(--transition);
 }
 
 /* Two lines, then an ellipsis: 12 + 2 x 25 + 4 + 23 fits the 92px under

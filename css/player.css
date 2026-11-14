@@ -818,13 +818,22 @@ html[data-animation="essential"] .recording-indicator-dot {
   transition: var(--transition);
 }
 
+/* Like the tab bar: the selected group keeps a tinted fill; focus fades it
+   to white with black content. */
 .player-sidebar .sidebar-group-item.active {
-  background: rgb(var(--accent-rgb) / 0.1);
-  border-color: var(--accent-dim);
+  background-color: var(--overlay-chip);
 }
 
 .player-sidebar .sidebar-group-item.focused {
-  background-image: var(--focus-layer);
+  background-color: #fff;
+  background-image: none;
+  color: #000;
+}
+
+/* White would vanish on the light Frosted glass: focus inverts to dark. */
+[data-overlay="frosted"] .player-sidebar .sidebar-group-item.focused {
+  background-color: var(--text-primary);
+  color: #fff;
 }
 
 .player-sidebar .sidebar-group-icon {
@@ -837,14 +846,13 @@ html[data-animation="essential"] .recording-indicator-dot {
   font-size: 22px;
   color: var(--text-muted);
   background: transparent;
+  transition: color var(--transition);
 }
 
-.player-sidebar .sidebar-group-item.active .sidebar-group-icon {
-  color: var(--accent);
-}
-
-.player-sidebar .sidebar-group-item.focused .sidebar-group-icon {
-  color: #fff;
+.player-sidebar .sidebar-group-item.focused .sidebar-group-icon,
+.player-sidebar .sidebar-group-item.focused .sidebar-group-name,
+.player-sidebar .sidebar-group-item.focused .sidebar-group-count {
+  color: inherit;
 }
 
 .player-sidebar .sidebar-group-icon .group-logo {
@@ -860,6 +868,7 @@ html[data-animation="essential"] .recording-indicator-dot {
   white-space: nowrap;
   font-size: 20px;
   color: var(--text-primary);
+  transition: color var(--transition);
 }
 
 .player-sidebar .sidebar-group-count {
@@ -871,6 +880,7 @@ html[data-animation="essential"] .recording-indicator-dot {
   font-size: 16px;
   text-align: center;
   font-variant-numeric: tabular-nums;
+  transition: color var(--transition);
 }
 
 .player-sidebar .sidebar-search-input {

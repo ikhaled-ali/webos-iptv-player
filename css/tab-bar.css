@@ -20,6 +20,7 @@
 
 /* When the bar is docked, the section views sit below it (never overlapping);
    the full-screen player / loading views keep top:0 / full height. */
+body.tabbar-docked #view-home,
 body.tabbar-docked #view-channels,
 body.tabbar-docked #view-epg,
 body.tabbar-docked #view-movies,
@@ -90,10 +91,11 @@ html:not(.keyboard-nav) .tab-bar-item:hover {
   color: var(--text-primary);
 }
 
-/* A text tab: glyph beside the label. The pill marks focus only; the
-   current section is marked by its accent glyph alone. */
+/* A text tab: glyph beside the label. The current section keeps a tinted
+   pill; focus fades it to white with black content. */
 .tab-bar-tab {
   position: relative;
+  transition: color var(--transition);
   display: inline-flex;
   align-items: center;
   padding: 10px 0; /* 52px tall, like the icon circles */
@@ -115,12 +117,29 @@ html:not(.keyboard-nav) .tab-bar-item:hover {
   right: -18px;
   z-index: -1;
   border-radius: 999px; /* fully round ends, like the icon circles */
-  background-image: var(--focus-layer);
+  content: '';
+  background-color: var(--focus-tint);
+  opacity: 0;
+  transition: opacity var(--transition), background-color var(--transition);
+}
+
+.tab-bar-tab.active::before {
+  opacity: 1;
 }
 
 html:not(.keyboard-nav) .tab-bar-tab:hover::before,
 .tab-bar-tab.focused::before {
-  content: '';
+  background-color: #fff;
+  opacity: 1;
+}
+
+html:not(.keyboard-nav) .tab-bar-tab:hover,
+.tab-bar-tab.focused,
+.tab-bar-tab.active.focused,
+html:not(.keyboard-nav) .tab-bar-tab:hover .tab-bar-tab-icon,
+.tab-bar-tab.focused .tab-bar-tab-icon,
+.tab-bar-tab.active.focused .tab-bar-tab-icon {
+  color: #000;
 }
 
 /* The logo gets 60px on each side: the bar's left padding before it, the
@@ -139,6 +158,7 @@ html:not(.keyboard-nav) .tab-bar-tab:hover::before,
   height: calc(28px * var(--font-scale));
   margin-right: 10px;
   color: var(--text-primary);
+  transition: color var(--transition);
 }
 
 .tab-bar-tab-icon svg {
@@ -147,10 +167,7 @@ html:not(.keyboard-nav) .tab-bar-tab:hover::before,
   height: 100%;
 }
 
-/* The current section: its glyph alone takes the accent, the label stays.
-   The mic takes it while it listens. */
-.tab-bar-tab.active .tab-bar-tab-icon,
-.tab-bar-icon.active,
+/* The mic takes the accent while it listens. */
 .tab-bar-icon.listening {
   color: var(--accent);
 }
@@ -205,6 +222,7 @@ html:not(.keyboard-nav) .tab-bar-tab:hover::before,
   border: 2px solid transparent;
   color: var(--text-primary);
   cursor: pointer;
+  transition: background-color var(--transition), color var(--transition);
 }
 
 /* The right-hand controls sit 20px apart, glyph to glyph (settings 48px from
@@ -232,9 +250,15 @@ html:not(.keyboard-nav) .tab-bar-tab:hover::before,
   display: block;
 }
 
+.tab-bar-icon.active {
+  background-color: var(--focus-tint);
+}
+
 html:not(.keyboard-nav) .tab-bar-icon:hover,
 .tab-bar-icon.focused {
-  background-image: var(--focus-layer);
+  background-color: #fff;
+  background-image: none;
+  color: #000;
   border-color: transparent;
   box-shadow: none;
 }

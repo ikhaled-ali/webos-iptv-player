@@ -4,7 +4,7 @@ import { morph } from '../utils/morph';
 import { clockTime, onClockTick } from '../utils/clock';
 import {
   APP_LOGO, MIC_ICON, SEARCH_ICON, SETTINGS_ICON, UNLOCK_ICON,
-  RECORD_ICON, TAB_GUIDE_ICON, TAB_LIVE_ICON, TAB_MOVIES_ICON, TAB_SERIES_ICON, weatherIcon,
+  RECORD_ICON, TAB_GUIDE_ICON, TAB_HOME_ICON, TAB_LIVE_ICON, TAB_MOVIES_ICON, TAB_SERIES_ICON, weatherIcon,
 } from './icons';
 import type { Weather } from '../services/weather-service';
 import { AccountSwitcher, type AccountMenuCloseReason } from './account-switcher';
@@ -31,6 +31,7 @@ type SearchCollapseReason = 'toggle' | 'back' | 'escape' | 'dismiss' | 'hidden' 
 // The single source of truth for the sections: order, label, the view each maps
 // to, and whether it needs an Xtream account.
 export const SECTIONS = [
+  { id: 'home', labelKey: 'nav.home', view: 'home', xtreamOnly: false },
   { id: 'live', labelKey: 'nav.live', view: 'channels', xtreamOnly: false },
   { id: 'series', labelKey: 'nav.series', view: 'series', xtreamOnly: true },
   { id: 'movies', labelKey: 'nav.movies', view: 'movies', xtreamOnly: true },
@@ -46,6 +47,7 @@ export type VoiceSearchState = 'idle' | 'listening' | 'hint';
 type SectionDef = typeof SECTIONS[number];
 
 const TAB_ICONS: Partial<Record<Section, string>> = {
+  home: TAB_HOME_ICON,
   live: TAB_LIVE_ICON,
   epg: TAB_GUIDE_ICON,
   movies: TAB_MOVIES_ICON,

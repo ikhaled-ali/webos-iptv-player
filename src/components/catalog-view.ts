@@ -985,19 +985,29 @@ export abstract class CatalogView<C extends { id: string; name: string }, I exte
     }
   }
 
+  // Open the section straight onto a collection's full grid (Home's See all).
+  async openCollection(account: PlaylistEntry, kind: CollectionKind): Promise<void> {
+    await this.open(account);
+    if (this.account?.id === account.id) this.showCollection(kind, false);
+  }
+
+  private showCollection(kind: CollectionKind, managing: boolean): void {
+    this.gridCategory = null;
+    this.collection = kind;
+    this.managing = managing;
+    this.gridRequest++;
+    this.clearLayer('grid');
+    this.gridFocusIndex = 0;
+    this.gridVirtualizer.setScrollOffset(0);
+    this.renderGrid();
+  }
+
   private selectCollection(el: HTMLElement): boolean {
     const manage = el.dataset.collectionManage;
     const seeAll = el.dataset.collectionSeeAll;
     const kind = manage ?? seeAll;
     if (kind === 'continue' || kind === 'watchlist') {
-      this.gridCategory = null;
-      this.collection = kind;
-      this.managing = manage !== undefined;
-      this.gridRequest++;
-      this.clearLayer('grid');
-      this.gridFocusIndex = 0;
-      this.gridVirtualizer.setScrollOffset(0);
-      this.renderGrid();
+      this.showCollection(kind, manage !== undefined);
       return true;
     }
     const action = el.dataset.collectionAction;

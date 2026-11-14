@@ -60,6 +60,7 @@ function snapshot(overrides: Partial<PlayerOsdSnapshot> = {}): PlayerOsdSnapshot
     vodHasNext: false,
     vodInIntro: false,
     vodHasInfo: false,
+    vodWatchlisted: null,
     vodHasEpisodes: false,
     upNextSeconds: 0,
     dvr: null,
@@ -107,6 +108,7 @@ describe('PlayerOsd', () => {
       onNextEpisode: vi.fn(),
       onSkipIntro: vi.fn(),
       onShowInfo: vi.fn(),
+      onToggleWatchlist: vi.fn(),
       onShowEpisodes: vi.fn(),
       onOpenMenu: vi.fn(),
       onSurfaceClick: vi.fn(),
@@ -380,6 +382,30 @@ describe('PlayerOsd', () => {
     osd.refreshProgress();
     expect(container.querySelector('[data-skip-intro]')).toBeNull();
     expect(osd.focusedControl()).toBeNull();
+  });
+
+  it('offers the Watchlist beside Info as an icon, by pointer and by key', () => {
+    state = snapshot({ playback: playback(120, 30), channel: null, vodTitle: 'Video 1', vodHasInfo: true });
+    osd.show();
+    expect(container.querySelector('[data-watchlist]')).toBeNull();
+
+    state = { ...state, vodWatchlisted: false };
+    osd.refreshProgress();
+    const button = container.querySelector('[data-watchlist]') as HTMLElement;
+    expect(button.previousElementSibling?.hasAttribute('data-info')).toBe(true);
+    expect(button.textContent?.trim()).toBe('');
+    expect(button.getAttribute('aria-label')).toBe('Add to Watchlist');
+    button.getBoundingClientRect = () => rect(400, 100, 60, 60);
+    container.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 410, clientY: 110 }));
+    expect(callbacks.onToggleWatchlist).toHaveBeenCalledOnce();
+
+    expect(osd.focusControl('watchlist')).toBe(true);
+    osd.handleKey('select');
+    expect(callbacks.onToggleWatchlist).toHaveBeenCalledTimes(2);
+
+    state = { ...state, vodWatchlisted: true };
+    osd.refreshProgress();
+    expect(container.querySelector('[data-watchlist] .watchlist-glyph.set')).not.toBeNull();
   });
 
   it('shows the clock outside the OSD panel, with the OSD', () => {

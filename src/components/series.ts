@@ -223,7 +223,7 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
       parentalItemId: series.seriesId,
       subtitles: ep.subtitles,
       searchMeta: { season: ep.season, episode: ep.episode },
-      watchlistOwner: { kind: 'series', itemId: series.seriesId },
+      watchlistOwner: { kind: 'series', itemId: series.seriesId, name: series.name, poster: series.poster },
       details: this.episodeDetails(series, ep, info),
     };
   }

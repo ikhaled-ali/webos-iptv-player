@@ -166,6 +166,7 @@ html[data-animation="essential"] .osd-progress-bar {
 /* Measured on the webOS 4 emulator: list focus transitions roughly halve
    main-thread and raster time when disabled outright. */
 html[data-animation="essential"] .channel-item,
+html[data-animation="essential"] .channel-tile .channel-info,
 html[data-animation="essential"] .catalog-poster-wrap,
 html[data-animation="essential"] .catalog-tile-name,
 html[data-animation="essential"] .catalog-cat,

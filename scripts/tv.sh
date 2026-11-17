@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Run commands / copy files on the LG webOS TV over SSH.
 #
-# The tv profile blocks `ares-shell` and `ares-push`, and the TV's SSH key is
-# passphrase-protected and only offers a legacy ssh-rsa host key. This pulls the
+# The tv profile blocks `ares-shell` and `ares-push`. A Developer Mode key is
+# passphrase-protected and only offers a legacy ssh-rsa host key; a rooted TV
+# takes root on port 22 with a plain key or password. This pulls the
 # connection details (ip, port, user, key, passphrase, password) from
 # `ares-setup-device` at run time — so no secret lives in this file — and drives
 # ssh/scp via expect.
@@ -136,7 +137,7 @@ if {!$interactive} {
   catch wait auth
   if {[lindex $auth 3] != 0} {
     if {[string match "*Connection refused*" $ssh_error]} {
-      puts stderr "tv.sh: the TV refused SSH on port $env(TV_PORT); Developer Mode may be off"
+      puts stderr "tv.sh: the TV refused SSH on port $env(TV_PORT); Developer Mode may be off (or, on a rooted TV, Homebrew Channel's SSH Server)"
     } elseif {[string length $ssh_error] > 0} {
       puts stderr "tv.sh: $ssh_error"
     } else {

@@ -302,7 +302,7 @@ test.describe('Settings navigation', () => {
     expect(durations.historyScrim).toBe('none');
     expect(durations.historyPanel).toBe('none');
     expect(durations.epgLiveRail).toBe('epgRailPulse');
-    expect(durations.groupPicker).toBe('group-picker-nudge');
+    expect(durations.groupPicker).toBe('none');
     expect(durations.channelMarquee).toBe('marquee-bounce');
     expect(durations.programmeMarquee).toBe('marquee-bounce');
     expect(durations.spinner).toContain(1.2);

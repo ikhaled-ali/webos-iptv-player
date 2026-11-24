@@ -580,6 +580,37 @@ describe('Movies browse + grid', () => {
     expect(handlers.onRevealTabBar).toHaveBeenCalled();
   });
 
+  it.each(['left', 'up'] as const)('rewinds only the axis %s leaves the rails by for the tab bar',
+    async (action) => {
+      const items = Array.from({ length: 30 }, (_, i) => vod(String(i + 1), `Title ${i + 1}`));
+      const { view, handlers } = await openWith([{ id: '1', name: 'Cat A' }, { id: '2', name: 'Cat B' }], items);
+      const browse = container.querySelector<HTMLElement>('.catalog-layer-browse')!;
+      const tile = browse.querySelector<HTMLElement>('[data-rail-key="cat:2"] .catalog-tile[data-focusable]')!;
+      tile.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
+      if (action === 'up') {
+        // Up leaves only from the sort controls above the rails.
+        browse.querySelector<HTMLElement>('.catalog-sort .dropdown-trigger')!
+          .dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
+      }
+      const rails = browse.querySelector<HTMLElement>('.catalog-rails')!;
+      const tracks = Array.from(browse.querySelectorAll<HTMLElement>('.catalog-rail-track'));
+      rails.scrollTop = 400;
+      tracks.forEach(track => { track.scrollLeft = 230; });
+
+      pressKey(view, action);
+
+      expect(handlers.onRevealTabBar).toHaveBeenCalledWith(action);
+      if (action === 'up') {
+        expect(rails.scrollTop).toBe(0);
+        expect(tracks.map(track => track.scrollLeft)).toEqual(tracks.map(() => 230));
+      } else {
+        expect(rails.scrollTop).toBe(400);
+        expect(tracks.map(track => track.scrollLeft)).toEqual(tracks.map(() => 0));
+        // Focus stays on the row Left left from.
+        expect(view.focusScope.focusKey).toContain('cat:2');
+      }
+    });
+
   // One failing rail category must not blank every other rail.
   it('drops only the failed rail when one category load rejects', async () => {
     const cats = Array.from({ length: 6 }, (_, i) => ({ id: String(i + 1), name: `Cat ${i + 1}` }));
@@ -1226,6 +1257,23 @@ describe('Movies browse + grid', () => {
     await Promise.resolve();
     return view;
   };
+
+  it('keeps the grid where it was when Left leaves for the tab bar', async () => {
+    const view = await openGrid();
+    pressKey(view, 'down');
+    pressKey(view, 'down');
+    const grid = container.querySelector<HTMLElement>('.catalog-grid')!;
+    grid.scrollTop = 600;
+
+    const key = view.focusScope.focusKey;
+
+    // The third row's first tile: Left has nowhere to go but the tab bar.
+    pressKey(view, 'left');
+
+    // A grid scrolls only vertically, so Left has nothing to rewind.
+    expect(grid.scrollTop).toBe(600);
+    expect(view.focusScope.focusKey).toBe(key);
+  });
 
   it('leaves the scope key alone when a hidden layer reports a hover', async () => {
     const view = await openGrid();

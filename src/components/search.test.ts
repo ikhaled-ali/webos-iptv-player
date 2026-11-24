@@ -33,6 +33,7 @@ const {
   epgMock: {
     programmes: {} as Record<string, Programme[]>,
     findChannelId: vi.fn((channel: { id: string }) => channel.id),
+    getNowPlaying: vi.fn((): Programme | null => null),
     getSourceUrl: vi.fn(() => 'http://host/epg.xml'),
     programmeCacheOrigin: vi.fn((): unknown => null),
   },
@@ -41,6 +42,7 @@ const {
     getCatchupProgressList: vi.fn(() => [] as unknown[]),
     clearCatchupProgress: vi.fn(),
     addSearchHistory: vi.fn(),
+    getFavorites: vi.fn((): string[] => []),
   },
   archiveMock: {
     load: vi.fn(async () => null as Set<number> | null),
@@ -165,6 +167,7 @@ function mkHandlers() {
     onPlayChannel: vi.fn(),
     onOpenMovie: vi.fn(),
     onOpenSeries: vi.fn(),
+    playingIndex: vi.fn(() => -1),
   };
 }
 
@@ -1519,6 +1522,24 @@ describe('Search', () => {
     expect(handlers.onPlayChannel).toHaveBeenCalledWith(7);
   });
 
+  it('keeps focus on a rail\'s last tile when Right is pressed', async () => {
+    const { view, handlers } = await openWith({ vod: [vod('10', 'Movie One')], series: [ser('s1', 'Series One')] });
+    await view.setQuery('one');
+    const place = (el: Element, left: number, top: number): void => {
+      (el as HTMLElement).getBoundingClientRect = () =>
+        ({ left, top, right: left + 200, bottom: top + 300, width: 200, height: 300, x: left, y: top, toJSON() {} }) as DOMRect;
+    };
+    const movie = container.querySelector('.catalog-tile[data-stream-id="10"]') as HTMLElement;
+    // The next rail's tile sits below and to the right, where Right could jump.
+    place(movie, 80, 200);
+    place(container.querySelector('.catalog-tile[data-series-id="s1"]')!, 600, 560);
+    movie.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
+    view.handleAction('right');
+    view.handleAction('select');
+    expect(handlers.onOpenMovie).toHaveBeenCalledWith(account, expect.objectContaining({ streamId: '10' }));
+    expect(handlers.onOpenSeries).not.toHaveBeenCalled();
+  });
+
   it('routes a movie result to onOpenMovie and a series result to onOpenSeries', async () => {
     const { view, handlers } = await openWith({ vod: [vod('10', 'Movie One')], series: [ser('s1', 'Series One')] });
     await view.setQuery('one');
@@ -1619,7 +1640,7 @@ describe('Search', () => {
       [CONFIG.SEARCH.INDEX_CHUNK_SIZE * 2, 5, total],
     ]);
     await view.setQuery(`channel ${total - 1}`);
-    expect(container.querySelector('.search-channel-row, [data-channel-index]')).not.toBeNull();
+    expect(container.querySelector('.channel-tile, [data-channel-index]')).not.toBeNull();
   });
 
   it('re-indexes a stale catalog once its background refresh lands', async () => {
@@ -2464,17 +2485,30 @@ describe('Search (M3U-only, no account)', () => {
     expect(catalogMock.loadAllSeries).not.toHaveBeenCalled();
   });
 
-  it('renders channel results as a vertical list (no poster rails)', async () => {
+  it('renders channel results as a rail of the shared channel card', async () => {
     playlistMock.channels = [chan('Alpha News'), chan('Beta News')];
     playlistMock.indexOf.mockImplementation((ch: { name: string }) => (ch.name === 'Alpha News' ? 0 : 1));
     const { view } = await openM3U();
     await view.setQuery('news');
-    expect(container.querySelectorAll('.search-channel-row').length).toBe(2);
-    expect(container.querySelector('.catalog-rail')).toBeNull();
-    expect(container.querySelector('.search-channels .catalog-rail-title')?.textContent).toBe('Channels');
-    const cells = container.querySelectorAll<HTMLElement>('.search-virtual-list-cell');
-    expect(cells[0].style.top).toBe('0px');
-    expect(cells[1].style.top).toBe('88px');
+    expect(container.querySelectorAll('.channel-item.channel-tile').length).toBe(2);
+    expect(container.querySelector('[data-search-virtual="movies"]')).toBeNull();
+    expect(container.querySelector('.search-channel-rail')?.closest('.catalog-rail')
+      ?.querySelector('.catalog-rail-title')?.textContent).toBe('Channels');
+    const cells = container.querySelectorAll<HTMLElement>('.search-virtual-rail-cell');
+    expect(cells[0].style.left).toBe('0px');
+    expect(cells[1].style.left).toBe('276px');
+  });
+
+  it('marks the live channel playing now on its card', async () => {
+    playlistMock.channels = [chan('Alpha News'), chan('Beta News')];
+    playlistMock.indexOf.mockImplementation((ch: { name: string }) => (ch.name === 'Alpha News' ? 0 : 1));
+    const { view, handlers } = await openM3U();
+    handlers.playingIndex.mockReturnValue(1);
+    await view.setQuery('news');
+    const playing = container.querySelectorAll('.channel-tile.playing');
+    expect(playing).toHaveLength(1);
+    expect(playing[0].getAttribute('data-channel-index')).toBe('1');
+    expect(playing[0].querySelector('.playing-indicator')).not.toBeNull();
   });
 
   it('plays a channel row on select', async () => {
@@ -2482,7 +2516,7 @@ describe('Search (M3U-only, no account)', () => {
     playlistMock.indexOf.mockReturnValue(3);
     const { view, handlers } = await openM3U();
     await view.setQuery('news');
-    const row = container.querySelector('.search-channel-row') as HTMLElement;
+    const row = container.querySelector('.search-view .channel-tile') as HTMLElement;
     row.dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
     view.handleAction('select');
     expect(handlers.onPlayChannel).toHaveBeenCalledWith(3);
@@ -2493,7 +2527,7 @@ describe('Search (M3U-only, no account)', () => {
     playlistMock.indexOf.mockReturnValue(5);
     const { handlers, view } = await openM3U();
     await view.setQuery('news');
-    const row = container.querySelector('.search-channel-row') as HTMLElement;
+    const row = container.querySelector('.search-view .channel-tile') as HTMLElement;
     const orig = document.elementFromPoint;
     document.elementFromPoint = () => row;
     container.dispatchEvent(new MouseEvent('click', { clientX: 100, clientY: 50, bubbles: true }));

@@ -91,12 +91,6 @@
   fill: currentColor;
 }
 
-.live-preview-clock {
-  margin-left: auto;
-  flex-shrink: 0;
-  font-size: calc(24px * var(--font-scale));
-  font-variant-numeric: tabular-nums;
-}
 
 .live-preview-slot {
   position: relative;

@@ -10,6 +10,7 @@ import { normalizeXtreamBaseUrl } from '../utils/xtream-url';
 import { resumeSeriesId, vodFinished } from '../utils/vod-progress';
 import { createLogger } from '../utils/logger';
 import { isLocalePreference, type LocalePreference } from '../i18n';
+import { isVoiceLanguagePreference, type VoiceLanguagePreference } from '../config/voice-languages';
 import {
   DEFAULT_ANIMATION_MODE,
   isAnimationMode,
@@ -1124,6 +1125,17 @@ export const StorageService = {
     );
   },
 
+  removeRecentlyWatchedLive(chKey: string): void {
+    const next = this.getRecentlyWatchedLive().filter(entry => entry.channelKey !== chKey);
+    if (!userData) {
+      set('recently_watched_live', next);
+      return;
+    }
+    if (next.length === userData.recentlyWatchedLive.length) return;
+    userData.recentlyWatchedLive = cloneValue(next);
+    persistUserChanges('recently-watched', [], [`live:${chKey}`]);
+  },
+
   getFavorites(): string[] {
     return userData ? userData.favorites.slice() : get<string[]>('favorites', []);
   },
@@ -1221,6 +1233,15 @@ export const StorageService = {
   },
   setLocalePreference(locale: LocalePreference): void {
     set('locale', locale);
+  },
+
+  // The Search mic's recognizer language; 'app' follows the app's language.
+  getVoiceLanguage(): VoiceLanguagePreference {
+    const language = get<unknown>('voice_language', 'app');
+    return isVoiceLanguagePreference(language) ? language : 'app';
+  },
+  setVoiceLanguage(language: VoiceLanguagePreference): void {
+    set('voice_language', language);
   },
 
   // Selected color theme id (see src/config/themes.ts). Default = Midnight.

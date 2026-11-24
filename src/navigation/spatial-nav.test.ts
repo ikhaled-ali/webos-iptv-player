@@ -310,6 +310,18 @@ describe('SpatialNav', () => {
       expect(nav.focused).toBe(right);
     });
 
+    it('stops Right at the end of its row instead of running on to the next row', () => {
+      const first = focusable({ x: 0, y: 0 });
+      const last = focusable({ x: 200, y: 0 });
+      const lowerRight = focusable({ x: 400, y: 100 });
+      const nav = new SpatialNav(makeContainer(first, last, lowerRight));
+      nav.focus(first);
+      nav.move('right');
+      expect(nav.focused).toBe(last);
+      expect(nav.move('right')).toBe(false);
+      expect(nav.focused).toBe(last);
+    });
+
     it('does not move when there is no candidate in that direction', () => {
       const top = focusable({ x: 0, y: 0 });
       const bottom = focusable({ x: 0, y: 100 });

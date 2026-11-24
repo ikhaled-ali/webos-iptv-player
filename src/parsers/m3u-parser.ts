@@ -209,30 +209,32 @@ export class M3UStreamParser {
     );
   }
 
+  // Line ends are LF, CRLF or a lone CR; indexOf finds them far faster than
+  // a per-character scan. A trailing CR waits for the next chunk's LF.
   private drainLines(final: boolean): void {
+    const buffer = this.lineBuffer;
+    const length = buffer.length;
     let start = 0;
-    let index = 0;
-    while (index < this.lineBuffer.length) {
-      const code = this.lineBuffer.charCodeAt(index);
-      if (code === 10) {
-        this.queueLine(this.lineBuffer.slice(start, index));
-        start = ++index;
+    let lf = buffer.indexOf('\n');
+    let cr = buffer.indexOf('\r');
+    while (lf >= 0 || cr >= 0) {
+      if (cr < 0 || (lf >= 0 && lf < cr)) {
+        this.queueLine(buffer.slice(start, lf));
+        start = lf + 1;
+        lf = buffer.indexOf('\n', start);
         continue;
       }
-      if (code === 13) {
-        if (index + 1 === this.lineBuffer.length && !final) break;
-        this.queueLine(this.lineBuffer.slice(start, index));
-        index += this.lineBuffer.charCodeAt(index + 1) === 10 ? 2 : 1;
-        start = index;
-        continue;
-      }
-      index++;
+      if (cr + 1 === length && !final) break;
+      this.queueLine(buffer.slice(start, cr));
+      start = cr + (buffer.charCodeAt(cr + 1) === 10 ? 2 : 1);
+      if (lf >= 0 && lf < start) lf = buffer.indexOf('\n', start);
+      cr = buffer.indexOf('\r', start);
     }
-    if (final && start < this.lineBuffer.length) {
-      this.queueLine(this.lineBuffer.slice(start));
-      start = this.lineBuffer.length;
+    if (final && start < length) {
+      this.queueLine(buffer.slice(start));
+      start = length;
     }
-    this.lineBuffer = this.lineBuffer.slice(start);
+    this.lineBuffer = buffer.slice(start);
   }
 
   private queueLine(rawLine: string): void {
@@ -256,6 +258,9 @@ export class M3UStreamParser {
     if (detection.format === 'dash' || isWrongDocumentFormat(detection.format)) return;
 
     const tagEnd = directiveEnd(line);
+    // A longer directive matches no case below, and processLocation ignores
+    // '#' lines, so a comment (or an unknown tag) ends here.
+    if (tagEnd > MAX_DIRECTIVE_LENGTH) return;
     const tag = tagEnd > 0 ? line.slice(0, tagEnd).toUpperCase() : '';
     const hasColon = tagEnd > 0 && line.charCodeAt(tagEnd) === 58;
     const body = tagEnd > 0 ? line.slice(tagEnd + (hasColon ? 1 : 0)) : '';
@@ -925,10 +930,15 @@ function collectEpgUrls(attributes: Record<string, string>): string[] {
   return urls;
 }
 
+// The longest directive the parser handles: '#EXTVLCOPT'.
+const MAX_DIRECTIVE_LENGTH = 10;
+
+// Where a '#' line's directive name ends; past MAX_DIRECTIVE_LENGTH it stops
+// counting, since no handled directive is that long.
 function directiveEnd(line: string): number {
   if (line.charCodeAt(0) !== 35) return -1;
   let index = 1;
-  while (index < line.length) {
+  while (index < line.length && index <= MAX_DIRECTIVE_LENGTH) {
     const code = line.charCodeAt(index);
     const valid = (code >= 48 && code <= 57)
       || (code >= 65 && code <= 90)

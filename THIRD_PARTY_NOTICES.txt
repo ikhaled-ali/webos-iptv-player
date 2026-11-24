@@ -100,6 +100,13 @@ The SVG artwork is unmodified; the local filename is a descriptive alias.
 Files:
   assets/icons/pencil.svg
 
+Noto Kufi Arabic font
+---------------------
+https://github.com/notofonts/arabic
+Copyright 2022 The Noto Project Authors; SIL Open Font License 1.1.
+Subset to the Arabic blocks and converted to WOFF (assets/fonts).
+  licenses/noto-kufi-arabic.txt
+
 Generated runtime helpers
 -------------------------
 The app bundles contain runtime helpers inserted by esbuild, and the bundled

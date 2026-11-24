@@ -565,7 +565,6 @@ describe('Sidebar', () => {
       expect(groupItems()).toHaveLength(5);
       expect(groupItems()[0].classList.contains('active')).toBe(true);
       expect(groupItems()[0].classList.contains('focused')).toBe(true);
-      expect(sidebar.pointerDismissX).toBe(740);
     });
 
     it('renders a bounded group window for 50,000 groups', () => {
@@ -689,16 +688,6 @@ describe('Sidebar', () => {
         // Centered in the 640px viewport: 403 * 64 - (640 - 64) / 2.
         expect(list.scrollTop).toBe(403 * 64 - 288);
       });
-    });
-
-    it('uses the fitted group width for the pointer dismissal boundary', () => {
-      sidebar.handleAction('left');
-      el.querySelector<HTMLElement>('.sidebar-group-panel')!.getBoundingClientRect = () => ({
-        x: 0, y: 0, top: 0, right: 360, bottom: 1080, left: 0,
-        width: 360, height: 1080, toJSON: () => ({}),
-      });
-
-      expect(sidebar.pointerDismissX).toBe(820);
     });
 
     it('caches the width probe until the group source changes', () => {
@@ -1099,71 +1088,26 @@ describe('Sidebar', () => {
   describe('pointer interaction', () => {
     beforeEach(() => sidebar.show());
 
-    it('starts the group dwell after the channel panel finishes opening', () => {
-      sidebar.handlePointerMove(30, true);
+    it('never opens the groups from a pointer resting at the left edge', () => {
+      finishOpening();
+      sidebar.handlePointerMove(true);
       vi.advanceTimersByTime(1000);
       expect(el.classList.contains('groups-expanded')).toBe(false);
+    });
 
-      finishOpening();
-      vi.advanceTimersByTime(499);
-      expect(el.classList.contains('groups-expanded')).toBe(false);
-
-      vi.advanceTimersByTime(1);
+    it('keeps the panels open when the pointer moves off them', () => {
+      sidebar.handleAction('left');
+      sidebar.handlePointerMove(false);
+      vi.advanceTimersByTime(1000);
+      expect(sidebar.visible).toBe(true);
       expect(el.classList.contains('groups-expanded')).toBe(true);
     });
 
-    it('leaves the tab row edge to edge scrolling instead of opening groups', () => {
-      sidebar.handlePointerMove(30, true, true);
-      finishOpening();
-      vi.advanceTimersByTime(1000);
-      expect(el.classList.contains('groups-expanded')).toBe(false);
-
-      sidebar.handlePointerMove(30, true);
-      vi.advanceTimersByTime(500);
-      expect(el.classList.contains('groups-expanded')).toBe(true);
-    });
-
-    it('cancels group expansion when the pointer leaves the edge', () => {
-      sidebar.handlePointerMove(30, true);
-      finishOpening();
-      vi.advanceTimersByTime(200);
-      sidebar.handlePointerMove(100, true);
-      vi.advanceTimersByTime(500);
-
-      expect(el.classList.contains('groups-expanded')).toBe(false);
-    });
-
-    it('collapses groups before closing after an outside dwell', () => {
-      sidebar.handleAction('left');
-      expect(sidebar.handlePointerMove(741, false)).toBe(true);
-      expect(el.classList.contains('channels-only')).toBe(true);
+    it('a pointer over the panel holds off the auto-hide', () => {
+      vi.advanceTimersByTime(4000);
+      sidebar.handlePointerMove(true);
+      vi.advanceTimersByTime(4000);
       expect(sidebar.visible).toBe(true);
-
-      vi.advanceTimersByTime(499);
-      expect(sidebar.visible).toBe(true);
-      vi.advanceTimersByTime(1);
-      expect(sidebar.visible).toBe(false);
-    });
-
-    it('keeps the ring hidden and the list still while the pointer exit closes the groups', () => {
-      sidebar.handleAction('left');
-      hover(groupItems()[1]);
-      groupItems()[1].dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: container }));
-      expect(ringed()).toEqual([]);
-      const reveal = vi.mocked(Element.prototype.scrollIntoView);
-      reveal.mockClear();
-      sidebar.handlePointerMove(741, false);
-      expect(el.classList.contains('channels-only')).toBe(true);
-      expect(ringed()).toEqual([]);
-      expect(reveal).not.toHaveBeenCalled();
-    });
-
-    it('keeps the ring hidden when the pointer exit closes the groups without a mouseout', () => {
-      sidebar.handleAction('left');
-      hover(groupItems()[1]);
-      sidebar.handlePointerMove(741, false);
-      expect(el.classList.contains('channels-only')).toBe(true);
-      expect(ringed()).toEqual([]);
     });
 
     it('Back still closes the groups onto a lit channel', () => {
@@ -1173,17 +1117,6 @@ describe('Sidebar', () => {
       const lit = ringed();
       expect(lit).toHaveLength(1);
       expect(items()).toContain(lit[0]);
-    });
-
-    it('cancels the pending close when the pointer returns to channels', () => {
-      sidebar.handleAction('left');
-      sidebar.handlePointerMove(741, false);
-      vi.advanceTimersByTime(250);
-      expect(sidebar.handlePointerMove(300, false)).toBe(true);
-      vi.advanceTimersByTime(500);
-
-      expect(sidebar.visible).toBe(true);
-      expect(el.classList.contains('channels-only')).toBe(true);
     });
 
     it('clicking a channel item selects it', () => {
@@ -1363,41 +1296,6 @@ describe('Sidebar', () => {
       expect(ringed()).toEqual([items()[1]]);
       hover(items()[2]);
       expect(ringed()).toEqual([items()[2]]);
-    });
-
-    it('a key cancels the edge dwell', () => {
-      sidebar.handlePointerMove(30, true);
-      finishOpening();
-      vi.advanceTimersByTime(200);
-      setInputMode('keys');
-      vi.advanceTimersByTime(500);
-      expect(el.classList.contains('groups-expanded')).toBe(false);
-    });
-
-    it('a key cancels the edge dwell of a cursor that never left key mode', () => {
-      setInputMode('keys');
-      sidebar.handlePointerMove(30, true);
-      finishOpening();
-      vi.advanceTimersByTime(200);
-      sidebar.handleAction('down');
-      vi.advanceTimersByTime(500);
-      expect(el.classList.contains('groups-expanded')).toBe(false);
-    });
-
-    it('a cursor resting at the edge in key mode still opens the groups', () => {
-      setInputMode('keys');
-      sidebar.handlePointerMove(30, true);
-      finishOpening();
-      vi.advanceTimersByTime(500);
-      expect(el.classList.contains('groups-expanded')).toBe(true);
-    });
-
-    it('a key cancels the close that the pointer leaving started', () => {
-      sidebar.handleAction('left');
-      sidebar.handlePointerMove(741, false);
-      setInputMode('keys');
-      vi.advanceTimersByTime(500);
-      expect(sidebar.visible).toBe(true);
     });
 
     it('does not stack listeners across re-renders (single select per click)', () => {

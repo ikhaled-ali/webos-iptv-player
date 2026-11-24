@@ -82,11 +82,11 @@ test('M3U-only Search (via the tab bar) filters channels into a vertical list', 
   await enterTab(page, 'search');
   await expect(page.locator('.tab-bar-search.expanded')).toBeVisible();
   await page.locator('.tab-bar-search-input').fill('alpha');
-  // Channels-only, rendered as a vertical list (no poster rails).
-  await expect(page.locator('.search-channel-row')).toHaveCount(2);
+  // Channels-only: a rail of the shared channel card, and no catalog rails.
+  await expect(page.locator('#view-search .channel-tile')).toHaveCount(2);
   await expect(page.locator('#view-search')).toBeVisible();
   await expect(page.locator('.search-results')).toContainText('Alpha News');
-  await expect(page.locator('.catalog-rail')).toHaveCount(0);
+  await expect(page.locator('[data-search-virtual="movies"]')).toHaveCount(0);
 });
 
 test('M3U-only Search: a pointer click plays the channel', async ({ page }) => {
@@ -99,11 +99,11 @@ test('M3U-only Search: a pointer click plays the channel', async ({ page }) => {
   await enterTab(page, 'search');
   await expect(page.locator('.tab-bar-search.expanded')).toBeVisible();
   await page.locator('.tab-bar-search-input').fill('alpha');
-  await expect(page.locator('.search-channel-row')).toHaveCount(2);
+  await expect(page.locator('#view-search .channel-tile')).toHaveCount(2);
 
   // Dispatch a click at the row's center, which the view activates by coordinate
   // hit-test.
-  await page.locator('.search-channel-row').first().evaluate((el) => {
+  await page.locator('#view-search .channel-tile').first().evaluate((el) => {
     const r = el.getBoundingClientRect();
     el.dispatchEvent(new MouseEvent('click', {
       clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true,

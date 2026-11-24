@@ -222,9 +222,14 @@ class ChannelCustomizationServiceImpl {
    * the source values on `sourceName` / `sourceGroup`, so repeated calls are
    * idempotent and clearing an override restores the source value. When given,
    * `sourceIndices` (at least `channels.length` long) receives each returned
-   * channel's index in `channels`.
+   * channel's index in `channels`, and `keys` each input channel's channelKey.
    */
-  applyTo(channels: Channel[], includeHidden = false, sourceIndices?: Uint32Array): Channel[] {
+  applyTo(
+    channels: Channel[],
+    includeHidden = false,
+    sourceIndices?: Uint32Array,
+    keys?: string[],
+  ): Channel[] {
     const d = this.record;
     const rank = new Map<string, number>();
     for (let i = 0; i < d.order.length; i++) rank.set(d.order[i], i);
@@ -233,6 +238,7 @@ class ChannelCustomizationServiceImpl {
     for (let i = 0; i < channels.length; i++) {
       const ch = channels[i];
       const key = channelKey(ch);
+      if (keys) keys[i] = key;
       const ov = d.overrides[key];
 
       const srcName = ch.sourceName ?? ch.name;

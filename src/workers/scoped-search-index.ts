@@ -1,10 +1,10 @@
 import {
   prepareNameSearchItems,
-  prepareSearchItem,
+  prepareSearchItems,
   rankPreparedNamesTopK,
   rankPreparedTopK,
   type PreparedNameSearchIndex,
-  type PreparedSearchItem,
+  type PreparedSearchIndex,
 } from '../utils/channel-search';
 import type {
   ListSearchIndexRequest,
@@ -23,7 +23,7 @@ interface IndexedName {
 }
 
 type ListIndex =
-  | { mode: 'fields'; index: PreparedSearchItem<number>[] }
+  | { mode: 'fields'; index: PreparedSearchIndex<number> }
   | { mode: 'names'; index: PreparedNameSearchIndex<IndexedName> };
 
 interface ListState {
@@ -48,8 +48,10 @@ export class ScopedSearchIndex {
     const index: ListIndex = request.mode === 'fields'
       ? {
           mode: 'fields',
-          index: request.documents.map((fields, itemIndex) =>
-            prepareSearchItem(itemIndex, () => fields)),
+          index: prepareSearchItems(
+            request.documents.map((_fields, itemIndex) => itemIndex),
+            itemIndex => request.documents[itemIndex],
+          ),
         }
       : {
           mode: 'names',

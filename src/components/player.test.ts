@@ -321,9 +321,8 @@ describe('Player authorization gates', () => {
 });
 
 describe('Player pointer OSD reveal', () => {
-  it('does not reveal a hidden OSD while a player overlay is open', () => {
+  it('does not reveal a hidden OSD when the pointer moves', () => {
     player.hideOSD();
-    allowAutoRevealOsd = false;
 
     container.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }));
 
@@ -2063,7 +2062,10 @@ describe('Player VOD mode', () => {
         vi.mocked(StorageService.getResume).mockImplementation(() => null);
       }
 
-      expect(StorageService.setResume).toHaveBeenCalledWith(expect.objectContaining({ itemId: 'e1', position: 600 }));
+      // Skipping ahead marks the one left behind fully watched.
+      expect(StorageService.setResume).not.toHaveBeenCalledWith(expect.objectContaining({ itemId: 'e1' }));
+      expect(StorageService.clearResume).toHaveBeenCalledWith('x1', 'episode', 'e1');
+      expect(StorageService.markEpisodeWatched).toHaveBeenCalledWith('x1', 's1', 'e1');
       expect(probeMedia).toHaveBeenCalledWith(e2.url, 'x1|media_probe|episode|e2');
       expect(Focus.owner()?.id).not.toBe('player.controls');
       video.dispatchEvent(new Event('loadedmetadata'));

@@ -1,10 +1,10 @@
 import { parse } from 'acorn';
 import { ALLOWLIST, scanBundle } from './compat-gate.mjs';
 
+// The post-floor calls the pinned bundle makes (see MIN_CHROME in
+// compat-gate.mjs); everything older is native on the oldest supported TV.
 const EXPECTED_RAW = new Map([
-  ['finally', 3],
-  ['trimStart', 1],
-  ['BigInt', 2],
+  ['withResolvers', 25],
 ]);
 
 function describe(violations) {
@@ -87,19 +87,9 @@ function validateBigIntGuards(ast) {
 export const SHAKA_COMPAT_ALLOWLIST = [
   ...ALLOWLIST,
   {
-    name: 'finally',
+    name: 'withResolvers',
     reason: 'polyfilled',
-    note: 'Shaka installs its guarded Promise.prototype.finally polyfill before Player use.',
-  },
-  {
-    name: 'trimStart',
-    reason: 'polyfilled',
-    note: 'Shaka installs trimLeft and aliases its guarded String.prototype.trimStart polyfill.',
-  },
-  {
-    name: 'BigInt',
-    reason: 'guarded',
-    note: 'The DASH timeline calls are behind a window.BigInt availability check.',
+    note: 'The Closure-compiled bundle installs a guarded $jscomp Promise.withResolvers polyfill at load.',
   },
 ];
 
@@ -115,10 +105,9 @@ export function validateShakaBundle(code) {
   }
 
   expectViolations('vendor bundle', scanBundle(code), EXPECTED_RAW);
-  for (const path of ['Promise.prototype.finally', 'String.prototype.trimStart']) {
-    if (code.indexOf(path) === -1) {
-      throw new Error(`The Shaka bundle no longer contains its ${path} polyfill.`);
-    }
+  // The guarded install: $jscomp.polyfill keeps a native implementation.
+  if (code.indexOf('"Promise.withResolvers",function(a){return a?a:') === -1) {
+    throw new Error('The Shaka bundle no longer contains its Promise.withResolvers polyfill.');
   }
   validateBigIntGuards(ast);
   const violations = scanBundle(code, { allowlist: SHAKA_COMPAT_ALLOWLIST });

@@ -237,69 +237,37 @@
   border-radius: var(--radius);
   border: 2px solid transparent;
   cursor: pointer;
-  transition: var(--transition);
+  /* Quick, and only the focus colors: `all` also eased a re-placed row's
+     `top`, so rows slid behind the focus. */
+  transition: background-color 120ms ease-out, color 120ms ease-out;
   gap: 16px;
   height: 84px;
 }
 
-/* Like the tab bar: the playing channel keeps a tinted fill; focus fades
-   it to white with black text. A tile colors only its name area, below
-   the art. */
+/* The playing channel keeps a tinted fill; focus turns the whole item
+   white with black text. */
 .channel-item.playing {
   background-color: var(--focus-tint);
 }
 
 .channel-item.focused:not(.grabbed):not(.favorite-selected) {
-  background-color: rgba(255, 255, 255, 0.8);
   color: #000;
+  background-color: #fff;
+  background-image: none !important;
 }
 
-/* A tile paints only its name area: white under the art would leak a seam
-   around it while the tile scales. */
-.channel-item.channel-tile.playing {
-  background-color: var(--bg-secondary);
-}
-
-.channel-item.channel-tile.playing .channel-info {
-  background-color: var(--focus-tint);
-}
-
-.channel-item.channel-tile.focused:not(.grabbed):not(.favorite-selected) {
-  background-color: var(--bg-secondary);
-}
-
-.channel-item.channel-tile.focused:not(.grabbed):not(.favorite-selected) .channel-info {
-  background-color: rgba(255, 255, 255, 0.8);
-}
-
-.channel-item.focused:not(.grabbed):not(.favorite-selected) .channel-number,
 .channel-item.focused:not(.grabbed):not(.favorite-selected) .channel-now,
 .channel-item.focused:not(.grabbed):not(.favorite-selected) .playing-indicator {
   color: inherit;
 }
 
-/* The tile's number and status sit on the art, which stays dark. */
-.channel-item.channel-tile.focused .channel-tile-art .channel-number {
-  color: var(--text-muted);
-}
-
-.channel-item.channel-tile.focused .channel-tile-art .playing-indicator {
-  color: var(--text-primary);
-}
 
 .channel-item.recent-catchup {
   height: 96px;
 }
 
-.channel-number {
-  font-size: 18px;
-  color: var(--text-muted);
-  min-width: 48px;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-}
-
 .channel-logo-wrap {
+  position: relative;
   width: 48px;
   height: 48px;
   flex-shrink: 0;
@@ -315,17 +283,16 @@
   object-fit: contain;
 }
 
-.channel-logo-placeholder {
+.channel-logo-wrap > .art-placeholder {
   width: 48px;
   height: 48px;
   border-radius: 4px;
   background: var(--bg-tertiary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 24px;
-  font-weight: 600;
-  color: var(--accent);
+}
+
+.channel-logo-wrap > .art-placeholder svg {
+  width: 24px;
+  height: 24px;
 }
 
 .channel-info {
@@ -408,163 +375,16 @@
   50% { opacity: 0.4; }
 }
 
-/* --- Browse grid: a logo stage with the name along the bottom */
+/* --- Browse grid: flat cards, the logo over the name */
 
 .channel-main.channel-main-grid {
   padding: 24px 32px 32px;
-}
-
-/* Fixed height: the grid is virtualized, so CHANNEL_GRID_ROW_STRIDE in
-   channel-list.ts must stay this height plus CHANNEL_GRID_GAP (24px).
-   Block layout, not flex gap, so webOS 4 lays it out the same. */
-.channel-item.channel-tile {
-  display: block;
-  height: 204px;
-  padding: 0;
-  background: var(--bg-secondary);
-  /* Each tile lays out on its own, so a new row costs only its own tiles. */
-  contain: layout style;
-  /* The focused tile grows; a tile never slides into place. Only transform
-     and the shadow layer's opacity move, so both stay on the compositor. */
-  transition: transform 300ms cubic-bezier(0.22, 1, 0.36, 1), color var(--transition);
-}
-
-/* The shadow is its own layer, faded in: animating box-shadow itself
-   repaints every frame. */
-.channel-item.channel-tile::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  z-index: -1;
-  border-radius: var(--radius);
-  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.65), 0 6px 14px rgba(0, 0, 0, 0.45);
-  opacity: 0;
-  transition: opacity 300ms cubic-bezier(0.22, 1, 0.36, 1);
-  pointer-events: none;
-}
-
-.channel-item.channel-tile.focused::after {
-  opacity: 1;
-}
-
-/* A grid cell takes no tint: the focused one lifts off the grid, growing
-   over a deep soft shadow. */
-.channel-item.channel-tile.focused {
-  background-image: none !important;
-  transform: scale(1.1);
 }
 
 /* A row step scrolls one tile row, so it glides in every mode but
    Essential. Chromium 53 has no scroll-behavior and stays instant. */
 html[data-animation="reduced"] .channel-main.channel-main-grid {
   scroll-behavior: smooth;
-}
-
-.channel-tile-art {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 112px;
-  padding: 16px 32px;
-  border-radius: 6px 6px 0 0;
-  background: var(--bg-tertiary);
-}
-
-.channel-tile .channel-logo-wrap {
-  width: 100%;
-  height: 100%;
-}
-
-.channel-tile .channel-logo {
-  max-width: 100%;
-  max-height: 100%;
-  border-radius: 0;
-}
-
-.channel-tile .channel-logo-placeholder {
-  width: 72px;
-  height: 72px;
-  font-size: 32px;
-  border-radius: var(--radius);
-  background: var(--bg-secondary);
-}
-
-.channel-tile .channel-number {
-  position: absolute;
-  top: 8px;
-  left: 12px;
-  min-width: 0;
-  text-align: left;
-}
-
-.channel-tile-status {
-  position: absolute;
-  top: 10px;
-  right: 12px;
-  display: flex;
-  align-items: center;
-}
-
-.channel-tile-status > * + * {
-  margin-left: 8px;
-}
-
-.channel-tile .playing-indicator {
-  font-size: 18px;
-}
-
-.channel-tile .channel-info {
-  position: absolute;
-  top: 112px; /* below .channel-tile-art */
-  right: 0;
-  bottom: 0;
-  left: 0;
-  padding: 12px 16px 0;
-  border-radius: 0 0 6px 6px;
-  transition: background-color var(--transition);
-}
-
-/* Two lines, then an ellipsis: 12 + 2 x 25 + 4 + 23 fits the 92px under
-   the 112px art in the fixed 204px tile. */
-.channel-tile .channel-name {
-  font-size: 20px;
-  white-space: normal;
-  overflow-wrap: break-word;
-  word-wrap: break-word;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-}
-
-.channel-tile .channel-now {
-  margin-top: 4px;
-}
-
-.channel-tile .recent-kind-badge {
-  padding: 2px 8px;
-  border: 0;
-  background: var(--bg-secondary);
-  font-size: 13px;
-}
-
-/* A catch-up tile's progress runs along the bottom edge of its art. */
-.channel-tile .recent-progress {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  width: auto;
-  margin: 0;
-  border-radius: 0;
-  background: var(--border);
-}
-
-html.q-no-flex-gap .channel-item.channel-tile > * + * {
-  margin-left: 0;
 }
 
 /* --- Channel list edit mode (reorder / hide / rename / regroup) */

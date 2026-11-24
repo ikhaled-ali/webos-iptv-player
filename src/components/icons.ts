@@ -4,6 +4,7 @@
 // `currentColor`. These are trusted raw markup strings — wrap them with `raw()`
 // (or interpolate into an `html` template / assign to `innerHTML`) at the call
 // site.
+import { isRtl } from '../navigation/reading-direction';
 
 export const PLAY_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
 export const PAUSE_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>';
@@ -28,16 +29,29 @@ export const TAB_LIVE_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-
 export const TAB_GUIDE_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M4 3h16a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm1 4v2h4V7H5zm6 0v2h8V7h-8zm-6 4v2h4v-2H5zm6 0v2h8v-2h-8zm-6 4v2h4v-2H5zm6 0v2h8v-2h-8z"/></svg>';
 export const TAB_MOVIES_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M4 3h16a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm.5 3v2h2V6h-2zm0 5v2h2v-2h-2zm0 5v2h2v-2h-2zm13-10v2h2V6h-2zm0 5v2h2v-2h-2zm0 5v2h2v-2h-2zM10 8.5v7l5.5-3.5L10 8.5z"/></svg>';
 export const TAB_SERIES_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M6 2.5h12v1.8H6V2.5zM4 5.2h16V7H4V5.2zm0 3.3h16a2 2 0 0 1 2 2V19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-8.5a2 2 0 0 1 2-2zm6 3.1v6.3l5-3.15-5-3.15z"/></svg>';
-export const CHEVRON_LEFT_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5 8 12l7 7"/></svg>';
+// Arrows that point along the reading direction flip in a right-to-left UI.
+// An SVG transform attribute, so a CSS animation on the icon keeps working.
+function readingDirectional(svg: string): string {
+  if (!isRtl()) return svg;
+  return svg.replace(/(<svg[^>]*>)([\s\S]*)(<\/svg>)$/, '$1<g transform="matrix(-1 0 0 1 24 0)">$2</g>$3');
+}
+
+export function chevronLeftIcon(): string {
+  return readingDirectional('<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5 8 12l7 7"/></svg>');
+}
 export const SEE_ALL_ICON = '<svg class="catalog-see-all-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>';
-export const CHEVRON_RIGHT_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>';
+export function chevronRightIcon(): string {
+  return readingDirectional('<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>');
+}
 export const LOCK_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>';
 export const UNLOCK_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 7.75-1.4"/></svg>';
 export const CHEVRON_UP = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg>';
 export const CHEVRON_DOWN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
 export const SORT_ASCENDING_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 19V5m-3 3 3-3 3 3M13 6h3m-3 6h5m-5 6h8"/></svg>';
 export const SORT_DESCENDING_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 5v14m-3-3 3 3 3-3M13 6h8m-8 6h5m-5 6h3"/></svg>';
-export const BACK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 8-5 4 5 4"/><path d="M5 12h9a4 4 0 0 1 4 4v1a4 4 0 0 1-4 4h-4"/></svg>';
+export function backIcon(): string {
+  return readingDirectional('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 8-5 4 5 4"/><path d="M5 12h9a4 4 0 0 1 4 4v1a4 4 0 0 1-4 4h-4"/></svg>');
+}
 export const CLOCK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
 export const REMOVE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 12h7"/></svg>';
 export const PENCIL_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5 4 4M4 20l5-1L20 8a2.8 2.8 0 0 0-4-4L5 15l-1 5Z"/></svg>';

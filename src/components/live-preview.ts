@@ -190,7 +190,7 @@ export class LivePreview {
       requestAnimationFrame(() => {
         if (this.options.getCurrentView() === 'channels'
             && this.options.player.isInLivePreview()) {
-          this.options.channelList.highlightEntryPoint();
+          this.options.channelList.highlightEntryPoint(true);
         }
       });
     }
@@ -384,7 +384,7 @@ export class LivePreview {
           </div>` : ''}
         <div class="live-preview-program"
              data-key="program:${item.start.getTime()}:${item.stop.getTime()}">
-          <time>${this.programTimeRange(item)}</time><span>${item.title}</span>
+          <time>${this.programTimeRange(item)}</time><span dir="auto">${item.title}</span>
         </div>`;
     })}`;
   }
@@ -411,13 +411,12 @@ export class LivePreview {
       : state.status === 'error' ? t('player.streamError') : '';
     morph(this.container, html`
       <div class="live-preview-heading" data-key="preview-heading">
-        <span class="live-preview-channel">${state.channel.name}</span>
+        <span class="live-preview-channel" dir="auto">${state.channel.name}</span>
         <button class="live-preview-favorite ${this.control === 'favorite' ? 'focused' : ''}"
                 data-key="preview-favorite" data-focusable data-preview-action="favorite"
                 aria-label="${t('player.toggleFavorite')}" aria-pressed="${String(favorite)}">
           ${raw(favoriteIcon(favorite))}
         </button>
-        <time class="live-preview-clock" datetime="${formatTime(now)}">${formatTime(now)}</time>
       </div>
       <div class="live-preview-slot" data-key="preview-slot" aria-label="${t('preview.fullScreen')}">
         ${liveBadge('live-preview-badge')}
@@ -445,7 +444,7 @@ export class LivePreview {
           </div>` : ''}
       </div>
       <div class="live-preview-details" data-key="preview-details">
-        ${program ? html`<h2 class="live-preview-title">${program.title}</h2>` : ''}
+        ${program ? html`<h2 class="live-preview-title" dir="auto">${program.title}</h2>` : ''}
         ${program && length > 0 ? html`
           <div class="live-preview-schedule">
             <time class="live-preview-time-range">${this.programTimeRange(program)}</time>

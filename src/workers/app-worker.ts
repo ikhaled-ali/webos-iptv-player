@@ -1,4 +1,3 @@
-import '../polyfills';
 import { fetchAndParseM3UInWorker } from '../parsers/m3u-loader';
 import { fetchAndParseXMLTVInWorker } from '../parsers/xmltv-loader';
 import { exposeWorkerTasks, type WorkerTaskHandlers } from './worker-rpc';

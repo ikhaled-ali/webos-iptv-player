@@ -8,6 +8,7 @@ import {
   createXtreamLiveMatcher,
 } from '../utils/xtream-live-match';
 import { createLogger } from '../utils/logger';
+import { perfEnabled, perfEnd, perfSpan, perfStart } from '../utils/perf-trace';
 import { createGroupNameMatcher, type XtreamGroupNameFilter } from '../utils/xtream-category-filter';
 import { runAppWorkerTask } from '../workers/app-worker-client';
 import type {
@@ -89,6 +90,7 @@ export async function fetchAndParseM3U(
     });
   };
   let result: M3UWorkerResponse;
+  const loadStarted = perfStart();
   try {
     result = typeof Worker === 'undefined'
       ? await fetchAndParseM3UInWorker(request, handleChunk)
@@ -108,8 +110,11 @@ export async function fetchAndParseM3U(
     );
     throw error;
   }
+  perfEnd('m3u.load', loadStarted);
   if (channelBatches.length) {
+    const joined = perfStart();
     result.data.channels = channelBatches.concat(result.data.channels);
+    perfEnd('m3u.concat', joined);
   }
   log.info(
     'M3U stream loaded',
@@ -173,11 +178,15 @@ export async function fetchAndParseM3UInWorker(
   emitChunk?: (chunk: M3UWorkerChunk) => void,
 ): Promise<M3UWorkerResponse> {
   const started = Date.now();
+  const traceStarted = perfStart();
   const liveFilters = createXtreamM3ULiveFilters(
     request.xtreamLive,
     request.xtreamBaseUrl,
     request.xtreamGroupFilter,
   );
+  const filterCost = perfEnabled() ? sampleFilterCost(liveFilters) : null;
+  let firstByteAt = 0;
+  let lastByteAt = 0;
   let emittedChannels = 0;
   let inputBytes = 0;
   let totalBytes = 0;
@@ -197,6 +206,7 @@ export async function fetchAndParseM3UInWorker(
       ? {
           channelBatchSize: CHANNEL_BATCH_SIZE,
           onChannelBatch: (channels: Channel[]) => {
+            const emitted = perfStart();
             emittedChannels += channels.length;
             const chunk: M3UWorkerChunk = {
               kind: 'channels',
@@ -209,6 +219,7 @@ export async function fetchAndParseM3UInWorker(
             };
             emitChunk(chunk);
             rememberProgress(chunk);
+            perfEnd('m3u.w.emitBatch', emitted);
           },
         }
       : {}),
@@ -220,7 +231,10 @@ export async function fetchAndParseM3UInWorker(
   let transport: M3UWorkerResponse['metrics']['transport'] = 'stream';
   let stage = 'fetch';
   try {
+    const fetched = perfStart();
     const response = await fetch(request.url, { signal: controller.signal });
+    // Connection, request, and the wait for response headers.
+    perfEnd('m3u.w.connect', fetched);
     if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     totalBytes = contentLength(response);
     stage = 'read';
@@ -230,36 +244,74 @@ export async function fetchAndParseM3UInWorker(
     let data: ParsedPlaylist;
     if (!reader) {
       transport = 'array_buffer';
+      const downloaded = perfStart();
       const bytes = new Uint8Array(await response.arrayBuffer());
+      perfEnd('m3u.w.download', downloaded);
       inputBytes = bytes.length;
       chunks = bytes.length ? 1 : 0;
       emitM3UProgress();
       stage = 'decode_parse';
+      const parsed = perfStart();
       data = parseM3UBytes(bytes, request.url, options);
+      perfEnd('m3u.w.decodeParse', parsed);
     } else {
       const parser = new M3UStreamParser(request.url, options);
-      const decoder = new PlaylistStreamDecoder(text => parser.write(text));
+      const decoder = new PlaylistStreamDecoder(perfEnabled()
+        ? text => {
+            const parsed = perfStart();
+            parser.write(text);
+            perfEnd('m3u.w.parse', parsed);
+          }
+        : text => parser.write(text));
       while (true) {
         stage = 'read';
+        const waited = perfStart();
         const next = await reader.read();
+        perfEnd('m3u.w.readWait', waited);
         if (next.done) {
           complete = true;
           break;
         }
         if (!next.value?.length) continue;
+        if (waited) {
+          lastByteAt = performance.now();
+          if (!firstByteAt) firstByteAt = lastByteAt;
+        }
         inputBytes += next.value.length;
         chunks++;
         emitM3UProgress();
         stage = 'decode_parse';
+        // Decoding, with the parse it feeds nested inside.
+        const decoded = perfStart();
         decoder.write(next.value);
+        perfEnd('m3u.w.decode', decoded);
       }
       stage = 'decode_parse';
+      const flushed = perfStart();
       decoder.finish();
+      perfEnd('m3u.w.decode', flushed);
       stage = 'finish';
+      const finished = perfStart();
       data = parser.finish();
+      perfEnd('m3u.w.finish', finished);
     }
     emitM3UProgress(true);
     const channelsKept = data.channels.length + emittedChannels;
+    if (traceStarted) {
+      const downloadMs = lastByteAt - firstByteAt;
+      perfSpan('m3u.w.total', traceStarted, performance.now(), {
+        transport,
+        bytes: inputBytes,
+        chunks,
+        firstByteMs: firstByteAt ? Math.round(firstByteAt - traceStarted) : -1,
+        downloadMs: Math.round(downloadMs),
+        throughputMiBps: downloadMs > 0 ? Math.round(inputBytes / 1048576 / (downloadMs / 1000) * 100) / 100 : -1,
+        kept: channelsKept,
+        dropped: liveFilters.getDroppedCount(),
+        filterCalls: filterCost?.calls ?? 0,
+        filterEstimatedMs: filterCost ? Math.round(filterCost.estimatedMs()) : 0,
+      });
+    }
     return {
       data,
       metrics: {
@@ -317,6 +369,32 @@ export async function fetchAndParseM3UInWorker(
     reportedChannelsEmitted = chunk.channelsEmitted;
     reportedChannelsDropped = chunk.channelsDropped;
   }
+}
+
+// Timing every filter call would cost more than the filters, so every
+// FILTER_SAMPLE_STRIDE-th call is timed and the total extrapolated.
+const FILTER_SAMPLE_STRIDE = 32;
+
+function sampleFilterCost(filters: XtreamM3ULiveFilters): { calls: number; estimatedMs(): number } {
+  let sampledMs = 0;
+  let sampled = 0;
+  const cost = {
+    calls: 0,
+    estimatedMs: () => (sampled ? sampledMs / sampled * cost.calls : 0),
+  };
+  const timed = <A>(filter: (value: A) => boolean) => (value: A): boolean => {
+    if (cost.calls++ % FILTER_SAMPLE_STRIDE) return filter(value);
+    const started = performance.now();
+    const kept = filter(value);
+    sampledMs += performance.now() - started;
+    sampled++;
+    return kept;
+  };
+  if (filters.streamLocationPrefilter) {
+    filters.streamLocationPrefilter = timed(filters.streamLocationPrefilter);
+  }
+  if (filters.channelPostfilter) filters.channelPostfilter = timed(filters.channelPostfilter);
+  return cost;
 }
 
 function contentLength(response: Response): number {

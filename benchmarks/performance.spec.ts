@@ -130,6 +130,8 @@ test('records 50,000-item application benchmarks', async ({
     return route.fulfill({ contentType: 'application/json', body: '[]' });
   });
   await page.addInitScript(() => {
+    // The suites read info-level events; the app logs only warnings by default.
+    localStorage.setItem('iptv_log_level', 'info');
     // Lets the Search samples wait until the app worker has exited.
     const workers = { live: 0 };
     (window as unknown as { __benchmarkAppWorkers: typeof workers }).__benchmarkAppWorkers = workers;
@@ -162,14 +164,17 @@ test('records 50,000-item application benchmarks', async ({
   await page.goto('/benchmark-seed.html');
   await page.evaluate(rebuildBenchmarkDatabase);
   const fixtureStarted = Date.now();
+  await addSeedBundle(page);
   await page.evaluate(installBenchmarkFixture, FIXTURE);
   const fixtureSetupMs = Date.now() - fixtureStarted;
 
   try {
     const startupStarted = Date.now();
     await page.goto('/');
-    await expect(page.locator('#view-channels')).toBeVisible();
-    await expect(page.locator('.channel-item').first()).toBeVisible();
+    await expect(page.locator('#view-home')).toBeVisible();
+    const startupHomeMs = Date.now() - startupStarted;
+    await openLive(page);
+    await expect(page.locator('.channel-main .channel-item').first()).toBeVisible();
     const startupReadyMs = Date.now() - startupStarted;
     const startupHover = await page.evaluate(measureStartupHoverBenchmark);
     assertStartupHoverBenchmark(startupHover);
@@ -234,45 +239,48 @@ test('records 50,000-item application benchmarks', async ({
     const parental = await runDesktopParentalBenchmark(page);
     assertParentalBenchmark(parental, SCALE);
     suites.parental = parental;
-    await page.evaluate(installM3USearchFixture);
-    await page.reload();
-    await expect(page.locator('#view-channels')).toBeVisible();
+    await reloadWith(page, installM3USearchFixture);
+    await openLive(page);
     suites.search.m3u = await page.evaluate(
       runM3USearchBenchmark,
       { querySamples: QUERY_SAMPLES },
     );
     assertM3USearchBenchmark(suites.search.m3u);
-    await page.evaluate(installUniqueGroupFixture, SCALE);
+    console.log('Benchmark phase: groups');
+    await installFromSeed(page, installUniqueGroupFixture, SCALE);
     const groupStartupStarted = Date.now();
-    await page.reload();
-    await expect(page.locator('#view-channels')).toBeVisible();
+    await page.goto('/');
+    await openLive(page);
     const groups = await page.evaluate(runGroupBenchmark, { keySamples: KEY_SAMPLES });
     groups.startupMs = Date.now() - groupStartupStarted;
     assertGroupBenchmarkScale(groups, SCALE);
     suites.groups = groups;
-    await page.evaluate(installColdLoadFixture, {
+    console.log('Benchmark phase: cold load');
+    await installFromSeed(page, installColdLoadFixture, {
       accountId: FIXTURE.accountId,
       url: COLD_PLAYLIST_URL,
     });
     const coldStarted = performance.now();
-    await page.reload();
-    await expect(page.locator('#view-channels')).toBeVisible();
-    await expect(page.locator('.channel-item').first()).toBeVisible();
-    const coldResult = await page.evaluate(() => {
-      const totalSize = parseFloat(
-        document.querySelector<HTMLElement>('.channel-list-spacer')?.style.height || '0',
-      );
-      return {
-        rendered: document.querySelectorAll('.channel-item').length,
-        channels: Math.round(totalSize / 88),
-      };
-    });
+    await page.goto('/');
+    await openLive(page);
+    await expect(page.locator('.channel-main .channel-item').first()).toBeVisible();
+    // The All group's count: rows and grid tiles have different strides.
+    await expect(page.locator('.group-item[data-group="builtin:all"] .group-count'))
+      .toHaveText(String(SCALE), { timeout: 120_000 });
+    const coldResult = await page.evaluate(() => ({
+      rendered: document.querySelectorAll('.channel-main .channel-item').length,
+      channels: Number(
+        document.querySelector('.group-item[data-group="builtin:all"] .group-count')
+          ?.textContent || 0,
+      ),
+    }));
     const coldLoad = {
       readyMs: Math.round((performance.now() - coldStarted) * 10) / 10,
       ...coldResult,
     };
     assertColdLoadBenchmark(coldLoad, SCALE);
     suites.coldLoad = coldLoad;
+    console.log('Benchmark phase: large playlist');
     const largePlaylist = await runDesktopLargePlaylistBenchmark(browser, LARGE_PLAYLIST);
     const largePlaylistFiltered = await runDesktopLargePlaylistBenchmark(
       browser,
@@ -281,6 +289,7 @@ test('records 50,000-item application benchmarks', async ({
     await page.addScriptTag({
       content: await readFile('test-output/benchmarks/parser-bundle.js', 'utf8'),
     });
+    console.log('Benchmark phase: derived indexes');
     parsers.derivedIndexes = await measureDerivedIndexBenchmark(
       { scale: SCALE },
       {
@@ -301,6 +310,7 @@ test('records 50,000-item application benchmarks', async ({
       fixtureSetupMs,
       suites: {
         startup: {
+          homeMs: startupHomeMs,
           readyMs: startupReadyMs,
           rendered: suites.channelList.rendered,
           ...startupHover,
@@ -329,6 +339,44 @@ test('records 50,000-item application benchmarks', async ({
     });
   }
 });
+
+// The app opens on Home; the channel suites start from Live.
+async function openLive(page: Page) {
+  await expect(page.locator('#view-home:not(.hidden), #view-channels:not(.hidden)'))
+    .toBeVisible({ timeout: 120_000 });
+  if (await page.locator('#view-channels').isHidden()) {
+    await page.locator('.tab-bar-item[data-section="live"]').click();
+  }
+  await expect(page.locator('#view-channels')).toBeVisible();
+}
+
+// Fixtures are written from a page without the app: a running app saves its
+// own settings when it unloads, which would overwrite them before the reload.
+async function installFromSeed<T>(page: Page, install: (arg: T) => unknown, arg?: T) {
+  await page.goto('/benchmark-seed.html');
+  await addSeedBundle(page);
+  // A stuck IndexedDB request would otherwise hold the test until its timeout.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const stalled = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`Fixture install ${install.name} stalled`)), 120_000);
+  });
+  try {
+    await Promise.race([page.evaluate(install as never, arg), stalled]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function addSeedBundle(page: Page) {
+  await page.addScriptTag({
+    content: await readFile('test-output/benchmarks/seed-bundle.js', 'utf8'),
+  });
+}
+
+async function reloadWith(page: Page, install: () => unknown) {
+  await installFromSeed(page, install);
+  await page.goto('/');
+}
 
 // The PIN is set through the UI, and parental controls are turned off again
 // afterwards so the later suites run without them. The TV uses runParental

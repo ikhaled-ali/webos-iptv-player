@@ -5,6 +5,13 @@ description: Keep the app working on webOS 4's Chromium 53 — the compat gates,
 
 # Legacy engine (webOS 4 / Chromium 53)
 
+> **Floor raised to webOS 23 / Chromium 94.** `src/polyfills.ts`,
+> `src/engine-quirks.ts`, `css/legacy-webos-*.css`, the esbuild banner and
+> the flex-gap/color build transforms are gone, and both gates now enforce
+> only APIs newer than `MIN_CHROME` (`scripts/compat-gate.mjs`). The
+> sections below on those pieces and on the chromium-53-simulation E2E
+> project describe the old setup; see `docs/webos-23-baseline.md`.
+
 esbuild builds with `target: ['chrome53']`. Modern *syntax* is down-leveled;
 modern *APIs* are not, and they fail silently on a TV — often as a blank
 loading screen. **Don't change the target without reason.**

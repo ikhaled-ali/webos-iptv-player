@@ -78,6 +78,7 @@ import {
   PLAYBACK_ICON,
   SOURCES_ICON,
 } from './icons';
+import { isVoiceLanguagePreference, VOICE_LANGUAGES, type VoiceLanguagePreference } from '../config/voice-languages';
 
 const log = createLogger('Settings');
 // Frames the pane must hold still before a scroll counts as done.
@@ -192,6 +193,13 @@ function languageOptions(): { value: LocalePreference; label: string }[] {
   return [
     { value: 'system', label: t('settings.languageSystem') },
     ...localeOptions(),
+  ];
+}
+
+function voiceLanguageOptions(): { value: VoiceLanguagePreference; label: string }[] {
+  return [
+    { value: 'app', label: t('settings.voiceLanguageApp') },
+    ...VOICE_LANGUAGES.map(language => ({ value: language.tag, label: language.label })),
   ];
 }
 
@@ -557,7 +565,7 @@ export class Settings {
     this.focusScope = Focus.register({
       id: 'view.settings',
       root: container,
-      leaveFor: { up: 'tabbar' },
+      leaveFor: { up: 'tabbar', left: 'tabbar' },
       defaultKey: () => this.defaultKey(),
       resolve: (key) => this.resolveKey(key),
       reveal: (key) => this.revealLanded(key),
@@ -748,6 +756,7 @@ export class Settings {
     const overlayStyle = StorageService.getOverlayStyle();
     const textSize = StorageService.getTextSize();
     const localePreference = StorageService.getLocalePreference();
+    const voiceLanguage = StorageService.getVoiceLanguage();
     const liveReconnectAttempts = StorageService.getLiveReconnectAttempts();
     const numberEntryOsdTimeoutMs = StorageService.getNumberEntryOsdTimeoutMs();
     const playerOsdTimeoutMs = StorageService.getPlayerOsdTimeoutMs();
@@ -796,6 +805,11 @@ export class Settings {
                   <div class="settings-item">
                     ${dropdown('app-language', languageOptions(), localePreference)}
                     <div class="settings-item-hint">${t('settings.languageHint')}</div>
+                  </div>
+                  <div class="settings-item">
+                    <div class="settings-item-title">${t('settings.voiceLanguage')}</div>
+                    ${dropdown('voice-language', voiceLanguageOptions(), voiceLanguage)}
+                    <div class="settings-item-hint">${t('settings.voiceLanguageHint')}</div>
                   </div>
                 </div>
 
@@ -1404,8 +1418,8 @@ export class Settings {
     if (option) this.nav.focus(option);
   }
 
-  // False when Up or Down found nothing to move to, so the host can hand Up
-  // to the tab bar.
+  // False when Up, Down, or Left found nothing to move to, so the host can
+  // hand Up or Left to the rail.
   handleAction(action: Action): boolean {
     if (this.confirmationPrompt.visible) {
       this.confirmationPrompt.handleAction(action);
@@ -1437,8 +1451,9 @@ export class Settings {
         break;
 
       case 'left':
+        // The category list is the leftmost column: off it, the rail.
         if (this.nav.focused?.classList.contains('settings-nav-item')) {
-          this.nav.move(action);
+          if (!this.nav.move(action)) return false;
           break;
         }
         {
@@ -2985,6 +3000,9 @@ export class Settings {
 
     const locale = ($('#app-language', this.container) as HTMLElement | null)?.dataset.value as LocalePreference | undefined;
     if (locale) StorageService.setLocalePreference(locale);
+
+    const voiceLanguage = ($('#voice-language', this.container) as HTMLElement | null)?.dataset.value;
+    if (isVoiceLanguagePreference(voiceLanguage)) StorageService.setVoiceLanguage(voiceLanguage);
 
     const liveReconnectAttempts = Number(
       ($('#live-reconnect-attempts', this.container) as HTMLElement | null)?.dataset.value,

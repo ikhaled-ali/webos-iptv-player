@@ -136,6 +136,8 @@ describe('Intl.PluralRules polyfill', () => {
     expect(selectPluralCategory('tr', 1)).toBe('one');
     expect(selectPluralCategory('tr', 2)).toBe('other');
     expect(selectPluralCategory('tr', 0)).toBe('other');
+    expect([0, 1, 2, 3, 10, 11, 99, 100, 101, 102, 103, 111].map(n => selectPluralCategory('ar', n)))
+      .toEqual(['zero', 'one', 'two', 'few', 'few', 'many', 'many', 'other', 'other', 'other', 'few', 'many']);
   });
 
   it('matches the native rules for every app locale', () => {

@@ -1,61 +1,159 @@
+/* The section rail: icon-only, docked along the left edge. */
 .tab-bar {
   position: fixed;
   top: 0;
+  bottom: 0;
   left: 0;
-  right: 0;
   z-index: 60;
-  height: 96px;
+  width: 120px;
   box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  padding: 0 24px 0 60px;
+  padding: 32px 0 28px;
   background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
 }
 
-/* Hidden on the full-screen player. */
-.tab-bar--hidden {
+/* Hidden on the full-screen player and guide, with the time and weather
+   pill and the scrim that belong to it. Compound so it outranks those
+   parts' own display rules below. */
+.tab-bar--hidden,
+.tab-bar-status.tab-bar--hidden,
+.tab-bar-scrim.tab-bar--hidden {
   display: none;
 }
 
-/* When the bar is docked, the section views sit below it (never overlapping);
-   the full-screen player / loading views keep top:0 / full height. */
+/* When the rail is docked, the section views sit beside it and under the
+   search strip (never beneath either); the full-screen player / loading
+   views keep the whole screen. */
 body.tabbar-docked #view-home,
 body.tabbar-docked #view-channels,
 body.tabbar-docked #view-epg,
 body.tabbar-docked #view-movies,
 body.tabbar-docked #view-series,
 body.tabbar-docked #view-search,
+body.tabbar-docked #view-settings,
+body.tabbar-docked #view-recordings {
+  top: 128px;
+  left: 120px;
+  width: 1800px;
+  height: 952px;
+}
+
+/* Settings' menu panel runs to the top behind the search strip, as Live's
+   does; its content still starts below the strip. */
 body.tabbar-docked #view-settings {
-  top: 96px;
-  height: 984px;
+  top: 0;
+  height: 1080px;
+}
+
+body.tabbar-docked #view-settings .settings-sidebar,
+body.tabbar-docked #view-settings .settings-main {
+  padding-top: 128px;
 }
 
 /* The guide's own root is fixed-height; shrink it to the docked viewport. */
 body.tabbar-docked #view-epg .epg-view {
-  height: 984px;
+  height: 952px;
+}
+
+/* Where scrollers can declare an inset, Home, Live, Movies, Series, and
+   Search run to the top of the screen and scroll under the search strip.
+   Each scroller keeps its first 128px clear and declares them as
+   scroll-padding-top, which focus reveals and the list math read
+   (scrollInsetTop in utils/dom.ts). Elsewhere the views start below it. */
+@supports (scroll-padding-top: 0px) {
+  body.tabbar-docked #view-home,
+  body.tabbar-docked #view-channels,
+  body.tabbar-docked #view-movies,
+  body.tabbar-docked #view-series,
+  body.tabbar-docked #view-search {
+    top: 0;
+    height: 1080px;
+  }
+
+  body.tabbar-docked .home-view {
+    padding-top: 152px;
+    /* stylelint-disable-next-line plugin/no-unsupported-browser-features -- inside its own @supports */
+    scroll-padding-top: 128px;
+  }
+
+  body.tabbar-docked #view-channels .sidebar,
+  body.tabbar-docked .catalog-category-panel,
+  body.tabbar-docked #view-channels #live-preview {
+    padding-top: 128px;
+  }
+
+  body.tabbar-docked #view-channels .channel-main {
+    padding-top: 136px;
+    /* stylelint-disable-next-line plugin/no-unsupported-browser-features -- inside its own @supports */
+    scroll-padding-top: 128px;
+  }
+
+  body.tabbar-docked #view-channels .channel-main.channel-main-grid {
+    padding-top: 152px;
+  }
+
+  body.tabbar-docked #view-channels .channel-scroll-indicator {
+    top: 140px;
+  }
+
+  body.tabbar-docked #view-movies .catalog-view:not(.catalog-browse),
+  body.tabbar-docked #view-series .catalog-view:not(.catalog-browse),
+  body.tabbar-docked #view-search .search-view {
+    padding-top: 168px;
+    /* stylelint-disable-next-line plugin/no-unsupported-browser-features -- inside its own @supports */
+    scroll-padding-top: 128px;
+  }
+
+  /* Below the strip, plus the rail's own title; the reveal margin adds the
+     room for the focused poster's grow. */
+  body.tabbar-docked .catalog-rails {
+    /* stylelint-disable-next-line plugin/no-unsupported-browser-features -- inside its own @supports */
+    scroll-padding-top: 172px;
+  }
+
+  body.tabbar-docked .catalog-rails-body {
+    padding-top: 168px;
+  }
+}
+
+/* Fades from the theme's scrim at the top edge to nothing a little below
+   the search box, the full screen wide so the clock sits on it too. */
+.tab-bar-scrim {
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 59;
+  height: 140px;
+  background: linear-gradient(
+    rgb(var(--catalog-hero-scrim-rgb) / 0.95),
+    rgb(var(--catalog-hero-scrim-rgb) / 0.8) 60%,
+    rgb(var(--catalog-hero-scrim-rgb) / 0)
+  );
+  pointer-events: none;
 }
 
 .tab-bar-inner {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 48px;
-  width: 100%;
+  gap: 12px;
+  height: 100%;
 }
 
 .tab-bar-brand {
   display: flex;
   align-items: center;
+  margin-bottom: 28px;
 }
 
-/* The mark alone carries the brand; it grows with the text size like the
-   tabs beside it. */
+/* The mark alone carries the brand. */
 .tab-bar-brand > .app-logo {
   display: block;
   flex-shrink: 0;
   /* The mark is wider than tall; the box keeps its viewBox's 55.5:52. */
-  width: calc(66px * var(--font-scale));
-  height: calc(62px * var(--font-scale));
+  width: 64px;
+  height: 60px;
   shape-rendering: geometricPrecision;
 }
 
@@ -66,105 +164,57 @@ body.tabbar-docked #view-epg .epg-view {
 .app-logo-play { fill: var(--accent); stroke: var(--accent); }
 .app-logo-signal { stroke: var(--accent); }
 
+/* Pushes the lock and Settings to the rail's foot. */
+.tab-bar-spacer {
+  flex: 1 1 auto;
+}
+
 .tab-bar-item {
   flex-shrink: 0;
   font-family: inherit;
-  font-size: 23px;
-  font-weight: 400;
-  line-height: 1.4;
-  color: #fff;
-  background: transparent;
-  border: none;
-  padding: 4px 0;
-  cursor: pointer;
-  /* A clicked tab keeps DOM focus; `.focused` is the only focus look. */
+  /* A clicked item keeps DOM focus; `.focused` is the only focus look. */
   outline: none;
+  cursor: pointer;
 }
 
-.tab-bar-item.active,
-.tab-bar-item.active.focused {
-  color: var(--active-text);
-}
-
-.tab-bar-item.focused,
-html:not(.keyboard-nav) .tab-bar-item:hover {
-  color: var(--text-primary);
-}
-
-/* A text tab: glyph beside the label. The current section keeps a tinted
-   pill; focus fades it to white with black content. */
-.tab-bar-tab {
+/* Every rail control is a bare glyph in a rounded square. The current
+   section keeps a tinted square; focus fades it to white with a black
+   glyph. */
+.tab-bar-icon {
   position: relative;
-  transition: color var(--transition);
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  padding: 10px 0; /* 52px tall, like the icon circles */
-  border: none;
-  z-index: 0; /* keeps the tint behind the label and above the bar */
-}
-
-/* The tint reaches 18px past the label on each side without moving it;
-   the round ends need the extra room. */
-.tab-bar-tab.focused {
-  background-image: none;
-}
-
-.tab-bar-tab::before {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -18px;
-  right: -18px;
-  z-index: -1;
-  border-radius: 999px; /* fully round ends, like the icon circles */
-  content: '';
-  background-color: var(--focus-tint);
-  opacity: 0;
-  transition: opacity var(--transition), background-color var(--transition);
-}
-
-.tab-bar-tab.active::before {
-  opacity: 1;
-}
-
-html:not(.keyboard-nav) .tab-bar-tab:hover::before,
-.tab-bar-tab.focused::before {
-  background-color: #fff;
-  opacity: 1;
-}
-
-html:not(.keyboard-nav) .tab-bar-tab:hover,
-.tab-bar-tab.focused,
-.tab-bar-tab.active.focused,
-html:not(.keyboard-nav) .tab-bar-tab:hover .tab-bar-tab-icon,
-.tab-bar-tab.focused .tab-bar-tab-icon,
-.tab-bar-tab.active.focused .tab-bar-tab-icon {
-  color: #000;
-}
-
-/* The logo gets 60px on each side: the bar's left padding before it, the
-   48px gap plus this after it. The first tab's pill starts past it. */
-.tab-bar-brand + .tab-bar-tab {
-  padding-left: 12px;
-}
-
-.tab-bar-brand + .tab-bar-tab::before {
-  left: -6px;
-}
-
-.tab-bar-tab-icon {
-  flex-shrink: 0;
-  width: calc(28px * var(--font-scale));
-  height: calc(28px * var(--font-scale));
-  margin-right: 10px;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 72px;
+  height: 72px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 18px;
   color: var(--text-primary);
-  transition: color var(--transition);
+  background: transparent;
+  transition: background-color var(--transition), color var(--transition);
 }
 
-.tab-bar-tab-icon svg {
+.tab-bar-icon svg {
   display: block;
-  width: 100%;
-  height: 100%;
+  width: 32px;
+  height: 32px;
+}
+
+.tab-bar-icon.active {
+  color: var(--active-text);
+  background-color: var(--focus-tint);
+}
+
+html:not(.keyboard-nav) .tab-bar-icon:hover,
+.tab-bar-icon.focused,
+.tab-bar-icon.active.focused {
+  color: #000;
+  background-color: #fff;
+  background-image: none;
+  border-color: transparent;
+  box-shadow: none;
 }
 
 /* The mic takes the accent while it listens. */
@@ -172,234 +222,113 @@ html:not(.keyboard-nav) .tab-bar-tab:hover .tab-bar-tab-icon,
   color: var(--accent);
 }
 
-/* No overflow clip: it would cut the magnifier's focus glow. */
+/* The search box and the mic sit in a strip beside the logo, level with
+   it, always shown. The box is a pill like the rail icons' squares: rest is
+   quiet, focus turns it white, and the open box (caret in it) keeps an
+   accent border. */
 .tab-bar-search {
-  flex-shrink: 0;
-  margin-left: auto;
+  position: fixed;
+  top: 26px;
+  left: 160px;
+  z-index: 61;
   display: flex;
   align-items: center;
+  box-sizing: border-box;
+  width: 600px;
+  height: 72px;
+  padding: 0 24px;
+  border: 2px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-primary);
+  background: transparent;
+  cursor: text;
+  transition: background-color var(--transition), color var(--transition), border-color var(--transition);
+}
+
+.tab-bar-search-glyph {
+  flex-shrink: 0;
+  margin-right: 16px;
+  color: var(--text-secondary);
+}
+
+.tab-bar-search-glyph svg {
+  display: block;
+  width: 30px;
+  height: 30px;
 }
 
 .tab-bar-search-input {
-  width: 0;
-  opacity: 0;
-  padding: 0;
-  margin: 0;
-  border: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
   box-sizing: border-box;
-  height: 52px;
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
+  margin: 0;
+  padding: 0;
+  border: none;
+  color: inherit;
   font-family: inherit;
   font-size: 26px;
-  border-radius: 8px;
-  transition: width 260ms ease, opacity 200ms ease, padding 260ms ease, margin 260ms ease;
+  background: transparent;
 }
 
-.tab-bar-search.expanded .tab-bar-search-input {
-  opacity: 1;
-  padding: 0 18px;
-  margin-right: 14px;
+.tab-bar-search-input::placeholder {
+  color: var(--text-secondary);
 }
 
 .tab-bar-search-input:focus {
   outline: none;
 }
 
-/* A bare icon (search, settings) at rest; pointer hover and D-pad focus draw a circle
-   matching the account avatar beside it. */
-.tab-bar-icon {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-  width: 52px;
-  height: 52px;
-  padding: 0;
-  border-radius: 50%;
-  background: transparent;
-  border: 2px solid transparent;
-  color: var(--text-primary);
-  cursor: pointer;
-  transition: background-color var(--transition), color var(--transition);
+.tab-bar-search.expanded {
+  border-color: var(--accent);
 }
 
-/* The right-hand controls sit 20px apart, glyph to glyph (settings 48px from
-   search, like the tabs): each pulls its left edge into the 48px gap, and the 52px circles
-   also give back the 11px around their glyph. */
-.tab-bar-inner > .tab-bar-icon {
-  margin-left: -11px; /* 48px from the magnifier, like the text tabs */
-  margin-right: -11px;
-}
-
-.tab-bar-inner > .tab-bar-lock,
-.tab-bar-inner > .tab-bar-clock,
-.tab-bar-inner > .tab-bar-weather,
-.tab-bar-inner > .tab-bar-account {
-  margin-left: -28px;
-}
-
-.tab-bar-search > .tab-bar-icon {
-  margin-right: -11px;
-}
-
-.tab-bar-icon svg {
-  width: 30px;
-  height: 30px;
-  display: block;
-}
-
-.tab-bar-icon.active {
-  background-color: var(--focus-tint);
-}
-
-html:not(.keyboard-nav) .tab-bar-icon:hover,
-.tab-bar-icon.focused {
+html:not(.keyboard-nav) .tab-bar-search:hover,
+.tab-bar-search.focused {
+  color: #000;
   background-color: #fff;
   background-image: none;
-  color: #000;
   border-color: transparent;
   box-shadow: none;
 }
 
-
-/* Time of day: status, not navigation, so it never takes focus. The rule
-   on its left sets it apart from the controls. */
-.tab-bar-clock {
-  flex-shrink: 0;
-  padding-left: 20px;
-  border-left: 2px solid var(--border);
-  font-size: 23px;
-  font-weight: 500;
-  line-height: 1.3;
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+html:not(.keyboard-nav) .tab-bar-search:hover .tab-bar-search-glyph,
+.tab-bar-search.focused .tab-bar-search-glyph {
+  color: #555;
 }
 
-/* Current weather after the clock: a condition glyph and the temperature.
-   Empty until the first reading arrives, so nothing shows offline. The rule
-   on its right mirrors the clock's and sets the account apart. */
-.tab-bar-weather {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  padding-right: 20px;
-  border-right: 2px solid var(--border);
-  font-size: 23px;
-  font-weight: 500;
-  line-height: 1.3;
-  color: var(--text-primary);
-  white-space: nowrap;
+/* Apart from the glyph rule: an engine without ::placeholder drops the
+   whole rule. */
+html:not(.keyboard-nav) .tab-bar-search:hover .tab-bar-search-input::placeholder,
+.tab-bar-search.focused .tab-bar-search-input::placeholder {
+  color: #555;
 }
 
-.tab-bar-weather:empty {
-  display: none;
+/* The mic follows the box on the same row, round like it. */
+.tab-bar-icon.voice-search {
+  border-radius: 50%;
+  position: fixed;
+  top: 26px;
+  left: 776px;
+  z-index: 61;
 }
 
-.tab-bar-weather-icon {
-  width: calc(28px * var(--font-scale));
-  height: calc(28px * var(--font-scale));
-  margin-right: 8px;
+/* The account avatar ends the strip at the screen's right edge, inside the
+   clock and weather's pill. */
+.tab-bar .tab-bar-account {
+  position: fixed;
+  top: 26px;
+  right: 82px;
+  width: 72px;
+  height: 72px;
+  justify-content: center;
+  z-index: 61;
 }
 
-.tab-bar-weather-icon svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
-/* Frosted bar: where the engine can blur what is behind it, Live, Movies,
-   Series, and Search run to the top of the screen and scroll under the bar.
-   Each scroller keeps its first 96px clear and declares them as
-   scroll-padding-top, which focus reveals and the list math read
-   (scrollInsetTop in utils/dom.ts). Elsewhere the bar stays solid and the
-   views start below it. */
-@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-  .tab-bar {
-    background: transparent;
-    border-bottom: none;
-  }
-
-  /* Measured on a webOS TV: blurring the content that scrolls under the bar
-     re-blurs every frame and drops a third of them, so only the Full
-     animation mode pays for the glass. Elsewhere the bar is opaque. */
-  html[data-animation="full"] .tab-bar {
-    -webkit-backdrop-filter: blur(28px) saturate(160%);
-    backdrop-filter: blur(28px) saturate(160%);
-  }
-
-  /* The theme's bar color; under the controls, over what scrolls beneath. */
-  .tab-bar::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: -1;
-    background: var(--bg-secondary);
-    opacity: 1;
-  }
-
-  html[data-animation="full"] .tab-bar::before {
-    opacity: 0.62;
-  }
-
-  body.tabbar-docked #view-channels,
-  body.tabbar-docked #view-movies,
-  body.tabbar-docked #view-series,
-  body.tabbar-docked #view-search {
-    top: 0;
-    height: 1080px;
-  }
-
-  body.tabbar-docked #view-channels .sidebar,
-  body.tabbar-docked #view-channels #live-preview {
-    padding-top: 96px;
-  }
-
-  body.tabbar-docked #view-channels .channel-main {
-    padding-top: 104px;
-    /* stylelint-disable-next-line plugin/no-unsupported-browser-features -- inside the backdrop-filter @supports, Chromium 76+ */
-    scroll-padding-top: 96px;
-  }
-
-  body.tabbar-docked #view-channels .channel-main.channel-main-grid {
-    padding-top: 120px;
-  }
-
-  body.tabbar-docked #view-channels .channel-scroll-indicator {
-    top: 108px;
-  }
-
-  body.tabbar-docked #view-movies .catalog-view:not(.catalog-browse),
-  body.tabbar-docked #view-series .catalog-view:not(.catalog-browse),
-  body.tabbar-docked #view-search .search-view {
-    padding-top: 136px;
-    /* stylelint-disable-next-line plugin/no-unsupported-browser-features -- inside the backdrop-filter @supports, Chromium 76+ */
-    scroll-padding-top: 96px;
-  }
-
-  /* Below the bar, plus the rail's own title; the reveal margin adds the
-     room for the focused poster's grow. */
-  body.tabbar-docked .catalog-rails {
-    /* stylelint-disable-next-line plugin/no-unsupported-browser-features -- inside the backdrop-filter @supports, Chromium 76+ */
-    scroll-padding-top: 140px;
-  }
-
-  /* The rails start below the bar they scroll under. */
-  body.tabbar-docked .catalog-rails-body {
-    padding-top: 136px;
-  }
-}
-
-/* Hangs 12px under the bar (the 52px mic sits 22px above the bar's edge)
-   while the mic listens, styled like the account menu. */
+/* Under the mic while it listens, styled like the account menu. */
 .tab-bar-voice-tip {
   position: absolute;
-  top: calc(100% + 34px);
+  top: calc(100% + 16px);
   left: 50%;
   transform: translateX(-50%);
   padding: 12px 20px;
@@ -411,4 +340,35 @@ html:not(.keyboard-nav) .tab-bar-icon:hover,
   border-radius: 10px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
   pointer-events: none;
+}
+
+/* Time of day and weather (status-clock.css): status, not navigation, so
+   they never take focus. They sit top-right in a pill like the search
+   box's, which also holds the avatar at its end. */
+.tab-bar-status {
+  position: fixed;
+  /* The search box's top and height, so the time shares its midline. */
+  top: 26px;
+  right: 80px;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  height: 72px;
+  padding: 0 24px;
+  border: 2px solid var(--border);
+  border-radius: 999px;
+  z-index: 60;
+  color: var(--text-primary);
+  pointer-events: none;
+}
+
+/* Room for the avatar (72px), set off from the weather by a divider like
+   the one between the time and the weather. */
+.tab-bar-status.with-account {
+  padding-right: 72px;
+}
+
+.tab-bar-status.with-account .status-clock {
+  padding-right: 0.7em;
+  border-right: 2px solid var(--border);
 }

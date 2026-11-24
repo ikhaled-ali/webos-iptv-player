@@ -1,6 +1,6 @@
 import { html, raw, type Safe } from '../utils/dom';
 import { t } from '../i18n';
-import { BACK_ICON } from './icons';
+import { backIcon } from './icons';
 
 // Footer remote-key hints (`.edit-hints`) shared by the channel editor, the
 // Live preview list, and the parental manager. `attrs` carries each caller's
@@ -15,7 +15,7 @@ function attributes(attrs: HintAttrs): Safe {
 }
 
 export function backKey(): Safe {
-  return html`<span class="edit-key key-back">${raw(BACK_ICON)}</span>`;
+  return html`<span class="edit-key key-back">${raw(backIcon())}</span>`;
 }
 
 export function okHint(label: string, attrs: HintAttrs = {}): Safe {

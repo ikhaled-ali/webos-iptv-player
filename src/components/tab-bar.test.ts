@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { Action, PlaylistEntry } from '../types';
-import { TabBar, SEARCH_INPUT_MAX_WIDTH } from './tab-bar';
+import { TabBar } from './tab-bar';
 import { Focus, Tier } from '../navigation/focus-scope';
 
 const clock = vi.hoisted(() => ({
@@ -78,17 +78,18 @@ describe('TabBar', () => {
     const logo = document.querySelector('.tab-bar-brand > svg.app-logo');
     expect(logo?.getAttribute('aria-label')).toBe('iPlayer');
     expect(document.querySelector('.tab-bar-brand')?.children.length).toBe(1);
-    expect(items()).toEqual(['Home', 'Live', 'Guide', 'Movies', 'Series', 'Search', 'Voice search', 'Settings']);
+    expect(items()).toEqual(['Search', 'Voice search', 'Settings', 'Home', 'Live', 'Series', 'Movies', 'Guide']);
     expect(focusedLabel()).toBe(null); // shown but not focused → no ring
     expect(document.body.classList.contains('tabbar-docked')).toBe(true);
   });
 
-  it('shows the time beside search and keeps it current without taking focus', () => {
+  it('floats the time apart from the rail and keeps it current without taking focus', () => {
     clock.time = '20:36';
-    const clockEl = () => document.querySelector<HTMLElement>('.tab-bar-clock');
+    const clockEl = () => document.querySelector<HTMLElement>('.tab-bar-status .status-clock-time');
     bar.setSections(true);
     expect(clockEl()?.textContent).toBe('20:36');
-    expect(clockEl()?.previousElementSibling?.classList.contains('tab-bar-search')).toBe(true);
+    expect(clockEl()?.closest('.tab-bar-status')).not.toBeNull();
+    expect(document.querySelector('.tab-bar')?.contains(clockEl() ?? null)).toBe(false);
     expect(clockEl()?.hasAttribute('data-focusable')).toBe(false);
 
     bar.focus();
@@ -100,7 +101,7 @@ describe('TabBar', () => {
 
   it('renders only Live/Guide/Search/Settings for an M3U-only account', () => {
     bar.setSections(false);
-    expect(items()).toEqual(['Home', 'Live', 'Guide', 'Search', 'Voice search', 'Settings']);
+    expect(items()).toEqual(['Search', 'Voice search', 'Settings', 'Home', 'Live', 'Guide']);
   });
 
   it('focus() puts the ring on the active tab', () => {
@@ -121,13 +122,13 @@ describe('TabBar', () => {
 
   it('right/left switch the active section live and call onSwitch, staying focused', () => {
     bar.focus();
-    press('right');
+    press('down');
     expect(focusedLabel()).toBe('Guide');
     expect(bar.focused).toBe(true);
     expect(onSwitch).toHaveBeenLastCalledWith('epg');
-    press('right');
+    press('down');
     expect(onSwitch).toHaveBeenLastCalledWith('movies');
-    press('left');
+    press('up');
     expect(onSwitch).toHaveBeenLastCalledWith('epg');
     expect(bar.focused).toBe(true);
   });
@@ -135,21 +136,68 @@ describe('TabBar', () => {
   it('right from Live on an M3U account skips to Guide then Search and Settings (no Movies/Series)', () => {
     bar.setSections(false);
     bar.focus();
-    press('right');
+    press('down');
     expect(onSwitch).toHaveBeenLastCalledWith('epg');
-    press('right');
+    press('down');
     expect(onSwitch).toHaveBeenLastCalledWith('search');
-    press('right');
+    press('down');
     expect(onSwitch).toHaveBeenLastCalledWith('settings');
   });
 
   it('down/select enters the active section and drops focus', () => {
     bar.focus();
-    press('right');   // → guide (live switch)
+    press('down');   // → guide (live switch)
     press('select');
     expect(onEnter).toHaveBeenCalledWith('epg', 'key');
     expect(bar.focused).toBe(false);
     expect(focusedLabel()).toBe(null);
+  });
+
+  it('Left off a page lands on the rail icon level with what had focus', () => {
+    // jsdom lays nothing out: stack the rail's targets 80px apart.
+    document.querySelectorAll<HTMLElement>('.tab-bar [data-key]').forEach((el, i) => {
+      el.getBoundingClientRect = () => ({ top: i * 80, height: 72 }) as DOMRect;
+    });
+    const top = (key: string) =>
+      document.querySelector<HTMLElement>(`.tab-bar [data-key="${key}"]`)!.getBoundingClientRect().top;
+    bar.enterNear(top('settings') + 30);
+    bar.focus();
+    expect(focusedLabel()).toBe('Settings');
+
+    // Without a position, as from Up, the rail opens on the shown section.
+    bar.blur();
+    bar.focus();
+    expect(focusedLabel()).toBe('Live');
+  });
+
+  it('keeps Settings on the strip beside the mic: Right/Left along it, Down to the sections', () => {
+    bar.setActive('settings');
+    bar.focus();
+    expect(focusedLabel()).toBe('Settings');
+    press('left');
+    expect(focusedLabel()).toBe('Voice search');
+    press('right');
+    expect(focusedLabel()).toBe('Settings');
+    // Settings ends the row: Right stays on it.
+    press('right');
+    expect(focusedLabel()).toBe('Settings');
+    expect(bar.focused).toBe(true);
+    expect(onEnter).not.toHaveBeenCalled();
+    press('down');
+    expect(focusedLabel()).toBe('Home');
+    press('up');
+    expect(focusedLabel()).toBe('Search');
+    press('right');
+    press('right');
+    press('select');
+    expect(onEnter).toHaveBeenLastCalledWith('settings', 'key');
+  });
+
+  it('ignores a cleared position and opens on the shown section', () => {
+    bar.enterNear(500);
+    bar.enterNear(null);
+    bar.focus();
+    expect(focusedLabel()).toBe('Live');
   });
 
   it('back drops focus back into the content it came from', () => {
@@ -161,19 +209,19 @@ describe('TabBar', () => {
 
   it('Down enters the shown section by key, whether or not the bar switched away and back', () => {
     bar.focus();
-    press('down');
+    press('right');
     expect(onEnter).toHaveBeenLastCalledWith('live', 'key');
 
     bar.focus();
-    press('right');
-    press('left');
     press('down');
+    press('up');
+    press('right');
     expect(onEnter).toHaveBeenLastCalledWith('live', 'key');
   });
 
-  it('up is a no-op on the bar (topmost)', () => {
+  it('left is a no-op on the rail (leftmost)', () => {
     bar.focus();
-    press('up');
+    press('left');
     expect(bar.focused).toBe(true);
     expect(focusedLabel()).toBe('Live');
     expect(onEnter).not.toHaveBeenCalled();
@@ -181,7 +229,7 @@ describe('TabBar', () => {
   });
 
   it('ignores key input while not focused', () => {
-    press('right');
+    press('down');
     press('select');
     expect(onSwitch).not.toHaveBeenCalled();
     expect(onEnter).not.toHaveBeenCalled();
@@ -261,7 +309,7 @@ describe('TabBar', () => {
       expect(bar.focused).toBe(false);
       expect(focusedLabel()).toBe(null);
       expect(lines.find((l) => l.includes('event=tab_bar.blur'))).toContain('reason=hover');
-      press('right');
+      press('down');
       expect(onSwitch).not.toHaveBeenCalled();
     });
 
@@ -270,7 +318,7 @@ describe('TabBar', () => {
       row.parentElement!.dispatchEvent(new CustomEvent('nav:edge-scroll', { bubbles: true }));
       expect(bar.focused).toBe(false);
       expect(contentHover).not.toHaveBeenCalled();
-      press('right');
+      press('down');
       expect(onSwitch).not.toHaveBeenCalled();
     });
 
@@ -308,7 +356,7 @@ describe('TabBar', () => {
       expect(Focus.owner()).toBe(scope);
       // The hover outside the self-only scope must not reach the content.
       expect(contentHover).not.toHaveBeenCalled();
-      press('right');
+      press('down');
       expect(onSwitch).not.toHaveBeenCalled();
     });
 
@@ -324,7 +372,7 @@ describe('TabBar', () => {
       hover(item);
       expect(bar.focused).toBe(false);
       expect(Focus.owner()).toBe(scope);
-      press('right');
+      press('down');
       expect(onSwitch).not.toHaveBeenCalled();
 
       bar.focus();
@@ -346,9 +394,9 @@ describe('TabBar', () => {
     it('keeps the keys in the open account menu', () => {
       bar.setAccounts([{ id: 'a1', name: 'Alpha', url: 'http://host/a', source: 'xtream',
         xtream: { username: 'u', password: 'p' } }], 'a1');
-      bar.setActive('settings');
+      bar.setActive('epg');
       bar.focus();
-      press('right');
+      press('down');
       press('select');
       expect(bar.accountMenuOpen).toBe(true);
       hover(row);
@@ -363,7 +411,7 @@ describe('TabBar', () => {
       { id: 'a2', name: 'Bravo', url: 'http://host/a', source: 'xtream', xtream: { username: 'u', password: 'p' } },
     ], 'a1');
     bar.focus();
-    press('left');
+    press('up');
     press('select');
     expect(bar.accountMenuOpen).toBe(true);
     expect(Focus.owner()?.id).toBe('tabbar.accounts');
@@ -371,7 +419,7 @@ describe('TabBar', () => {
     expect(bar.accountMenuOpen).toBe(false);
     expect(Focus.owner()?.id).toBe('tabbar');
     expect(onAccountMenuClose).toHaveBeenCalledWith('host', undefined);
-    press('right');
+    press('down');
     expect(onSwitch).toHaveBeenLastCalledWith('epg');
   });
 });
@@ -387,7 +435,7 @@ describe('TabBar inline search', () => {
     press('select');
     press('back');
     expect(bar.focused).toBe(true);
-    press('down');
+    press('right');
     expect(onEnter).toHaveBeenLastCalledWith('movies', 'key');
   });
 
@@ -438,7 +486,7 @@ describe('TabBar inline search', () => {
     press('left');
     expect(document.activeElement).toBe(input());
     input()!.blur();
-    press('down');
+    press('right');
     expect(onSearchLeave).toHaveBeenCalled();
     expect(bar.focused).toBe(false);
   });
@@ -478,9 +526,6 @@ describe('TabBar inline search', () => {
   });
 
   describe('afterSearchExpanded()', () => {
-    const transitionEnd = (propertyName: string) =>
-      input()!.dispatchEvent(Object.assign(new Event('transitionend'), { propertyName }));
-
     beforeEach(() => {
       vi.useFakeTimers();
       bar.setActive('search');
@@ -489,23 +534,11 @@ describe('TabBar inline search', () => {
     });
     afterEach(() => vi.useRealTimers());
 
-    it('waits for the width slide to finish, once', () => {
+    it('runs once the host has prepped, once', () => {
       const done = vi.fn();
       bar.afterSearchExpanded(done);
-      transitionEnd('opacity');
       expect(done).not.toHaveBeenCalled();
-      transitionEnd('width');
-      expect(done).toHaveBeenCalledTimes(1);
       vi.runAllTimers();
-      expect(done).toHaveBeenCalledTimes(1);
-    });
-
-    it('falls back to a timer when no transition ends', () => {
-      const done = vi.fn();
-      bar.afterSearchExpanded(done);
-      vi.advanceTimersByTime(319);
-      expect(done).not.toHaveBeenCalled();
-      vi.advanceTimersByTime(1);
       expect(done).toHaveBeenCalledTimes(1);
     });
 
@@ -525,51 +558,43 @@ describe('TabBar inline search', () => {
       expect(closed).not.toHaveBeenCalled();
     });
 
-    it('logs how each slide settled for tv.sh diag', () => {
+    it('logs whether each open ran for tv.sh diag', () => {
       const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
       bar.afterSearchExpanded(vi.fn());
-      transitionEnd('width');
+      vi.runAllTimers();
       bar.afterSearchExpanded(vi.fn());
       bar.closeSearch();
       vi.runAllTimers();
-      const lines = spy.mock.calls.map((args) => args.join(' '));
+      const lines = spy.mock.calls.map((args) => args.join(' ')).filter((l) => l.includes('event=search.box.expand.settled'));
       spy.mockRestore();
-      expect(lines.find((l) => l.includes('event=search.box.expand.settled') && l.includes('source=transitionend')))
-        .toContain('reason=run');
-      expect(lines.find((l) => l.includes('event=search.box.collapsed'))).toContain('reason=dismiss');
-      expect(lines.find((l) => l.includes('event=search.box.expand.settled') && l.includes('source=timeout')))
-        .toContain('reason=stale');
+      expect(lines[0]).toContain('reason=run');
+      expect(lines[1]).toContain('reason=stale');
     });
   });
 
-  it('a second click on the magnifier collapses the box (toggle)', () => {
+  it('shows the box at all times, and a click on the open box keeps it open', () => {
     bar.init();
-    const icon = document.querySelector('.tab-bar-search .search-icon') as HTMLElement;
-    icon.getBoundingClientRect = () =>
-      ({ left: 900, top: 0, width: 44, height: 44, right: 944, bottom: 44, x: 900, y: 0, toJSON() {} }) as DOMRect;
+    const box = document.querySelector('.tab-bar-search') as HTMLElement;
+    expect(input()).not.toBe(null);
     const orig = document.elementFromPoint;
-    document.elementFromPoint = () => icon;
-    document.dispatchEvent(new MouseEvent('click', { clientX: 920, clientY: 20, bubbles: true }));
+    document.elementFromPoint = () => input();
+    document.dispatchEvent(new MouseEvent('click', { clientX: 300, clientY: 60, bubbles: true }));
     expect(expanded()).toBe(true);
-    document.dispatchEvent(new MouseEvent('click', { clientX: 920, clientY: 20, bubbles: true }));
-    expect(expanded()).toBe(false);
+    document.dispatchEvent(new MouseEvent('click', { clientX: 300, clientY: 60, bubbles: true }));
+    expect(expanded()).toBe(true);
+    expect(document.activeElement).toBe(input());
     document.elementFromPoint = orig;
+    expect(box.isConnected).toBe(true);
   });
 
-  it('caps the expanded box width so it does not span the whole bar (M3U-only leaves a big gap)', () => {
-    bar.setSections(false); // M3U-only: only Live / Guide text tabs, so the gap is largest
+  it('Right and Left move between the box and the mic', () => {
     bar.setActive('search');
     bar.focus();
-    press('select'); // expands
-    const box = document.querySelector<HTMLInputElement>('.tab-bar-search-input')!;
-    const icon = document.querySelector<HTMLElement>('.tab-bar-search .search-icon')!;
-    const lastTab = document.querySelector<HTMLElement>('.tab-bar-item[data-section="epg"]')!;
-    const rect = (left: number, right: number): DOMRect =>
-      ({ left, right, top: 0, bottom: 44, width: right - left, height: 44, x: left, y: 0, toJSON() {} }) as DOMRect;
-    icon.getBoundingClientRect = () => rect(1760, 1804);
-    lastTab.getBoundingClientRect = () => rect(120, 240); // far left → a ~1500px gap the old code would fill
-    (bar as unknown as { setSearchWidth(i: HTMLInputElement): void }).setSearchWidth(box);
-    expect(parseInt(box.style.width, 10)).toBe(SEARCH_INPUT_MAX_WIDTH);
+    press('right');
+    expect(focusedLabel()).toBe('Voice search');
+    press('left');
+    expect(focusedLabel()).toBe('Search');
+    expect(onEnter).not.toHaveBeenCalled();
   });
 });
 
@@ -589,12 +614,12 @@ describe('TabBar account switcher', () => {
     expect(avatar()).toBe(null);
   });
 
-  it('Right from Settings focuses the avatar without switching sections', () => {
+  it('Down from the last section focuses the avatar without switching sections', () => {
     bar.setAccounts(A, 'a1');
-    bar.setActive('settings');
+    bar.setActive('epg');
     bar.focus();
     onSwitch.mockClear();
-    press('right'); // Settings -> account
+    press('down'); // Guide -> account
     expect(avatar()?.classList.contains('focused')).toBe(true);
     expect(onSwitch).not.toHaveBeenCalled();
   });
@@ -603,35 +628,46 @@ describe('TabBar account switcher', () => {
     bar.setAccounts(A, 'a1');
     bar.focus();
     onSwitch.mockClear();
-    press('left'); // Live -> account
+    press('up'); // Live -> account
     expect(avatar()?.classList.contains('focused')).toBe(true);
-    press('right'); // back onto Live
+    press('down'); // back onto Live
     expect(focusedLabel()).toBe('Live');
     expect(onSwitch).not.toHaveBeenCalled();
-    press('down');
+    press('right');
     expect(onEnter).toHaveBeenLastCalledWith('live', 'key');
   });
 
   it('Right past the avatar wraps back to Live', () => {
     bar.setAccounts(A, 'a1');
-    bar.setActive('settings');
+    bar.setActive('epg');
     bar.focus();
-    press('right'); // -> account
-    press('right'); // wrap -> live
+    press('down'); // -> account
+    press('down'); // wrap -> live
     expect(onSwitch).toHaveBeenLastCalledWith('live');
   });
 
   it('Select on the avatar opens the menu; Select on a row fires onSelectAccount', () => {
     bar.setAccounts(A, 'a1');
-    bar.setActive('settings');
+    bar.setActive('epg');
     bar.focus();
-    press('right'); // -> account
+    press('down'); // -> account
     press('select'); // open menu
     expect(document.querySelector('.account-menu')).not.toBe(null);
     press('down');   // highlight Bravo
     press('select'); // choose
     expect(onSelectAccount).toHaveBeenCalledWith('a2');
     expect(document.querySelector('.account-menu')).toBe(null);
+  });
+
+  it('Right on the avatar returns to the page without opening the menu', () => {
+    bar.setAccounts(A, 'a1');
+    bar.setActive('epg');
+    bar.focus();
+    press('down'); // -> account
+    press('right');
+    expect(document.querySelector('.account-menu')).toBe(null);
+    expect(onEnter).toHaveBeenLastCalledWith('epg', 'key');
+    expect(bar.focused).toBe(false);
   });
 
   describe('opened by pointer', () => {
@@ -667,20 +703,20 @@ describe('TabBar account switcher', () => {
 
     it('Back after a pointer-opened menu resumes the shown section', () => {
       bar.setAccounts(A, 'a1');
-      bar.setActive('settings');
+      bar.setActive('epg');
       clickOn(avatar()!);
       press('back'); // closes the menu; the bar stays on the avatar
       expect(bar.accountMenuOpen).toBe(false);
       expect(bar.focused).toBe(true);
       press('back');
-      expect(onEnter).toHaveBeenLastCalledWith('settings', 'key');
+      expect(onEnter).toHaveBeenLastCalledWith('epg', 'key');
     });
 
     it('logs mode=pointer even when the D-pad already rests on the avatar', () => {
       bar.setAccounts(A, 'a1');
-      bar.setActive('settings');
+      bar.setActive('epg');
       bar.focus();
-      press('right'); // -> account
+      press('down'); // -> account
       const lines = logLines(() => clickOn(avatar()!));
       expect(lines.filter((l) => l.includes('event=account.menu.opened')).pop()).toContain('mode=pointer');
     });
@@ -774,9 +810,9 @@ describe('TabBar account switcher', () => {
 
   it('logs a D-pad open of the account menu as mode=key', () => {
     bar.setAccounts(A, 'a1');
-    bar.setActive('settings');
+    bar.setActive('epg');
     bar.focus();
-    press('right');
+    press('down');
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     press('select');
     const lines = spy.mock.calls.map((args) => args.join(' '));
@@ -802,9 +838,9 @@ describe('TabBar account switcher', () => {
 
   it('hiding the bar closes an open account menu', () => {
     bar.setAccounts(A, 'a1');
-    bar.setActive('settings');
+    bar.setActive('epg');
     bar.focus();
-    press('right');
+    press('down');
     press('select');
     expect(document.querySelector('.account-menu')).not.toBe(null);
     bar.setShown(false);
@@ -816,23 +852,23 @@ describe('TabBar account switcher', () => {
 describe('TabBar parental lock', () => {
   const lock = () => { Focus.flush(); return document.querySelector<HTMLElement>('[data-lock-now]'); };
 
-  it('shows Lock now only during an unlock session, between Settings and the avatar', () => {
+  it('shows Lock now only during an unlock session, between the last section and the avatar', () => {
     expect(lock()).toBe(null);
     bar.setAccounts([{ id: 'a1', name: 'Alpha', url: 'http://host/a', source: 'xtream',
       xtream: { username: 'u', password: 'p' } }], 'a1');
     bar.setParentalSession(true);
     expect(lock()?.textContent).toBe('Lock now');
 
-    bar.setActive('settings');
+    bar.setActive('epg');
     bar.focus();
     onSwitch.mockClear();
-    press('right');
+    press('down');
     expect(lock()?.classList.contains('focused')).toBe(true);
     expect(onSwitch).not.toHaveBeenCalled();
     press('select');
     expect(onLockNow).toHaveBeenCalledTimes(1);
 
-    press('right');
+    press('down');
     Focus.flush();
     expect(document.querySelector('.account-avatar')?.classList.contains('focused')).toBe(true);
 
@@ -852,27 +888,33 @@ describe('TabBar voice search', () => {
     press('right');
   };
 
-  it('puts the mic between Search and Settings on the D-pad', () => {
+  it('puts the mic beside Search, which Up from the first section reaches first', () => {
     focusMic();
     expect(mic()?.classList.contains('focused')).toBe(true);
     press('select');
     expect(onVoiceSearch).toHaveBeenCalledWith('key');
     expect(expanded()).toBe(false);
-    press('right');
-    expect(focusedLabel()).toBe('Settings');
-    press('left');
-    press('left');
+    press('down');
+    expect(focusedLabel()).toBe('Home');
+    press('up');
     expect(focusedLabel()).toBe('Search');
+    press('down');
+    expect(focusedLabel()).toBe('Home');
   });
 
-  it('Down on the mic enters the shown section', () => {
+  it('Right on the mic reaches Settings, where the row ends', () => {
     bar.setActive('live');
     bar.focus();
-    for (let i = 0; i < 5; i++) press('right');
+    press('up');
+    press('up');
+    press('right');
     expect(mic()?.classList.contains('focused')).toBe(true);
-    press('down');
+    press('right');
+    expect(focusedLabel()).toBe('Settings');
+    press('right');
+    expect(focusedLabel()).toBe('Settings');
     expect(onVoiceSearch).not.toHaveBeenCalled();
-    expect(onEnter).toHaveBeenLastCalledWith('live', 'key');
+    expect(onEnter).not.toHaveBeenCalled();
   });
 
   it('a pointer click on the mic starts voice search and gives the mic the keys', () => {
@@ -900,7 +942,7 @@ describe('TabBar voice search', () => {
   it('closes the tooltip and reports it when the mic loses focus', () => {
     focusMic();
     bar.setVoiceState('listening');
-    press('right');
+    press('down');
     expect(tip()).toBe(null);
     expect(mic()?.classList.contains('listening')).toBe(false);
     expect(onVoiceFocusLost).toHaveBeenCalledTimes(1);

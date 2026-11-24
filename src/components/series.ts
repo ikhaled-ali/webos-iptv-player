@@ -8,12 +8,14 @@ import { xtreamEpisodeUrl, type XtreamCredentials } from '../utils/xtream-url';
 import { CatalogView, type CatalogHandlers, type CollectionKind, type CollectionEntry } from './catalog-view';
 import { PLAY_ICON, watchlistIcon } from './icons';
 import { showToast } from './toast';
+import { posterCard } from './item-cards';
+import { dropdown } from './dropdown';
 import { t, tp } from '../i18n';
 import { VirtualList } from '../utils/virtual-list';
 
-const EPISODE_GAP = 16;
-const EPISODE_NO_PLOT_ESTIMATE = 138;
-const EPISODE_PLOT_ESTIMATE = 216;
+const EPISODE_GAP = 12;
+// One line per episode: the row's height plus EPISODE_GAP; rows are measured.
+const EPISODE_ROW_ESTIMATE = 76;
 const EPISODE_OVERSCAN = 5;
 // The whole detail page scrolls, so the fallback is the page viewport, not the
 // space left under the header.
@@ -119,7 +121,10 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
     if (el.dataset.action === 'watchlist') { this.toggleWatchlist(); return true; }
     if (el.dataset.resumeEpisode !== undefined) { void this.playResume(el.dataset.resumeEpisode); return true; }
     if (el.dataset.playEpisode !== undefined) { this.playEpisode(el.dataset.playEpisode); return true; }
-    if (el.dataset.season !== undefined) { this.selectSeason(Number(el.dataset.season)); return true; }
+    if (el.closest('.series-seasons') && el.dataset.dropdownValue !== undefined) {
+      this.selectSeason(Number(el.dataset.dropdownValue));
+      return true;
+    }
     if (el.dataset.episodeId !== undefined) { this.playEpisode(el.dataset.episodeId); return true; }
     return false;
   }
@@ -278,7 +283,7 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
     if (!target) return '';
     const resume = !!target.resume && !target.resume.upNext;
     return html`
-      <button class="detail-btn detail-btn-primary" data-focusable data-key="continue"
+      <button class="btn btn-primary detail-btn" data-focusable data-key="continue"
               data-play-episode="${target.episode.id}">
         <span class="detail-btn-icon">${raw(PLAY_ICON)}</span>
         <span>${t(resume ? 'common.resume' : 'catalog.play')}</span>
@@ -371,14 +376,17 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
   }
 
   private resumeTile(r: ResumeEntry, managing = false): Safe {
-    return html`
-      <div class="catalog-tile" ${raw(managing ? '' : 'data-focusable')} data-key="r:${r.itemId}" data-resume-episode="${r.itemId}">
-        <div class="catalog-poster-wrap">${this.posterCell(r.name, r.poster)}${
-          this.itemLockBadge(r.categoryId ?? '', r.watchlistOwner?.itemId ?? r.itemId)}${
-          this.progressBar(r.position, r.duration)}${this.removeMark(managing, `r:${r.itemId}`)}</div>
-        <div class="catalog-tile-name">${r.name}</div>
-      </div>
-    `;
+    return posterCard({
+      key: `r:${r.itemId}`,
+      name: r.name,
+      poster: r.poster,
+      art: 'series',
+      lock: this.itemLockBadge(r.categoryId ?? '', r.watchlistOwner?.itemId ?? r.itemId),
+      progress: r,
+      overlay: this.removeMark(managing, `r:${r.itemId}`),
+      focusable: !managing,
+      attrs: html`data-resume-episode="${r.itemId}"`,
+    });
   }
 
   private episodeRow(accountId: string, ep: Episode, watched: string[]): Safe {
@@ -389,20 +397,17 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
     return html`
       <div class="episode-row" data-focusable data-key="ep:${ep.id}" data-episode-id="${ep.id}">
         <span class="episode-badge">${raw(PLAY_ICON)}</span>
-        <div class="episode-body">
-          <div class="episode-title">
-            <span class="episode-num">E${ep.episode}</span>
-            <span class="episode-name">${ep.title}</span>
-            ${started
-              ? html`<span class="episode-resume">${t('common.resume')}</span>`
-              : watched.indexOf(ep.id) >= 0
-                ? html`<span class="episode-watched">${t('epg.watched')}</span>`
-                : ''}
-          </div>
-          ${mins ? html`<div class="episode-meta">${mins}</div>` : ''}
-          ${ep.plot ? html`<p class="episode-plot">${ep.plot}</p>` : ''}
-        </div>
+        <span class="episode-num">E${ep.episode}</span>
+        <span class="episode-sep" aria-hidden="true">|</span>
+        <span class="episode-name" dir="auto">${ep.title}</span>
+        ${mins ? html`<span class="episode-sep" aria-hidden="true">|</span><span class="episode-meta">${mins}</span>` : ''}
+        ${ep.plot ? html`<span class="episode-sep" aria-hidden="true">|</span><span class="episode-plot" dir="auto">${ep.plot}</span>` : ''}
         ${started ? this.progressBar(started.position, started.duration) : ''}
+        ${started
+          ? html`<span class="episode-resume">${t('common.resume')}</span>`
+          : watched.indexOf(ep.id) >= 0
+            ? html`<span class="episode-watched">${t('epg.watched')}</span>`
+            : ''}
       </div>
     `;
   }
@@ -423,8 +428,7 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
     if (episodes !== this.episodeSource) {
       this.episodeSource = episodes;
       this.measuredEpisodes.clear();
-      this.episodeVirtualizer.setItemSizes(episodes.map(ep =>
-        ep.plot ? EPISODE_PLOT_ESTIMATE : EPISODE_NO_PLOT_ESTIMATE));
+      this.episodeVirtualizer.setItemSizes(episodes.map(() => EPISODE_ROW_ESTIMATE));
     }
     const focusedKey = this.focusedKey();
     const watchlisted = StorageService.isWatchlisted(a.id, 'series', series.seriesId);
@@ -449,16 +453,22 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
     morph(this.layer('detail'), html`
       <div class="catalog-view series-detail" data-nav-container>
         <div class="series-detail-head">
-          <div class="detail-poster-wrap series-detail-poster">${this.posterCell(series.name, poster)}</div>
+          ${this.posterCell(poster, 'series-detail-poster')}
           <div class="detail-body">
-            <h1 class="detail-title">${series.name}</h1>
+            <h1 class="detail-title" dir="auto">${series.name}</h1>
             ${meta.length ? html`<div class="detail-meta">${meta.join('  ·  ')}</div>` : ''}
-            ${info?.plot ? html`<p class="detail-plot">${info.plot}</p>` : ''}
+            ${info?.plot ? html`<p class="detail-plot" dir="auto">${info.plot}</p>` : ''}
             ${info?.cast ? html`<div class="detail-cast"><span class="detail-label">${t('catalog.cast')}</span> ${info.cast}</div>` : ''}
             ${info?.director ? html`<div class="detail-cast"><span class="detail-label">${t('catalog.director')}</span> ${info.director}</div>` : ''}
             <div class="detail-actions">
               ${this.detailLoading ? '' : this.continueButton()}
-              <button class="detail-btn" data-focusable data-key="watchlist" data-action="watchlist">
+              ${!this.detailLoading && info && info.seasons.length > 1 ? html`
+                <div class="series-seasons" data-self-activate>
+                  ${dropdown('series-detail-season', info.seasons.map((n) => ({
+                    value: String(n), label: t('catalog.season', { number: n }),
+                  })), String(this.selectedSeason))}
+                </div>` : ''}
+              <button class="btn btn-secondary detail-btn" data-focusable data-key="watchlist" data-action="watchlist">
                 <span class="detail-btn-icon">${raw(watchlistIcon(watchlisted))}</span>
                 <span>${t(watchlisted ? 'catalog.removeWatchlist' : 'catalog.addWatchlist')}</span>
               </button>
@@ -469,14 +479,7 @@ export class Series extends CatalogView<SeriesCategory, SeriesItem> {
                 ? html`<p class="catalog-hint">${t('catalog.loadEpisodesFailed')}</p>`
                 : info.seasons.length === 0
                   ? html`<p class="catalog-hint">${t('catalog.noEpisodes')}</p>`
-                  : html`
-                  <div class="series-seasons">
-                    ${info.seasons.map((n) => html`
-                      <button class="series-season-btn ${n === this.selectedSeason ? 'active' : ''}"
-                              data-focusable data-key="season:${n}" data-season="${n}">${t('catalog.season', { number: n })}</button>
-                    `)}
-                  </div>
-                `}
+                  : ''}
           </div>
         </div>
         ${info && info.seasons.length > 0 ? html`

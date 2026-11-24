@@ -1,10 +1,10 @@
-// webOS 4 ships Chromium 53. This gate fails the build when CSS uses a feature
-// that engine lacks. The target is read from the "browserslist" field in
-// package.json (Chromium 53), shared with the JS gate (eslint-plugin-compat).
+// webOS 23 ships Chromium 94, the oldest supported engine. This gate fails the
+// build when CSS uses a feature that engine lacks. The target is read from the
+// "browserslist" field in package.json, shared with the JS gate
+// (eslint-plugin-compat).
 //
-// `ignore` lists caniuse feature names we knowingly accept — either because we
-// provide a build-time fallback (e.g. the generated flex-gap margins), or because
-// they degrade gracefully on Chromium 53.
+// `ignore` lists caniuse feature names we knowingly accept because they
+// degrade gracefully on Chromium 94.
 import stylelint from 'stylelint';
 import { isPost53Selector, splitSelectorList } from './scripts/chromium-53-simulation.mjs';
 
@@ -49,27 +49,9 @@ export default {
       {
         severity: 'error',
         ignore: [
-          // Flex gap gets a margin-based fallback generated at build time,
-          // keyed to html.q-no-flex-gap, and written to legacy-webos-base.css
-          // (see esbuild.config.mjs).
-          'flexbox-gap',
-          // legacy-webos-overrides.css supplies flex equivalents for every grid layout.
-          'css-grid',
           // Only hidden/auto/scroll/visible + text-overflow:ellipsis are used —
-          // all fully supported on 53. doiuse flags newer values we do not use.
+          // all supported on 94. doiuse flags newer values we do not use.
           'css-overflow',
-          // Sticky headings degrade to normal document flow on Chromium 53.
-          'css-sticky',
-          // These affect scrolling polish or input styling, not layout or control.
-          'css-overflow-anchor',
-          'css-placeholder',
-          'css-scroll-behavior',
-          // Focused classes cover remote navigation; the legacy stylesheet adds
-          // a direct input-focus fallback for the remaining pointer-only field.
-          'css-focus-within',
-          // Degrades gracefully: every backdrop-filter has a >=75% opaque background
-          // fallback, so panels lose only the frosted blur, not legibility.
-          'css-backdrop-filter',
         ],
       },
     ],

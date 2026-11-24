@@ -1,8 +1,9 @@
 import type { Action, CatchupInfo, Channel, PlaylistEntry, Programme, VodItem, SeriesItem } from '../types';
 import { SpatialNav, isFocusMove } from '../navigation/spatial-nav';
 import { Focus, type FocusScope } from '../navigation/focus-scope';
-import { html, raw } from '../utils/dom';
-import { channelLockBadge, seriesLockBadge, vodLockBadge } from './parental-badge';
+import { html } from '../utils/dom';
+import { seriesLockBadge, vodLockBadge } from './parental-badge';
+import { channelCard, posterCard } from './item-cards';
 import { morph } from '../utils/morph';
 import { PlaylistService } from '../services/playlist-service';
 import { EpgService } from '../services/epg-service';
@@ -59,21 +60,27 @@ import {
   sampleDocuments,
   selectCatalogItems,
 } from './search-cache-source';
+import { inlineStartSide } from '../utils/scroll-axis';
+import { perfEnd, perfEndNextFrame, perfStart } from '../utils/perf-trace';
 
 const log = createLogger('Search');
 const SEARCH_LIST_VIEWPORT = 420;
 const SEARCH_RAIL_VIEWPORT = 1760;
 const SEARCH_ROW_OVERSCAN = 6;
+// A 256px channel card plus the rail's 20px gap (css/item-cards.css).
+const CHANNEL_RAIL_STRIDE = 276;
 const SEARCH_RAIL_OVERSCAN = 4;
 
 export interface SearchHandlers {
-  onRevealTabBar: () => void;
+  onRevealTabBar: (dir?: 'up' | 'left') => void;
   // A result arrived after the remote waited in the box: let it go.
   onReleaseTabBar: () => void;
   onBack: () => void;
   onPlayChannel: (index: number, catchup?: CatchupInfo) => void;
   onOpenMovie: (account: PlaylistEntry, vod: VodItem) => void;
   onOpenSeries: (account: PlaylistEntry, series: SeriesItem) => void;
+  // The live channel playing now, or -1.
+  playingIndex: () => number;
 }
 
 interface ProgramResult {
@@ -166,9 +173,8 @@ export class Search {
   private visibleMovies: VodItem[] = [];
   private visibleSeries: SeriesItem[] = [];
   private resumePrompt = new CatchupResumePrompt('prompt.search');
-  private readonly channelListVirtualizer = this.createVirtualizer(88, SEARCH_ROW_OVERSCAN, SEARCH_LIST_VIEWPORT);
   private readonly programVirtualizer = this.createVirtualizer(109, SEARCH_ROW_OVERSCAN, SEARCH_LIST_VIEWPORT);
-  private readonly channelRailVirtualizer = this.createVirtualizer(240, SEARCH_RAIL_OVERSCAN, SEARCH_RAIL_VIEWPORT);
+  private readonly channelRailVirtualizer = this.createVirtualizer(CHANNEL_RAIL_STRIDE, SEARCH_RAIL_OVERSCAN, SEARCH_RAIL_VIEWPORT);
   private readonly movieVirtualizer = this.createVirtualizer(240, SEARCH_RAIL_OVERSCAN, SEARCH_RAIL_VIEWPORT);
   private readonly seriesVirtualizer = this.createVirtualizer(240, SEARCH_RAIL_OVERSCAN, SEARCH_RAIL_VIEWPORT);
   private scrollFrame: number | null = null;
@@ -177,6 +183,8 @@ export class Search {
   private readonly railWindows = new Map<string, string>();
   private queryFrame: number | null = null;
   private queryGeneration = 0;
+  // Tracing only: when the typed query that is now running was scheduled.
+  private queryScheduledAt = 0;
   private queryPending = false;
   // Down/Enter handed focus over before the results existed; focus them once a query renders.
   private focusPending = false;
@@ -230,7 +238,7 @@ export class Search {
     this.focusScope = Focus.register({
       id: 'view.search',
       root: container,
-      leaveFor: { up: 'tabbar' },
+      leaveFor: { up: 'tabbar', left: 'tabbar' },
       defaultKey: () => this.navKey(),
       resolve: (key) => this.resolveKey(key),
     });
@@ -397,9 +405,12 @@ export class Search {
       this.render();
       return;
     }
+    const scheduled = perfStart();
     this.queryFrame = requestAnimationFrame(() => {
       this.queryFrame = null;
       if (generation !== this.queryGeneration) return;
+      perfEnd('search.frameWait', scheduled);
+      this.queryScheduledAt = scheduled;
       void this.startQuery(generation);
     });
   }
@@ -480,7 +491,7 @@ export class Search {
       case 'down':
       case 'left':
       case 'right':
-        this.nav.move(action);
+        if (!this.nav.move(action) && action === 'left') this.handlers.onRevealTabBar('left');
         return;
       case 'select':
         this.onSelect();
@@ -762,12 +773,6 @@ export class Search {
     this.nav.focus(first);
   }
 
-  private posterCell(name: string, poster: string): ReturnType<typeof html> {
-    return poster
-      ? html`<img class="catalog-poster" src="${poster}" alt="" loading="lazy" decoding="async" onerror="this.style.display='none'">`
-      : html`<div class="catalog-poster catalog-poster-empty">${name.charAt(0)}</div>`;
-  }
-
   private virtualRail<T>(
     title: string,
     key: string,
@@ -795,7 +800,7 @@ export class Search {
                 <div class="search-virtual-rail-cell"
                      data-key="${key}:${index}"
                      data-search-section="${key}" data-search-index="${index}"
-                     style="left:${virtualizer.getItemOffset(index)}px">
+                     style="${inlineStartSide()}:${virtualizer.getItemOffset(index)}px">
                   ${renderItem(item)}
                 </div>
               `;
@@ -819,7 +824,7 @@ export class Search {
     const range = virtualizer.getRange(items.length, viewport);
     return html`
       <div class="search-virtual-section ${
-        key === 'channels-list' ? 'search-channels' : key === 'programmes' ? 'search-programs' : ''
+        key === 'programmes' ? 'search-programs' : ''
       }">
         <h2 class="catalog-rail-title">${title}</h2>
         <div class="search-virtual-scroll"
@@ -843,50 +848,32 @@ export class Search {
     `;
   }
 
+  // The shared channel card, as in Live and Home.
   private channelTile(ch: Channel): ReturnType<typeof html> {
     const idx = PlaylistService.indexOf(ch);
-    return html`
-      <div class="catalog-tile search-channel-tile" data-focusable data-key="ch:${String(idx)}"
-           data-channel-index="${String(idx)}">
-        <div class="catalog-poster-wrap">${this.posterCell(ch.name, ch.logo)}${
-          raw(channelLockBadge(ch))}</div>
-        <div class="catalog-tile-name">${ch.name}</div>
-      </div>
-    `;
-  }
-
-  // A vertical-list row (logo + name) used for the M3U-only channel results.
-  private channelRow(ch: Channel): ReturnType<typeof html> {
-    const idx = PlaylistService.indexOf(ch);
-    return html`
-      <div class="search-channel-row" data-focusable data-key="ch:${String(idx)}"
-           data-channel-index="${String(idx)}">
-        ${ch.logo
-          ? html`<img class="search-row-logo" src="${ch.logo}" alt="" loading="lazy" onerror="this.style.display='none'">`
-          : html`<div class="search-row-logo search-row-logo-empty">${ch.name.charAt(0)}</div>`}
-        <span class="search-row-name">${raw(channelLockBadge(ch))}${ch.name}</span>
-      </div>
-    `;
+    const epgId = EpgService.findChannelId(ch);
+    return channelCard({
+      key: `ch:${String(idx)}`,
+      channel: ch,
+      subtitle: epgId ? EpgService.getNowPlaying(epgId)?.title : null,
+      favorite: StorageService.getFavorites().includes(channelKey(ch)),
+      playing: idx === this.handlers.playingIndex(),
+      attrs: html`data-channel-index="${String(idx)}"`,
+    });
   }
 
   private movieTile(v: VodItem): ReturnType<typeof html> {
-    return html`
-      <div class="catalog-tile" data-focusable data-key="v:${v.streamId}" data-stream-id="${v.streamId}">
-        <div class="catalog-poster-wrap">${this.posterCell(v.name, v.poster)}${
-          raw(vodLockBadge(v))}</div>
-        <div class="catalog-tile-name">${v.name}</div>
-      </div>
-    `;
+    return posterCard({
+      key: `v:${v.streamId}`, name: v.name, poster: v.poster, art: 'movie', lock: vodLockBadge(v),
+      attrs: html`data-stream-id="${v.streamId}"`,
+    });
   }
 
   private seriesTile(s: SeriesItem): ReturnType<typeof html> {
-    return html`
-      <div class="catalog-tile" data-focusable data-key="s:${s.seriesId}" data-series-id="${s.seriesId}">
-        <div class="catalog-poster-wrap">${this.posterCell(s.name, s.poster)}${
-          raw(seriesLockBadge(s))}</div>
-        <div class="catalog-tile-name">${s.name}</div>
-      </div>
-    `;
+    return posterCard({
+      key: `s:${s.seriesId}`, name: s.name, poster: s.poster, art: 'series', lock: seriesLockBadge(s),
+      attrs: html`data-series-id="${s.seriesId}"`,
+    });
   }
 
   private async buildProgramIndex(force: boolean, sessionId: number): Promise<boolean | null> {
@@ -1128,9 +1115,13 @@ export class Search {
       this.applyPendingFocus();
       return;
     }
+    const scheduledAt = this.queryScheduledAt;
+    this.queryScheduledAt = 0;
     if (!preserveOffsets) {
       this.queryPending = true;
+      const pendingRender = perfStart();
       this.render();
+      perfEnd('search.pendingRender', pendingRender);
     }
     let response: SearchQueryResponse | null = null;
     let recoveryAttempted = false;
@@ -1143,12 +1134,14 @@ export class Search {
         retryPending = this.recoveryRetryPending(sessionId);
         if (!retryPending) response = await this.recoverWorkerQuery(sessionId, query, 'lost');
       } else {
+        const queried = perfStart();
         response = await runAppWorkerTask('search.query', {
           sessionId,
           query,
           limit: this.resultLimit,
           includeCatalog: !!this.account,
         });
+        perfEnd('search.workerQuery', queried);
       }
     } catch (error) {
       if (generation !== this.queryGeneration || sessionId !== this.workerSession || !this.active) return;
@@ -1187,6 +1180,7 @@ export class Search {
       // The lists changed under the reply, so its indices may not map onto them.
       return this.runWorkerQuery(generation, preserveOffsets);
     }
+    const resultRender = perfStart();
     if (response) {
       this.applyQueryResponse(response, this.indexedVod, this.indexedSeries);
     } else {
@@ -1204,6 +1198,9 @@ export class Search {
     if (!preserveOffsets) this.resetVirtualOffsets();
     this.render();
     this.applyPendingFocus();
+    perfEnd('search.resultRender', resultRender);
+    // A typed query's latency: keystroke scheduling to the painted results.
+    perfEndNextFrame('search.latency', scheduledAt);
   }
 
   private queryLocally(query: string): SearchQueryResponse {
@@ -1464,8 +1461,8 @@ export class Search {
            data-program-index="${String(index)}">
         <div class="search-program-time">${day.weekday} ${day.date}<br>${formatTime(programme.start)}</div>
         <div class="search-program-body">
-          <div class="search-program-title">${programme.title}</div>
-          <div class="search-program-channel">${channel.name}${programme.category ? html` · ${programme.category}` : ''}</div>
+          <div class="search-program-title" dir="auto">${programme.title}</div>
+          <div class="search-program-channel" dir="auto">${channel.name}${programme.category ? html` · ${programme.category}` : ''}</div>
         </div>
         <div class="search-program-action">${action}</div>
       </div>
@@ -1558,16 +1555,13 @@ export class Search {
 
     const hasResults = this.visibleChannels.length > 0 || this.visiblePrograms.length > 0
       || this.visibleMovies.length > 0 || this.visibleSeries.length > 0;
-    const hasMixedLists = !isXtream
-      && this.visibleChannels.length > 0
-      && this.visiblePrograms.length > 0;
     const channelSection = this.visibleChannels.length
-      ? this.virtualList(
+      ? this.virtualRail(
           t('common.channels'),
-          'channels-list',
+          'channels-rail',
           this.visibleChannels,
-          this.channelListVirtualizer,
-          (ch) => this.channelRow(ch),
+          this.channelRailVirtualizer,
+          (ch) => this.channelTile(ch),
         )
       : '';
     const programSection = this.visiblePrograms.length
@@ -1580,8 +1574,8 @@ export class Search {
         )
       : '';
 
-    // Xtream: horizontal poster rails for catalog results. M3U-only channels and
-    // EPG programs use compact rows so their metadata remains readable.
+    // Channels and catalog titles are rails of the app's shared cards; EPG
+    // programs stay rows so their times remain readable.
     const resultsBody = !q
       ? html``
       : this.pendingIndex && !hasResults
@@ -1592,15 +1586,7 @@ export class Search {
         ? html`<p class="catalog-hint search-empty">${t('search.empty')}</p>`
         : isXtream
           ? html`
-                ${this.visibleChannels.length
-                  ? this.virtualRail(
-                      t('common.channels'),
-                      'channels-rail',
-                      this.visibleChannels,
-                      this.channelRailVirtualizer,
-                      (ch) => this.channelTile(ch),
-                    )
-                  : ''}
+                ${channelSection}
                 ${programSection}
                 ${this.visibleMovies.length
                   ? this.virtualRail(
@@ -1628,9 +1614,7 @@ export class Search {
 
     // The query box lives in the tab bar; this view renders results only.
     morph(this.container, html`
-      <div class="search-view ${isXtream ? '' : 'search-lists'} ${
-        hasMixedLists ? 'search-lists-mixed' : ''
-      }" data-nav-container data-search-query="${q}"
+      <div class="search-view ${isXtream ? '' : 'search-lists'}" data-nav-container data-search-query="${q}"
            data-search-pending="${this.queryPending ? 'true' : 'false'}">
         <div class="search-results">
           ${resultsBody}
@@ -1657,7 +1641,6 @@ export class Search {
 
   private virtualizers(): Record<string, VirtualList> {
     return {
-      'channels-list': this.channelListVirtualizer,
       programmes: this.programVirtualizer,
       'channels-rail': this.channelRailVirtualizer,
       movies: this.movieVirtualizer,
@@ -1730,7 +1713,7 @@ export class Search {
     const horizontal = key === 'channels-rail' || key === 'movies' || key === 'series';
     if ((horizontal && action !== 'left' && action !== 'right')
         || (!horizontal && action !== 'up' && action !== 'down')) return false;
-    let items = key === 'channels-list' || key === 'channels-rail'
+    let items = key === 'channels-rail'
       ? this.visibleChannels
       : key === 'programmes'
         ? this.visiblePrograms
@@ -1740,7 +1723,7 @@ export class Search {
     const current = parseInt(rawIndex, 10);
     let next = current + (action === 'left' || action === 'up' ? -1 : 1);
     if (next >= items.length && this.expandResults()) {
-      items = key === 'channels-list' || key === 'channels-rail'
+      items = key === 'channels-rail'
         ? this.visibleChannels
         : key === 'programmes'
           ? this.visiblePrograms
@@ -1749,6 +1732,8 @@ export class Search {
             : this.visibleSeries;
       next = current + 1;
     }
+    // Right at a rail's end stays put rather than jumping to another rail.
+    if (horizontal && action === 'right' && next >= items.length) return true;
     if (next < 0 || next >= items.length) return false;
     const scroll = this.container.querySelector<HTMLElement>(`[data-search-virtual="${key}"]`);
     const virtualizer = this.virtualizers()[key];
@@ -1776,14 +1761,14 @@ export class Search {
   }
 
   private resultCount(key: string): number {
-    if (key === 'channels-list' || key === 'channels-rail') return this.visibleChannels.length;
+    if (key === 'channels-rail') return this.visibleChannels.length;
     if (key === 'programmes') return this.visiblePrograms.length;
     if (key === 'movies') return this.visibleMovies.length;
     return this.visibleSeries.length;
   }
 
   private resultItemSize(key: string): number {
-    if (key === 'channels-list') return 88;
+    if (key === 'channels-rail') return CHANNEL_RAIL_STRIDE;
     if (key === 'programmes') return 109;
     return 240;
   }

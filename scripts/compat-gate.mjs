@@ -1,27 +1,17 @@
-// webOS 4 (Chromium 53) bundle compat gate — single module holding the
-// denylist of post-53 APIs, the allowlist of accepted exceptions, and the
-// scanner. Consumed by:
+// webOS 23 (Chromium 94) bundle compat gate — single module holding the
+// catalogue of post-53 APIs, the floor that selects which of them are still
+// unsupported, the allowlist of accepted exceptions, and the scanner.
+// Consumed by:
 //   - esbuild.config.mjs → scans a NON-minified build of the app bundle and
-//                          throws on any un-allowlisted post-53 API (catches
+//                          throws on any un-allowlisted post-floor API (catches
 //                          APIs introduced by bundled dependencies).
 //   - eslint.config.mjs  → derives its `no-restricted-syntax` selectors from
 //                          the `method` entries of DENYLIST (source gate).
 import ts from 'typescript';
 
-export const LEGACY_JS_BANNER = `
-if (!Object.getOwnPropertyDescriptors) {
-  Object.getOwnPropertyDescriptors = function (object) {
-    var descriptors = {};
-    Object.getOwnPropertyNames(object).forEach(function (key) {
-      descriptors[key] = Object.getOwnPropertyDescriptor(object, key);
-    });
-    Object.getOwnPropertySymbols(object).forEach(function (key) {
-      descriptors[key] = Object.getOwnPropertyDescriptor(object, key);
-    });
-    return descriptors;
-  };
-}
-`;
+// The oldest supported engine: webOS 23 ships Chromium 94. Raising it drops
+// every catalogue entry at or below the new floor from both gates.
+export const MIN_CHROME = 94;
 
 //
 // DENYLIST fields:
@@ -35,9 +25,9 @@ if (!Object.getOwnPropertyDescriptors) {
 //                              bundle scan only (eslint compat covers source)
 //              'worker-option' → a module Worker/SharedWorker constructor option;
 //                                bundle scan plus a dedicated eslint rule
-//              'call-option' → an option-object property a post-53 engine
-//                              added to an existing call; Chromium 53 ignores
-//                              or misreads it. Needs `call` (method name),
+//              'call-option' → an option-object property a later engine
+//                              added to an existing call; an older engine
+//                              ignores or misreads it. Needs `call` (method name),
 //                              `arg` (argument index) and `property`
 //   object     for static or nested constructor APIs: the owning built-in
 //              (e.g. 'Promise' or 'Intl')
@@ -51,7 +41,9 @@ if (!Object.getOwnPropertyDescriptors) {
 // eslint derives its `no-restricted-syntax` from the 'method' entries only;
 // 'static'/'global' entries are the bundle scanner's job because eslint's
 // `compat/compat` already flags those in first-party source.
-export const DENYLIST = [
+// Every API added after Chromium 53, with the version that shipped it; only
+// the entries above MIN_CHROME are enforced (see DENYLIST below).
+export const API_CATALOGUE = [
   // --- unsupported constructor options ---
   { name: 'module worker', kind: 'worker-option', minChrome: 80, message: 'Module workers are Chrome 80+ — bundle the worker as a classic script.' },
   { name: 'postMessage transfer options', kind: 'call-option', call: 'postMessage', arg: 1, property: 'transfer', minChrome: 79, message: 'Object-form postMessage transfer options are Chrome 79+ — pass the transfer list array as the second argument.' },
@@ -101,32 +93,30 @@ export const DENYLIST = [
   { name: 'hasOwn', kind: 'static', object: 'Object', minChrome: 93, message: 'Object.hasOwn is Chrome 93+ — use Object.prototype.hasOwnProperty.call.' },
   { name: 'allSettled', kind: 'static', object: 'Promise', minChrome: 76, message: 'Promise.allSettled is Chrome 76+ — catch each input before Promise.all.' },
   { name: 'any', kind: 'static', object: 'Promise', minChrome: 85, message: 'Promise.any is Chrome 85+ — use an explicit first-success helper.' },
+  { name: 'timeout', kind: 'static', object: 'AbortSignal', minChrome: 103, message: 'AbortSignal.timeout is Chrome 103+ — abort an AbortController from a timer.' },
+  { name: 'any', kind: 'static', object: 'AbortSignal', minChrome: 116, message: 'AbortSignal.any is Chrome 116+ — forward each signal to one AbortController.' },
+  { name: 'groupBy', kind: 'static', object: 'Object', minChrome: 117, message: 'Object.groupBy is Chrome 117+ — group with a loop.' },
+  { name: 'groupBy', kind: 'static', object: 'Map', minChrome: 117, message: 'Map.groupBy is Chrome 117+ — group with a loop.' },
+  { name: 'withResolvers', kind: 'static', object: 'Promise', minChrome: 119, message: 'Promise.withResolvers is Chrome 119+ — capture resolve/reject in the executor.' },
+  { name: 'fromAsync', kind: 'static', object: 'Array', minChrome: 121, message: 'Array.fromAsync is Chrome 121+ — collect with for await.' },
 ];
 
-// Post-53 tokens the bundle scan tolerates. Each entry documents WHY the token
-// is safe to ship:
+// APIs the supported floor still lacks.
+export const DENYLIST = API_CATALOGUE.filter((entry) => entry.minChrome > MIN_CHROME);
+
+// Post-floor tokens the bundle scan tolerates. Each entry documents WHY the
+// token is safe to ship:
 //   guarded       the code feature-detects and falls back at runtime
-//   polyfilled    src/polyfills.ts installs the API before it is used
 //   accepted-risk knowingly shipped without a fix (documents the risk)
+// Nothing needs an exemption at the Chromium 94 floor.
 // Note: the AST scanner only flags call sites and already ignores `typeof x`
 // feature-detection guards, so 'guarded' usages rarely need an entry here
 // (e.g. fflate's guarded queueMicrotask is not flagged and needs no allowlist).
 // `maxCount` limits the exemption to that many call sites per bundle, so a
 // guarded first-party call does not also hide a dependency's unguarded one.
-export const ALLOWLIST = [
-  { name: 'AbortController', reason: 'polyfilled', note: 'src/polyfills.ts installs an AbortController and logical fetch cancellation on Chromium 53.' },
-  { name: 'PluralRules', reason: 'polyfilled', note: 'src/polyfills.ts installs cardinal rules for the app locales on Chromium 53.' },
-  { name: 'ResizeObserver', reason: 'polyfilled', note: 'src/polyfills.ts observes window and video metadata changes for assjs on Chromium 53.' },
-  { name: 'padStart', reason: 'polyfilled', note: 'src/polyfills.ts installs a guarded String.prototype.padStart.' },
-  { name: 'values', reason: 'polyfilled', note: 'src/polyfills.ts installs a guarded Object.values.' },
-  { name: 'entries', reason: 'polyfilled', note: 'src/polyfills.ts installs a guarded Object.entries.' },
-  { name: 'getOwnPropertyDescriptors', reason: 'polyfilled', note: 'The esbuild banner installs this before generated helper aliases are captured.' },
-  { name: 'flatMap', reason: 'polyfilled', note: 'src/polyfills.ts installs a guarded Array.prototype.flatMap for assjs.' },
-  { name: 'fromEntries', reason: 'polyfilled', note: 'src/polyfills.ts installs a guarded Object.fromEntries for assjs.' },
-  { name: 'focus preventScroll', reason: 'guarded', maxCount: 1, note: 'focusWithoutScroll in src/utils/dom.ts passes it only after detecting that the engine reads it.' },
-];
+export const ALLOWLIST = [];
 
-// Scan bundled JS for post-53 APIs using a real AST (TypeScript's parser, a
+// Scan bundled JS for post-floor APIs using a real AST (TypeScript's parser, a
 // dependency we already have). Parsing — rather than text-matching — means
 // occurrences inside string/template literals, comments, and regex literals
 // are ignored, and a `typeof x` feature-detection guard is not mistaken for a
@@ -279,14 +269,14 @@ export function formatViolations(violations) {
   const n = violations.length;
   const lines = [
     '',
-    `\u2717 webOS 4 (Chromium 53) compat gate failed \u2014 ${n} post-53 API${n === 1 ? '' : 's'} in the app bundle:`,
+    `\u2717 webOS 23 (Chromium ${MIN_CHROME}) compat gate failed \u2014 ${n} post-${MIN_CHROME} API${n === 1 ? '' : 's'} in the app bundle:`,
     '',
   ];
   for (const v of violations) {
     lines.push(`  \u2022 ${v.name}  (Chrome ${v.minChrome}+)  \u00d7${v.count}`);
     lines.push(`    ${v.message}`);
     lines.push('    Fix one of:');
-    lines.push("      - add a guarded polyfill in src/polyfills.ts, then allowlist as 'polyfilled'");
+    lines.push("      - feature-detect it and fall back, then allowlist as 'guarded'");
     lines.push('      - avoid the API');
     lines.push("      - allowlist as 'accepted-risk' in the ALLOWLIST in scripts/compat-gate.mjs (documents the risk)");
     lines.push('');

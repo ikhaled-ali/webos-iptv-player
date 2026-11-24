@@ -124,6 +124,21 @@ describe('rankChannels', () => {
     expect(names(rankChannels(channels, 'cartoons'))).toEqual(['Bravo']);
   });
 
+  it('folds Arabic spelling variants, tashkeel, and Arabic-Indic digits', () => {
+    const cs = [ch('قناة ألفا ٢'), ch('برافو')];
+    expect(names(rankChannels(cs, 'قناه الفا 2'))).toEqual(['قناة ألفا ٢']);
+    expect(names(rankChannels(cs, 'أَلْفَا'))).toEqual(['قناة ألفا ٢']);
+    expect(names(rankChannels(cs, 'ـبرافوـ'))).toEqual(['برافو']);
+  });
+
+  it('matches Arabic genre synonyms and ignores Arabic filler words', () => {
+    const channels = [ch('Alpha'), ch('Bravo')];
+    channels[0].group = 'Sports';
+    channels[1].group = 'أطفال';
+    expect(names(rankChannels(channels, 'ابحث عن قنوات رياضة'))).toEqual(['Alpha']);
+    expect(names(rankChannels(channels, 'كرتون'))).toEqual(['Bravo']);
+  });
+
   it('tolerates a one-character typo and adjacent transposition', () => {
     expect(names(rankChannels([ch('Alpha'), ch('Bravo')], 'alhpa'))).toEqual(['Alpha']);
     expect(names(rankChannels([ch('Alpha'), ch('Bravo')], 'brvo'))).toEqual(['Bravo']);

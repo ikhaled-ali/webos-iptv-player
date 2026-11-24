@@ -45,7 +45,7 @@
 
 /* The live OSD is one glass panel: the picture shows through, blurred. The
    tint alone has to carry the text where the engine cannot blur what is
-   behind it (legacy-webos-overrides.css makes it opaque there). */
+   behind it. */
 .player-osd {
   position: absolute;
   bottom: calc(40px + 28px * var(--font-scale));
@@ -228,15 +228,29 @@
    picture, shown and hidden with the OSD. */
 .osd-clock {
   position: absolute;
-  top: 48px;
+  top: 34px;
   right: 80px;
+  box-sizing: border-box;
+  min-height: 72px;
+  padding: 0 28px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 999px;
   color: #fff;
-  font-size: 36px;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.6), 0 0 2px rgba(0, 0, 0, 0.6);
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
 }
+
+/* The glass frosts the picture where the engine can blur; only the Full
+   animation mode pays for it. */
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  html[data-animation="full"] .osd-clock {
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+  }
+}
+
+/* Drawn on video: the divider is light. */
+.osd-clock .status-clock-weather { border-left-color: rgba(255, 255, 255, 0.4); }
 
 #view-player .osd-clock {
   pointer-events: none;
@@ -702,10 +716,11 @@ html[data-animation="essential"] .recording-indicator-dot {
 .player-sidebar .sidebar-group-width-probe {
   width: max-content;
   height: 0;
-  padding: 0 30px;
+  /* A row's own insets: the list's padding, the border, the row's padding. */
+  padding: 0 26px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   visibility: hidden;
   overflow: hidden;
   flex-shrink: 0;
@@ -720,48 +735,70 @@ html[data-animation="essential"] .recording-indicator-dot {
   width: 420px;
 }
 
-.player-sidebar .sidebar-title {
-  padding: 20px 24px;
-  font-size: 24px;
-  font-weight: 600;
-  color: var(--accent);
-  border-bottom: 1px solid var(--border);
+.player-sidebar .sidebar-group-list {
+  flex: 1;
+  padding: 8px;
+  overflow-y: auto;
 }
 
-.player-sidebar .sidebar-channel-title {
-  width: 100%;
+/* Both panels open on the same header as the Live section's group list: an
+   icon column lined up with the rows' icons, a light label, one divider. */
+.player-sidebar .sidebar-title {
+  height: 72px;
+  box-sizing: border-box;
+  padding: 0 24px 0 26px;
   display: flex;
   align-items: center;
   gap: 12px;
-  font-family: inherit;
-  text-align: left;
-  background: rgb(var(--accent-rgb) / 0.06);
-  border: 0;
+  flex-shrink: 0;
+  font-size: 24px;
+  font-weight: 300;
+  line-height: 1.25;
+  color: var(--text-primary);
   border-bottom: 1px solid var(--border);
-  cursor: pointer;
-  transition: background 160ms ease;
 }
 
-.player-sidebar .sidebar-channel-title:hover {
-  background: rgb(var(--accent-rgb) / 0.12);
+.player-sidebar .sidebar-title-icon {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
 }
 
-.player-sidebar .sidebar-picker-label {
+.player-sidebar .sidebar-title-icon svg {
+  width: 26px;
+  height: 26px;
+  display: block;
+}
+
+.player-sidebar .sidebar-title-label {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.player-sidebar .sidebar-channel-title {
+  width: 100%;
+  font-family: inherit;
+  text-align: left;
+  background-color: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  cursor: pointer;
+}
+
+.player-sidebar .sidebar-channel-title:hover {
+  background-image: var(--focus-layer);
+}
+
+/* Points at the groups it opens; turns to close them once they show. */
 .player-sidebar .sidebar-picker-arrow {
-  width: 28px;
-  height: 28px;
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-secondary);
-  flex-shrink: 0;
   transition: transform 180ms ease, color 160ms ease;
 }
 
@@ -775,51 +812,33 @@ html[data-animation="essential"] .recording-indicator-dot {
   stroke-linejoin: round;
 }
 
-.player-sidebar.visible.channels-only .sidebar-picker-arrow svg {
-  animation: group-picker-nudge 800ms ease-in-out infinite;
-}
-
 .player-sidebar.groups-expanded .sidebar-picker-arrow {
   color: var(--accent);
   transform: rotate(180deg);
-}
-
-.player-sidebar.groups-expanded .sidebar-picker-arrow svg {
-  animation: none;
-}
-
-@keyframes group-picker-nudge {
-  0%, 100% { transform: translateX(0); }
-  50% { transform: translateX(-6px); }
-}
-
-.player-sidebar .sidebar-group-list {
-  flex: 1;
-  padding: 8px;
-  overflow-y: auto;
 }
 
 .player-sidebar .sidebar-group-spacer {
   position: relative;
 }
 
+/* Like the Live section's group rows: the selected group keeps a tinted
+   fill; focus turns the row white with black content. */
 .player-sidebar .sidebar-group-item {
   position: absolute;
   left: 0;
   right: 0;
   height: 64px;
-  padding: 8px 12px;
+  box-sizing: border-box;
+  padding: 0 16px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   border: 2px solid transparent;
   border-radius: var(--radius);
   cursor: pointer;
   transition: var(--transition);
 }
 
-/* Like the tab bar: the selected group keeps a tinted fill; focus fades it
-   to white with black content. */
 .player-sidebar .sidebar-group-item.active {
   background-color: var(--overlay-chip);
 }
@@ -830,22 +849,15 @@ html[data-animation="essential"] .recording-indicator-dot {
   color: #000;
 }
 
-/* White would vanish on the light Frosted glass: focus inverts to dark. */
-[data-overlay="frosted"] .player-sidebar .sidebar-group-item.focused {
-  background-color: var(--text-primary);
-  color: #fff;
-}
-
 .player-sidebar .sidebar-group-icon {
-  width: 40px;
-  height: 40px;
+  width: 28px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  font-size: 22px;
+  font-size: 20px;
   color: var(--text-muted);
-  background: transparent;
   transition: color var(--transition);
 }
 
@@ -856,8 +868,8 @@ html[data-animation="essential"] .recording-indicator-dot {
 }
 
 .player-sidebar .sidebar-group-icon .group-logo {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
 }
 
 .player-sidebar .sidebar-group-name {
@@ -866,47 +878,74 @@ html[data-animation="essential"] .recording-indicator-dot {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 20px;
+  font-size: 21px;
   color: var(--text-primary);
   transition: color var(--transition);
 }
 
 .player-sidebar .sidebar-group-count {
-  min-width: 32px;
-  padding: 2px 6px;
-  color: var(--text-secondary);
-  background: var(--overlay-chip);
-  border-radius: 10px;
-  font-size: 16px;
-  text-align: center;
+  min-width: 40px;
+  font-size: 18px;
+  color: var(--text-muted);
+  text-align: right;
   font-variant-numeric: tabular-nums;
   transition: color var(--transition);
 }
 
+/* The search field of the Guide's channel mapping: an icon inside a quiet
+   field that the accent outlines while it holds the caret. */
+.player-sidebar .sidebar-search {
+  position: relative;
+  margin: 16px 16px 8px;
+  flex-shrink: 0;
+}
+
+.player-sidebar .sidebar-search-icon {
+  position: absolute;
+  top: 50%;
+  left: 18px;
+  width: 24px;
+  height: 24px;
+  margin-top: -12px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.player-sidebar .sidebar-search-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
 .player-sidebar .sidebar-search-input {
-  margin: 12px;
-  padding: 18px 16px;
-  font-size: 28px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 2px solid var(--border);
+  width: 100%;
+  height: 58px;
+  box-sizing: border-box;
+  padding: 0 18px 0 54px;
+  font-family: inherit;
+  font-size: 22px;
+  background-color: var(--overlay-chip);
+  border: 2px solid transparent;
   border-radius: var(--radius);
   color: var(--text-primary);
   outline: none;
   text-overflow: ellipsis;
   transition: var(--transition);
-  flex-shrink: 0;
 }
 
 .player-sidebar .sidebar-search-input::placeholder {
   color: var(--text-muted);
 }
 
-.player-sidebar .sidebar-search-input.focused,
-.player-sidebar .sidebar-search-input:focus {
-  border-color: transparent;
+.player-sidebar .sidebar-search-input.focused {
   background-image: var(--focus-layer);
 }
 
+.player-sidebar .sidebar-search-input:focus {
+  border-color: var(--accent);
+}
+
+/* The Live section's playlist tabs. */
 .player-sidebar .sidebar-tabs {
   display: flex;
   gap: 4px;
@@ -917,10 +956,10 @@ html[data-animation="essential"] .recording-indicator-dot {
 }
 
 .player-sidebar .sidebar-tab {
-  padding: 8px 14px;
-  font-size: 16px;
+  padding: 10px 16px;
+  font-size: 18px;
   color: var(--text-secondary);
-  border-bottom: 2px solid transparent;
+  border: 2px solid transparent;
   cursor: pointer;
   transition: var(--transition);
   white-space: nowrap;
@@ -931,11 +970,7 @@ html[data-animation="essential"] .recording-indicator-dot {
 .player-sidebar .sidebar-tab.active {
   color: var(--accent);
   border-bottom-color: var(--accent);
-  background: rgba(255, 255, 255, 0.05);
-}
-
-.player-sidebar .sidebar-tab:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background-color: var(--overlay-chip);
 }
 
 .player-sidebar .sidebar-tab.focused {
@@ -956,45 +991,62 @@ html[data-animation="essential"] .recording-indicator-dot {
   width: 100%;
 }
 
-/* Fixed height: the channel list is virtualized, so CHANNEL_ROW_STRIDE in
-   sidebar.ts must stay this height plus the 4px row gap. The two text lines
-   only just fit, so check this box before growing either font. */
+/* The Live section's channel rows. Fixed height: the channel list is
+   virtualized, so CHANNEL_ROW_STRIDE in sidebar.ts must stay this height plus
+   the 4px row gap. The two text lines only just fit, so check this box before
+   growing either font. */
 .player-sidebar .sidebar-ch-item {
   position: absolute;
   left: 0;
   right: 0;
+  height: 84px;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
-  padding: 12px 20px;
+  gap: 16px;
+  padding: 12px 16px;
   border-radius: var(--radius);
   border: 2px solid transparent;
   cursor: pointer;
-  transition: var(--transition);
-  gap: 14px;
-  height: 84px;
+  /* Only the focus colors: `all` also eased a re-placed row's `top`. */
+  transition: background-color 120ms ease-out, color 120ms ease-out;
   flex-shrink: 0;
 }
 
+/* The playing channel keeps a tinted fill and an accent number; focus turns
+   the row white with black text. */
 .player-sidebar .sidebar-ch-item.playing {
-  background: rgb(var(--accent-rgb) / 0.1);
-  border-color: var(--accent-dim);
+  background-color: var(--overlay-chip);
 }
 
 .player-sidebar .sidebar-ch-item.focused {
-  background-image: var(--focus-layer);
+  background-color: #fff;
+  background-image: none;
+  color: #000;
 }
 
 .player-sidebar .sidebar-ch-item .ch-num {
-  font-size: 16px;
-  color: var(--text-muted);
   min-width: 40px;
+  font-size: 18px;
+  color: var(--text-muted);
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
+.player-sidebar .sidebar-ch-item.playing .ch-num {
+  color: var(--accent);
+}
+
+.player-sidebar .sidebar-ch-item.focused .ch-num,
+.player-sidebar .sidebar-ch-item.focused .ch-now,
+.player-sidebar .sidebar-ch-item.focused .sidebar-recent-kind {
+  color: inherit;
+}
+
 .player-sidebar .sidebar-ch-item .ch-logo-wrap {
-  width: 40px;
-  height: 40px;
+  position: relative;
+  width: 48px;
+  height: 48px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -1002,24 +1054,22 @@ html[data-animation="essential"] .recording-indicator-dot {
 }
 
 .player-sidebar .sidebar-ch-item .ch-logo {
-  width: 40px;
-  height: 40px;
+  max-width: 48px;
+  max-height: 48px;
   object-fit: contain;
   border-radius: 4px;
 }
 
-.player-sidebar .sidebar-ch-item .ch-logo-placeholder {
-  width: 40px;
-  height: 40px;
+.player-sidebar .sidebar-ch-item .art-placeholder {
+  width: 48px;
+  height: 48px;
   border-radius: 4px;
   background: var(--bg-tertiary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--accent);
-  flex-shrink: 0;
+}
+
+.player-sidebar .sidebar-ch-item .art-placeholder svg {
+  width: 24px;
+  height: 24px;
 }
 
 .player-sidebar .sidebar-ch-item .ch-info {
@@ -1033,6 +1083,7 @@ html[data-animation="essential"] .recording-indicator-dot {
 .player-sidebar .sidebar-ch-item .ch-name {
   font-size: 24px;
   line-height: 1.25;
+  font-weight: 500;
   overflow: hidden;
   white-space: nowrap;
 }
@@ -1056,14 +1107,23 @@ html[data-animation="essential"] .recording-indicator-dot {
   animation: marquee-bounce 6s ease-in-out infinite;
 }
 
+/* The Live section's recent-kind badge. */
 .player-sidebar .sidebar-recent-kind {
   flex-shrink: 0;
-  padding: 3px 7px;
+  padding: 5px 10px;
   border: 1px solid var(--border);
   border-radius: 999px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+/* White would vanish on the light Frosted glass: focus inverts to dark. */
+[data-overlay="frosted"] .player-sidebar .sidebar-group-item.focused,
+[data-overlay="frosted"] .player-sidebar .sidebar-ch-item.focused {
+  background-color: var(--text-primary);
+  color: #fff;
 }
 
 @keyframes marquee-bounce {

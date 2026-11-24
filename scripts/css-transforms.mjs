@@ -5,6 +5,7 @@
 //   engines that leave the end padding out of the scroll width.
 // - Font scale: wrap pixel font sizes in the app-wide --font-scale variable.
 // - Legacy colors: convert modern rgb(var(...) / alpha) syntax for Chrome 53.
+// - RTL: a mirrored copy of each stylesheet for right-to-left languages.
 import postcss from 'postcss';
 
 // Classes src/engine-quirks.ts measures and sets on <html>.
@@ -332,4 +333,154 @@ export function convertLegacyColorSyntax(css) {
   });
 
   return root.toString();
+}
+
+// Right-to-left: a mirrored copy of a stylesheet, loaded in place of the
+// original when the UI language is RTL (src/utils/stylesheet-direction.ts).
+// `dir="rtl"` already reverses flex rows, grids, and text start; this swaps
+// what stays physical — left/right offsets, side margins, paddings, borders,
+// radii, alignment keywords, horizontal transforms, shadows, and gradients.
+// A whole copy, not overrides: an override would have to restate the other
+// side's value, which another rule may own.
+//
+// `/* rtl:ignore */` before a rule keeps it as is; `/* rtl:begin:ignore */`
+// … `/* rtl:end:ignore */` keeps everything between, for parts that stay
+// left-to-right in every language (the guide timeline, the seek bar).
+const SIDE_SWAP_RE = /\b(left|right)\b/g;
+const PHYSICAL_PROP_RE = /(^|-)(left|right)(-|$)/;
+const SIDE_KEYWORD_PROPS = new Set(['float', 'clear', 'text-align', 'text-align-last', 'caption-side', 'resize']);
+const FOUR_SIDE_PROPS = new Set(['margin', 'padding', 'border-width', 'border-style', 'border-color', 'inset', 'scroll-padding', 'scroll-margin']);
+const LENGTH_RE = /^(-?)(\d*\.?\d+)([a-z%]*)$/i;
+
+function swapSides(value) {
+  return value.replace(SIDE_SWAP_RE, (side) => (side === 'left' ? 'right' : 'left'));
+}
+
+function negate(value) {
+  const v = value.trim();
+  const length = LENGTH_RE.exec(v);
+  if (length) return Number(length[2]) === 0 ? v : (length[1] ? '' : '-') + length[2] + length[3];
+  if (v.startsWith('calc(') || v.startsWith('var(')) return `calc(-1 * ${v})`;
+  return v;
+}
+
+function mirrorFourSides(value) {
+  const parts = postcss.list.space(value);
+  if (parts.length !== 4) return value;
+  return [parts[0], parts[3], parts[2], parts[1]].join(' ');
+}
+
+function mirrorRadius(value) {
+  if (value.includes('/')) return value;
+  const p = postcss.list.space(value);
+  if (p.length === 2) return `${p[1]} ${p[0]}`;
+  if (p.length === 3) return `${p[1]} ${p[0]} ${p[1]} ${p[2]}`;
+  if (p.length === 4) return `${p[1]} ${p[0]} ${p[3]} ${p[2]}`;
+  return value;
+}
+
+// Split on top-level commas only, so rgba(…) and calc(…) stay whole.
+function splitComma(value) {
+  return postcss.list.comma(value);
+}
+
+function mirrorShadow(value) {
+  if (value.trim() === 'none') return value;
+  return splitComma(value).map((shadow) => {
+    const parts = postcss.list.space(shadow);
+    const first = parts.findIndex((part) => LENGTH_RE.test(part) || /^(calc|var)\(/.test(part));
+    if (first < 0) return shadow;
+    parts[first] = negate(parts[first]);
+    return parts.join(' ');
+  }).join(', ');
+}
+
+function mirrorTransform(value) {
+  return value
+    .replace(/translateX\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g, (_m, x) => `translateX(${negate(x)})`)
+    .replace(/translate(3d)?\(([^,()]*(?:\([^()]*\)[^,()]*)*),/g, (_m, d, x) => `translate${d || ''}(${negate(x)},`)
+    .replace(/rotate(Z?)\(\s*(-?)([\d.]+)(deg|turn|rad)\s*\)/g, (_m, z, sign, n, unit) =>
+      Number(n) === 0 ? _m : `rotate${z}(${sign ? '' : '-'}${n}${unit})`)
+    .replace(/skewX\(\s*(-?)([\d.]+)(deg|turn|rad)\s*\)/g, (_m, sign, n, unit) =>
+      Number(n) === 0 ? _m : `skewX(${sign ? '' : '-'}${n}${unit})`);
+}
+
+function mirrorGradients(value) {
+  return value.replace(/(linear-gradient\()\s*(-?[\d.]+)deg/g, (_m, fn, deg) =>
+    `${fn}${(360 - Number(deg)) % 360}deg`);
+}
+
+function mirrorBackgroundPosition(value) {
+  return splitComma(value).map((layer) => {
+    const parts = postcss.list.space(layer);
+    if (/^\d*\.?\d+%$/.test(parts[0]) && parts.length <= 2) {
+      parts[0] = `${100 - parseFloat(parts[0])}%`;
+      return parts.join(' ');
+    }
+    return swapSides(layer);
+  }).join(', ');
+}
+
+function mirrorDeclaration(decl) {
+  const prop = decl.prop;
+  if (prop.startsWith('--')) return;
+  if (PHYSICAL_PROP_RE.test(prop)) {
+    // Corner radii too: top-left ↔ top-right keeps the vertical side.
+    decl.prop = swapSides(prop);
+    return;
+  }
+  if (SIDE_KEYWORD_PROPS.has(prop)) decl.value = swapSides(decl.value);
+  else if (FOUR_SIDE_PROPS.has(prop)) decl.value = mirrorFourSides(decl.value);
+  else if (prop === 'border-radius') decl.value = mirrorRadius(decl.value);
+  else if (prop === 'box-shadow' || prop === 'text-shadow') decl.value = mirrorShadow(decl.value);
+  else if (prop === 'transform' || prop === '-webkit-transform') decl.value = mirrorTransform(decl.value);
+  else if (prop === 'transform-origin' || prop === 'perspective-origin'
+    || prop === 'object-position' || prop === 'mask-position' || prop === '-webkit-mask-position') {
+    decl.value = swapSides(decl.value);
+  } else if (prop === 'background-position' || prop === 'background-position-x') {
+    decl.value = mirrorBackgroundPosition(decl.value);
+  } else if (prop === 'transition' || prop === 'transition-property' || prop === 'will-change') {
+    decl.value = swapSides(decl.value);
+  }
+  if (/gradient\(/.test(decl.value)) decl.value = swapSides(mirrorGradients(decl.value));
+}
+
+// Media transport stays left-to-right in every language (rewind on the left,
+// the seek bar filling rightward); the markup marks these `dir="ltr"`.
+const LTR_ISLAND_RE = /\.osd-(progress|vod-progress|vod-transport)\b/;
+
+export function mirrorStylesheetForRtl(css) {
+  const root = postcss.parse(css);
+  const ignored = new Set();
+  root.walkRules((rule) => {
+    if (LTR_ISLAND_RE.test(rule.selector)) ignored.add(rule);
+  });
+  let ignoring = false;
+  root.walk((node) => {
+    if (node.type === 'comment') {
+      const text = node.text.trim();
+      if (text === 'rtl:begin:ignore') ignoring = true;
+      else if (text === 'rtl:end:ignore') ignoring = false;
+      else if (text === 'rtl:ignore') {
+        const next = node.next();
+        if (next) ignored.add(next);
+      }
+      return;
+    }
+    if (ignoring && node.type !== 'decl') ignored.add(node);
+  });
+  root.walkDecls((decl) => {
+    for (let node = decl.parent; node && node.type !== 'root'; node = node.parent) {
+      if (ignored.has(node)) return;
+    }
+    mirrorDeclaration(decl);
+  });
+  return root.toString();
+}
+
+// The mirrored copies sit one folder deeper (css/rtl/), so their relative
+// url()s — the bundled fonts — need one more `../`.
+export function rebaseRelativeUrls(css, prefix) {
+  return css.replace(/url\(\s*(['"]?)(?![a-z][a-z0-9+.-]*:|\/|#)([^'")]+)\1\s*\)/gi,
+    (_m, quote, path) => `url(${quote}${prefix}${path}${quote})`);
 }

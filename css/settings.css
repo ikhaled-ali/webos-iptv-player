@@ -1,8 +1,8 @@
+/* Laid out like Live: a flush menu panel beside the content, its rows
+   styled as the Live groups and the tab rail. */
 .settings-view {
   display: grid;
   grid-template-columns: max-content 1fr;
-  gap: 32px;
-  padding: 40px 60px 40px 40px;
   overflow: hidden;
   height: 100%;
   background: var(--bg-primary);
@@ -12,71 +12,84 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  min-width: 252px;
-  max-width: 328px;
-  padding: 20px 12px;
+  /* Live's sidebar width. */
+  width: 380px;
+  min-width: 380px;
+  max-width: 380px;
+  padding-bottom: 24px;
   background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  border-right: 1px solid var(--border);
 }
 
+/* Matches the Live sidebar's header. */
 .settings-title {
-  font-size: 36px;
-  margin: 0 16px 22px;
-  color: var(--accent);
+  flex-shrink: 0;
+  margin: 0;
+  padding: 22px 24px 18px 26px;
+  color: var(--text-primary);
+  font-size: 24px;
+  font-weight: 300;
+  line-height: 1.25;
+  border-bottom: 1px solid var(--border);
 }
 
 .settings-nav-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
+  padding: 12px 8px;
 }
 
+/* The shown category keeps a tinted fill; focus fades it to white with
+   black content, as on the tab rail and the Live groups. */
 .settings-nav-item {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   width: 100%;
-  min-height: 58px;
-  padding: 10px 14px;
-  color: var(--text-secondary);
-  font-size: 20px;
+  min-height: 60px;
+  padding: 14px 16px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 21px;
   text-align: left;
   background: transparent;
-  border: 1px solid transparent;
+  border: 2px solid transparent;
   border-radius: var(--radius);
   white-space: nowrap;
+  transition: background-color var(--transition), color var(--transition);
 }
 
 .settings-nav-item.active {
-  color: var(--accent);
+  color: var(--active-text);
+  background-color: var(--focus-tint);
 }
 
-.settings-nav-item.active::before {
-  position: absolute;
-  top: 13px;
-  bottom: 13px;
-  left: -13px;
-  width: 4px;
-  background: var(--accent);
-  content: '';
-}
-
-.settings-nav-item.focused {
-  color: var(--text-primary);
-  background-image: var(--focus-layer);
-}
-
+.settings-nav-item.focused,
 .settings-nav-item.active.focused {
-  color: var(--accent);
+  color: #000;
+  background-color: #fff;
+  background-image: none;
+}
+
+.settings-nav-item > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .settings-nav-icon {
   display: flex;
-  flex: 0 0 26px;
+  flex: 0 0 28px;
   align-items: center;
   justify-content: center;
+  color: var(--text-muted);
+  transition: color var(--transition);
+}
+
+.settings-nav-item.focused .settings-nav-icon {
+  color: #000;
 }
 
 .settings-nav-icon svg {
@@ -92,32 +105,31 @@
 .settings-nav-help {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
   margin-top: auto;
-  padding: 18px 10px 0;
+  padding: 20px 24px 0 26px;
   color: var(--text-muted);
-  font-size: 15px;
+  font-size: 18px;
   border-top: 1px solid var(--border);
 }
 
 .settings-nav-help-row {
   display: flex;
   align-items: center;
-  gap: 9px;
-  white-space: nowrap;
+  gap: 12px;
 }
 
 .settings-nav-key {
   display: flex;
-  flex: 0 0 28px;
-  width: 28px;
-  height: 28px;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
   align-items: center;
   justify-content: center;
   color: var(--text-secondary);
-  background: var(--bg-primary);
+  background: var(--bg-tertiary);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
 }
 
 .settings-nav-key svg {
@@ -143,7 +155,7 @@
 .settings-scroll {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 0 12px 32px;
+  padding: 24px 80px 40px 60px;
   overflow-y: auto;
 }
 
@@ -153,9 +165,12 @@
   border-bottom: 1px solid var(--border);
 }
 
+/* As the catalog rails' titles. */
 .settings-section-title {
   margin-bottom: 20px;
+  color: var(--text-primary);
   font-size: 30px;
+  font-weight: 600;
 }
 
 .settings-general-row {
@@ -227,7 +242,7 @@
 
 /* The row of the focused control, while Settings shows its focus. */
 #view-settings[data-ring-owner=""] .settings-advanced-row.is-current {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--bg-tertiary);
 }
 
 .settings-advanced-row + .settings-advanced-row {
@@ -1202,4 +1217,84 @@
 
 .xtream-live-categories.focused .xtream-live-categories-new {
   border-color: white;
+}
+
+/* Content focus matches the menu, the tab rail, and the Live lists: white
+   with black content. A theme swatch is a picture of a theme and keeps its
+   brightness lift. */
+.settings-scroll [data-focusable].focused:not(.theme-swatch),
+.settings-scroll .btn[data-focusable].focused,
+.settings-scroll .toggle-option.active.focused {
+  color: #000;
+  background-color: #fff;
+  background-image: none;
+  border-color: #fff !important;
+}
+
+.settings-scroll .dropdown-trigger.focused .dropdown-caret {
+  border-top-color: #555;
+}
+
+.settings-scroll .settings-input.focused::placeholder {
+  color: #555;
+}
+
+/* Settings controls follow the app's pills (the search box, the catalog
+   sort): an outline at rest, the tab rail's tint for a chosen option, and
+   the white focus above. */
+.settings-main .settings-input,
+.settings-main .dropdown-trigger,
+.settings-main .btn,
+.settings-main .toggle-option {
+  box-sizing: border-box;
+  min-height: calc(54px * var(--font-scale));
+  border-radius: 999px;
+}
+
+.settings-main .settings-input {
+  padding: 0 24px;
+  background-color: transparent;
+}
+
+.settings-main .dropdown-trigger {
+  padding: 0 24px 0 28px;
+  background-color: transparent;
+}
+
+.settings-main .dropdown-sizer {
+  padding: 0 64px 0 28px;
+}
+
+.settings-main .dropdown-menu {
+  padding: 8px;
+  border-radius: 24px;
+}
+
+.settings-main .dropdown-option {
+  border-radius: 999px;
+}
+
+.settings-view .settings-main .btn {
+  padding: 0 28px;
+}
+
+/* Kept weaker than the white focus rule above, which must win. */
+.settings-main .btn-secondary {
+  background-color: transparent;
+}
+
+.settings-main .toggle-option {
+  padding: 0 24px;
+  color: var(--text-primary);
+  background-color: transparent;
+}
+
+.settings-main .toggle-option + .toggle-option {
+  margin-left: 12px;
+}
+
+.settings-main .toggle-option.active {
+  border-color: transparent;
+  color: var(--active-text);
+  background-color: var(--focus-tint);
 }

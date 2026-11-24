@@ -1,4 +1,5 @@
 import { CONFIG } from '../config';
+import { StorageService } from './storage-service';
 import { createLogger } from '../utils/logger';
 import { isLunaAvailable, lunaRequest, type LunaRequestHandle, type LunaResponse } from './luna';
 import { normalizeLaunchQuery } from './launch-intent';
@@ -60,12 +61,33 @@ function speechCtor(): SpeechRecognizerCtor | null {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
 
+// Recognizers want a regional tag for Arabic; prefer the TV's own Arabic
+// region (its dialect), else Saudi Arabic as the broadly understood default.
+// A language chosen in Settings wins over both.
+export function speechLanguage(appLanguage: string, systemLanguage: string, chosen = 'app'): string {
+  if (chosen !== 'app') return chosen;
+  if (appLanguage.toLowerCase() !== 'ar') return appLanguage || systemLanguage;
+  return /^ar-[a-z]{2}$/i.test(systemLanguage) ? systemLanguage : 'ar-SA';
+}
+
+function recognitionLanguage(): string {
+  return speechLanguage(document.documentElement.lang, navigator.language || '',
+    StorageService.getVoiceLanguage());
+}
+
+// The TV's recognizer listens in the TV's voice language. It documents no
+// language option, so one is sent only when it differs from the TV's.
+export function voiceConductorLanguage(language: string, systemLanguage: string): string | null {
+  return language && language.toLowerCase() !== systemLanguage.toLowerCase() ? language : null;
+}
+
 // Errors that mean "nothing was said", not "this engine can't work here".
 const SPEECH_EMPTY_ERRORS = ['no-speech', 'aborted'];
 
 const speechEngine: Engine = {
   name: 'speech',
-  available: () => speechCtor() !== null,
+  // webOS ships a webkitSpeechRecognition stub that never starts or errors.
+  available: () => speechCtor() !== null && !isLunaAvailable(),
   start(done) {
     const Ctor = speechCtor()!;
     let text = '';
@@ -86,7 +108,7 @@ const speechEngine: Engine = {
     try {
       rec = new Ctor();
       rec.onstart = () => clearTimeout(startTimer);
-      rec.lang = document.documentElement.lang || navigator.language || '';
+      rec.lang = recognitionLanguage();
       rec.continuous = false;
       rec.interimResults = false;
       rec.maxAlternatives = 1;
@@ -148,20 +170,33 @@ const lunaEngine: Engine = {
     // started but hears nothing ends as empty.
     const startTimer = setTimeout(() => finish({ kind: 'failed', reason: 'no-reply' }), CONFIG.VOICE.START_TIMEOUT_MS);
     const timer = setTimeout(() => finish({ kind: 'empty' }), CONFIG.VOICE.LISTEN_TIMEOUT_MS);
-    request = lunaRequest<VoiceConductorResponse>('luna://com.webos.service.voiceconductor', {
-      method: 'recognizeVoiceWithDetails',
-      parameters: { autoEndDetection: true },
-      subscribe: true,
-      onSuccess: (response) => {
-        clearTimeout(startTimer);
-        const text = voiceConductorText(response);
-        if (text) finish({ kind: 'text', text });
-        else if (voiceConductorEnded(response)) finish({ kind: 'empty' });
-      },
-      onFailure: (response) => {
-        finish({ kind: 'failed', reason: String(response.errorCode ?? 'unknown') });
-      },
-    });
+    // A TV that rejects the language option is asked once more without it.
+    const listen = (language: string | null): void => {
+      let replied = false;
+      request = lunaRequest<VoiceConductorResponse>('luna://com.webos.service.voiceconductor', {
+        method: 'recognizeVoiceWithDetails',
+        parameters: language ? { autoEndDetection: true, language } : { autoEndDetection: true },
+        subscribe: true,
+        onSuccess: (response) => {
+          replied = true;
+          clearTimeout(startTimer);
+          const text = voiceConductorText(response);
+          if (text) finish({ kind: 'text', text });
+          else if (voiceConductorEnded(response)) finish({ kind: 'empty' });
+        },
+        onFailure: (response) => {
+          if (finished) return;
+          if (language && !replied) {
+            log.warn('Voice language rejected', 'event=voice.language.rejected',
+              `errorCode=${String(response.errorCode ?? 'unknown')}`);
+            listen(null);
+            return;
+          }
+          finish({ kind: 'failed', reason: String(response.errorCode ?? 'unknown') });
+        },
+      });
+    };
+    listen(voiceConductorLanguage(recognitionLanguage(), navigator.language || ''));
     return () => {
       finished = true;
       clearTimeout(startTimer);

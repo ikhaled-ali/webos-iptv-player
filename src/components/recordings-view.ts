@@ -17,7 +17,7 @@ import { PLAY_ICON, RECORD_ICON, TRASH_ICON } from './icons';
 export const RECORDINGS_ACCOUNT = 'recordings';
 
 interface RecordingsViewOptions {
-  onRevealTabBar: () => void;
+  onRevealTabBar: (dir: 'up' | 'left') => void;
   onBack: () => void;
   onPlay: (entry: RecordingEntry, resumeSecs: number) => void;
   // The list was read: the host shows the tab only while it holds any.
@@ -41,7 +41,7 @@ export class RecordingsView {
     this.focusScope = Focus.register({
       id: 'view.recordings',
       root: container,
-      leaveFor: { up: 'tabbar' },
+      leaveFor: { up: 'tabbar', left: 'tabbar' },
       defaultKey: () => {
         const el = this.nav.focused;
         return el && this.container.contains(el) ? el.dataset.key ?? null : null;
@@ -99,7 +99,7 @@ export class RecordingsView {
     } else if (action === 'red' && focused?.dataset.recordingId) {
       this.confirmDelete(focused.dataset.recordingId);
     } else if (action === 'up' || action === 'down' || action === 'left' || action === 'right') {
-      if (!this.nav.move(action) && action === 'up') this.options.onRevealTabBar();
+      if (!this.nav.move(action) && (action === 'up' || action === 'left')) this.options.onRevealTabBar(action);
     }
   }
 

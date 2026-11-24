@@ -21,7 +21,7 @@ import { showToast } from './toast';
 import { formatTime, formatDayLabel, displayDayKey, startOfDisplayDay, addDisplayDays, formatDuration } from '../utils/time';
 import { rankByName } from '../utils/channel-search';
 import { CONFIG } from '../config';
-import { bellIcon, CHEVRON_LEFT_ICON, REPLAY_ICON, SEARCH_ICON } from './icons';
+import { bellIcon, chevronLeftIcon, REPLAY_ICON, SEARCH_ICON } from './icons';
 import { channelLockBadge } from './parental-badge';
 import { getLocale, t, tp, type SupportedLocale } from '../i18n';
 import { VirtualList } from '../utils/virtual-list';
@@ -66,7 +66,7 @@ const EPG_VIEWPORT_FALLBACK = 900;
 export class EpgGrid {
   private container: HTMLElement;
   private onChannelSelect: (index: number, catchup?: CatchupInfo, scope?: ChannelScope) => void;
-  private onRevealTabBar?: () => void;
+  private onRevealTabBar?: (dir?: 'up' | 'left') => void;
   private onManageReminders?: () => void;
   private selectedChannelIdx = 0;
   private selectedPlaylist = '';
@@ -137,7 +137,7 @@ export class EpgGrid {
   constructor(
     container: HTMLElement,
     onChannelSelect: (index: number, catchup?: CatchupInfo, scope?: ChannelScope) => void,
-    onRevealTabBar?: () => void,
+    onRevealTabBar?: (dir?: 'up' | 'left') => void,
     onManageReminders?: () => void,
   ) {
     this.container = container;
@@ -147,7 +147,7 @@ export class EpgGrid {
     this.focusScope = Focus.register({
       id: 'guide.grid',
       root: container,
-      leaveFor: { up: 'tabbar' },
+      leaveFor: { up: 'tabbar', left: 'tabbar' },
       defaultKey: () => this.gridKey(),
       resolve: (key) => this.resolveGridKey(key),
       has: (key) => this.hasRow(key),
@@ -577,7 +577,7 @@ export class EpgGrid {
                   <span class="epg-group-button-label">${
                     groups.find(group => group.id === this.selectedGroup)?.label ?? t('common.all')
                   }</span>
-                  <span class="epg-group-button-arrow">${raw(CHEVRON_LEFT_ICON)}</span>
+                  <span class="epg-group-button-arrow">${raw(chevronLeftIcon())}</span>
                 </button>
                 ${this.groupOpen ? html`
                   <div class="epg-group-menu" data-key="epg-group-menu">
@@ -632,7 +632,7 @@ export class EpgGrid {
                      data-channel-pos="${itemIndex}" data-hover-target
                      style="top:${this.channelVirtualizer.getItemOffset(itemIndex)}px">
                   <span class="epg-ch-num">${globalIndex + 1}</span>
-                  <span class="epg-ch-name">${raw(channelLockBadge(ch))}${ch.name}</span>
+                  <span class="epg-ch-name" dir="auto">${raw(channelLockBadge(ch))}${ch.name}</span>
                 </div>
               `;
             })}
@@ -659,14 +659,8 @@ export class EpgGrid {
                 })}
               </div>
               <div class="epg-legend">
-                <span class="epg-legend-item state-past">
-                  <i class="epg-legend-dot"></i><span>${t('epg.aired')}</span>
-                </span>
-                <span class="epg-legend-item state-future">
-                  <i class="epg-legend-dot"></i><span>${t('epg.upcoming')}</span>
-                </span>
                 <button type="button"
-                        class="epg-legend-item epg-reminder-entry"
+                        class="epg-reminder-entry"
                         data-epg-reminders aria-label="${t('reminderManager.title')}">
                   ${raw(bellIcon(true))}<span>${t('epg.reminder')}</span>
                 </button>
@@ -706,12 +700,12 @@ export class EpgGrid {
                         <div class="epg-prog-body">
                           <div class="epg-prog-title">
                             ${current ? liveBadge() : ''}
-                            <span>${p.title}</span>
+                            <span dir="auto">${p.title}</span>
                             ${state === 'future' && channel ? raw(bellIcon(ReminderService.has(channelKey(channel), startMs))) : ''}
                             ${progress ? html`<span class="epg-catchup-badge ${progress.completed ? 'watched' : 'resume'}">${t(progress.completed ? 'epg.watched' : 'common.resume')}</span>` : ''}
                           </div>
                           ${progress && !progress.completed && progress.duration > 0 ? html`<div class="epg-catchup-progress"><div class="epg-catchup-progress-fill" style="width: ${Math.min(100, Math.max(0, Math.round(progress.position / progress.duration * 100)))}%"></div></div>` : ''}
-                          ${p.description ? html`<div class="epg-prog-desc">${p.description.slice(0, 200)}</div>` : ''}
+                          ${p.description ? html`<div class="epg-prog-desc" dir="auto">${p.description.slice(0, 200)}</div>` : ''}
                         </div>
                       </div>
                     `;
@@ -1359,6 +1353,8 @@ export class EpgGrid {
           if (this.playlistFocusIdx > 0) {
             this.playlistFocusIdx--;
             this.render();
+          } else {
+            this.onRevealTabBar?.('left');
           }
         } else if (this.focusCol === 'filters') {
           if (this.filterFocus === 'search') {

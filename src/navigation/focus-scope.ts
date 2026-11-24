@@ -72,6 +72,9 @@ export interface ScopeSpec {
   // under it, as a move would. Off for prompts: their safe default must
   // not yield to a cursor that merely rests, or hides, where they open.
   hoverOnSettle?: boolean;
+  // A pushed scope takes the wheel turned outside its root; false leaves
+  // that wheel to what lies under the pointer, as the tab bar does.
+  ownsWheel?: boolean;
 }
 
 export interface FocusScope {
@@ -79,6 +82,7 @@ export interface FocusScope {
   readonly modal: boolean;
   readonly logical: boolean;
   readonly tier: number;
+  readonly ownsWheel: boolean;
   readonly focusKey: string | null;
   // Whether the ring is hidden while the key is kept, until the next request.
   readonly concealed: boolean;
@@ -164,6 +168,7 @@ class Scope implements FocusScope {
   get tier(): number { return this.spec.tier ?? (this.modal ? Tier.prompt : Tier.overlay); }
   get live(): boolean { return this.spec.when ? this.spec.when() : true; }
   get logical(): boolean { return this.spec.defaultKey !== undefined; }
+  get ownsWheel(): boolean { return this.spec.ownsWheel ?? this.tier !== Tier.bar; }
 
   root(): HTMLElement | null {
     const r = this.spec.root;

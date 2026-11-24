@@ -7,6 +7,8 @@ import {
   generateFlexGapFallback,
   generateScrollEndSpacers,
   linkedStylesheets,
+  mirrorStylesheetForRtl,
+  rebaseRelativeUrls,
   scaleFontSizes,
 } from './css-transforms.mjs';
 
@@ -325,5 +327,51 @@ describe('convertLegacyColorSyntax', () => {
       expect(value).not.toMatch(/rgb\(\s*var\(--[\w-]+\)\s*\/\s*[^()]+\)/);
       expect(value).not.toMatch(/rgba\(var\(--[\w-]+(?<!-legacy)\),/);
     }
+  });
+});
+
+describe('mirrorStylesheetForRtl', () => {
+  const mirror = (css) => mirrorStylesheetForRtl(css).replace(/\s+/g, ' ').trim();
+
+  it('swaps physical sides, shorthands, and corner radii', () => {
+    expect(mirror('.a { left: 0; margin-left: 4px; padding: 1px 2px 3px 4px; border-right: 1px solid; }'))
+      .toBe('.a { right: 0; margin-right: 4px; padding: 1px 4px 3px 2px; border-left: 1px solid; }');
+    expect(mirror('.a { border-top-left-radius: 3px; border-radius: 1px 2px 3px 4px; }'))
+      .toBe('.a { border-top-right-radius: 3px; border-radius: 2px 1px 4px 3px; }');
+    expect(mirror('.a { border-radius: 1px 2px; float: left; text-align: right; }'))
+      .toBe('.a { border-radius: 2px 1px; float: right; text-align: left; }');
+  });
+
+  it('negates horizontal transforms, shadows, and gradient angles', () => {
+    expect(mirror('.a { transform: translate(-50%, -50%) translateX(8px) scale(1.1); }'))
+      .toBe('.a { transform: translate(50%, -50%) translateX(-8px) scale(1.1); }');
+    expect(mirror('.a { box-shadow: 4px 0 8px rgba(0, 0, 0, 0.3), 0 0 4px red; }'))
+      .toBe('.a { box-shadow: -4px 0 8px rgba(0, 0, 0, 0.3), 0 0 4px red; }');
+    expect(mirror('.a { background: linear-gradient(90deg, red, blue), linear-gradient(to right, red, blue); }'))
+      .toBe('.a { background: linear-gradient(270deg, red, blue), linear-gradient(to left, red, blue); }');
+  });
+
+  it('mirrors inside at-rules and keyframes but not custom properties', () => {
+    expect(mirror('@media (x) { .a { right: 1px; } } @keyframes k { to { transform: translateX(10px); } } :root { --side: left; }'))
+      .toBe('@media (x) { .a { left: 1px; } } @keyframes k { to { transform: translateX(-10px); } } :root { --side: left; }');
+  });
+
+  it('keeps the left-to-right media transport as it is', () => {
+    expect(mirror('.osd-progress[data-seekbar] .osd-progress-bar::after { right: -9px; } html.q-no-flex-gap .osd-progress-row > * + * { margin-left: 12px; }'))
+      .toBe('.osd-progress[data-seekbar] .osd-progress-bar::after { right: -9px; } html.q-no-flex-gap .osd-progress-row > * + * { margin-left: 12px; }');
+  });
+
+  it('keeps rules marked rtl:ignore and rtl:begin/end:ignore blocks', () => {
+    expect(mirror('/* rtl:ignore */ .a { left: 0; } .b { left: 0; }'))
+      .toBe('/* rtl:ignore */ .a { left: 0; } .b { right: 0; }');
+    expect(mirror('/* rtl:begin:ignore */ .a { left: 0; } @media (x) { .b { left: 0; } } /* rtl:end:ignore */ .c { left: 0; }'))
+      .toBe('/* rtl:begin:ignore */ .a { left: 0; } @media (x) { .b { left: 0; } } /* rtl:end:ignore */ .c { right: 0; }');
+  });
+});
+
+describe('rebaseRelativeUrls', () => {
+  it('prefixes relative urls only', () => {
+    expect(rebaseRelativeUrls("src: url('../assets/a.woff'); b: url(x.png); c: url(data:image/png;base64,AA); d: url(/abs.png); e: url(\"http://host/a\")", '../'))
+      .toBe("src: url('../../assets/a.woff'); b: url(../x.png); c: url(data:image/png;base64,AA); d: url(/abs.png); e: url(\"http://host/a\")");
   });
 });

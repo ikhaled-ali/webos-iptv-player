@@ -119,12 +119,6 @@ export class PlayerMenu {
     this.onHide = onHide;
   }
 
-  // The panel's resting left edge (its slide doesn't move it); the pointer
-  // leaving past it closes the menu.
-  left(): number {
-    return this.el ? this.el.offsetLeft : 1920;
-  }
-
   show(): void {
     if (this.isVisible) return;
     if (!this.scope && this.el) {
@@ -416,7 +410,6 @@ export class PlayerMenu {
     const options = state.options.slice().sort((a, b) => b.height - a.height || b.bitrate - a.bitrate);
     morph(this.el, html`
       <div class="menu-header">
-        <h2>${t('player.quality')}</h2>
         ${state.player ? html`<div class="menu-subtitle">${state.player}</div>` : ''}
       </div>
       <div class="menu-items">
@@ -473,7 +466,6 @@ export class PlayerMenu {
     // that does the same thing from the remote.
     morph(el, html`
       <div class="menu-header">
-        <h2>${t('player.menu')}</h2>
         ${chName ? html`<div class="menu-subtitle">${t('player.playing', { name: chName })}</div>` : ''}
       </div>
       <div class="menu-items">
@@ -522,9 +514,6 @@ export class PlayerMenu {
     const active = this.getPlaybackRateState().rate;
 
     morph(el, html`
-      <div class="menu-header">
-        <h2>${t('player.playbackSpeed')}</h2>
-      </div>
       <div class="menu-items">
         <div class="menu-item" data-key="${BACK}"
              data-focusable data-menu-action="${BACK}">
@@ -550,9 +539,6 @@ export class PlayerMenu {
     const tracks = this.getAudioTracks();
 
     morph(el, html`
-      <div class="menu-header">
-        <h2>${t('player.audioTrack')}</h2>
-      </div>
       <div class="menu-items">
         <div class="menu-item" data-key="${BACK}"
              data-focusable data-menu-action="${BACK}">
@@ -578,9 +564,6 @@ export class PlayerMenu {
     const anyActive = tracks.some(t => t.active);
 
     morph(el, html`
-      <div class="menu-header">
-        <h2>${t('player.subtitles')}</h2>
-      </div>
       <div class="menu-items">
         <div class="menu-item" data-key="${BACK}"
              data-focusable data-menu-action="${BACK}">

@@ -377,7 +377,7 @@ export type NavDirection = 'up' | 'down' | 'left' | 'right';
 
 export type Action =
   | 'up' | 'down' | 'left' | 'right'
-  | 'select' | 'back'
+  | 'select' | 'long_select' | 'back'
   | 'red' | 'green' | 'yellow' | 'blue'
   | 'channel_up' | 'channel_down'
   | 'play' | 'pause' | 'stop'

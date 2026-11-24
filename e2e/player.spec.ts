@@ -518,49 +518,66 @@ test('the first pointer move after a key that leaves the sidebar hides its ring'
   await expect(sidebar.locator('.focused')).toHaveCount(0);
 });
 
-test('Magic Remote dwell expands groups and stages pointer dismissal', async ({ page }) => {
+test('pointer movement across the player never closes its open panels', async ({ page }) => {
   await gotoGroupedPlayer(page);
   const sidebar = page.locator('#player-sidebar');
+  const menu = page.locator('#player-menu');
 
   await page.keyboard.press('ArrowLeft');
-  await page.mouse.move(30, 540);
+  await page.keyboard.press('ArrowLeft');
   await expect(sidebar).toHaveClass(/groups-expanded/);
-
-  await page.mouse.move(800, 540);
-  await expect(sidebar).toHaveClass(/channels-only/);
+  for (const [x, y] of [[30, 540], [800, 540], [1500, 300], [960, 1000]]) {
+    await page.mouse.move(x, y, { steps: 4 });
+  }
+  await page.waitForTimeout(600);
   await expect(sidebar).toBeVisible();
-  await expect(sidebar.locator('.focused')).toHaveCount(0);
-  await page.mouse.move(300, 540);
-  await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 550)));
-  await expect(sidebar).toBeVisible();
-
-  await page.mouse.move(30, 540);
   await expect(sidebar).toHaveClass(/groups-expanded/);
-  await page.mouse.move(800, 540);
-  await expect(sidebar).toHaveClass(/channels-only/);
+  await pressRemoteBack(page);
+  await pressRemoteBack(page);
   await expect(sidebar).not.toBeVisible();
+
+  await page.keyboard.press('ArrowRight');
+  await expect(menu).toHaveClass(/visible/);
+  for (const [x, y] of [[1700, 540], [200, 540], [960, 100]]) {
+    await page.mouse.move(x, y, { steps: 4 });
+  }
+  await page.waitForTimeout(600);
+  await expect(menu).toHaveClass(/visible/);
+});
+
+test('the wheel turned over the video works the open player menu', async ({ page }) => {
+  await gotoGroupedPlayer(page);
+  await openPlayerMenu(page);
+  const rows = page.locator('#player-menu .menu-item');
+  await expect(rows.first()).toHaveClass(/focused/);
+  await page.mouse.move(800, 540);
+  await page.mouse.wheel(0, 120);
+  await expect(rows.nth(1)).toHaveClass(/focused/);
+  await expect(page.locator('#player-menu')).toHaveClass(/visible/);
+  await expect(page.locator('.focused')).toHaveCount(1);
 });
 
 test('the group panel lights the group it slides in under a pointer moved mid-slide', async ({ page }) => {
   await gotoGroupedPlayer(page);
   const sidebar = page.locator('#player-sidebar');
   const groups = sidebar.locator('.sidebar-group-panel');
+  const toggle = sidebar.locator('[data-open-groups]');
   const target = sidebar.locator('.sidebar-group-item').nth(3);
   await page.keyboard.press('ArrowLeft');
-  await page.mouse.move(30, 540);
+  await panelSettled(sidebar);
+  await toggle.click();
   await expect(sidebar).toHaveClass(/groups-expanded/);
   await panelSettled(sidebar);
   const box = (await target.boundingBox())!;
   const x = box.x + box.width / 2;
   const y = box.y + box.height / 2;
-  await page.mouse.move(800, 540);
+  await toggle.click();
   await expect(sidebar).toHaveClass(/channels-only/);
-  await page.mouse.move(300, 540);
   await panelSettled(sidebar);
   // A slow slide leaves time to move while the channels still lie under the pointer.
   await sidebar.evaluate((el) => { el.style.transition = 'transform 4s linear'; });
 
-  await page.mouse.move(30, y);
+  await toggle.click();
   await expect(sidebar).toHaveClass(/groups-expanded/);
   await expect.poll(() => groups.evaluate(el => el.getBoundingClientRect().right), { intervals: [20] })
     .toBeGreaterThan(0);

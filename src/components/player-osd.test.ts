@@ -91,12 +91,11 @@ describe('PlayerOsd', () => {
     vi.useFakeTimers();
     localStorage.clear();
     container = document.createElement('div');
-    container.innerHTML = '<div id="player-osd"></div><time class="osd-clock hidden"></time>';
+    container.innerHTML = '<div id="player-osd"></div><div class="osd-clock hidden"></div>';
     document.body.appendChild(container);
     state = snapshot();
     callbacks = {
       getSnapshot: () => state,
-      canAutoReveal: () => true,
       isCovered: () => false,
       canSeek: () => true,
       onSeekFraction: vi.fn(),
@@ -121,7 +120,7 @@ describe('PlayerOsd', () => {
     document.body.innerHTML = '';
   });
 
-  it('shows, hides, auto-reveals, and stays visible while paused', () => {
+  it('shows, hides, stays hidden on a pointer move, and stays visible while paused', () => {
     state = snapshot({ playback: playback(120), vodTitle: 'Video 1' });
 
     osd.show();
@@ -135,8 +134,9 @@ describe('PlayerOsd', () => {
       clientX: 12,
       clientY: 34,
     }));
-    expect(osd.isVisible()).toBe(true);
+    expect(osd.isVisible()).toBe(false);
     expect(osd.pointerPosition()).toEqual({ x: 12, y: 34 });
+    osd.show();
 
     state = { ...state, playback: playback(120, 0, true) };
     osd.resetTimer();

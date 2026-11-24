@@ -1,4 +1,4 @@
-import type { Channel, ChannelGroupId, SeriesItem, VodItem } from '../types';
+import type { Channel, ChannelGroupId, ResumeEntry, SeriesItem, VodItem } from '../types';
 import { PlaylistService } from '../services/playlist-service';
 import {
   ParentalControlService,
@@ -45,6 +45,20 @@ export function seriesLockBadge(item: SeriesItem): string {
   return lockBadge(ParentalControlService.lockState(
     catalogParentalRequest('series', { ...item, id: item.seriesId }),
   ));
+}
+
+// An episode answers to its series, as on the Series section's Continue rail.
+export function resumeLockBadge(entry: ResumeEntry): string {
+  if (!ParentalControlService.enabled) return '';
+  return lockBadge(ParentalControlService.lockState(catalogParentalRequest(
+    entry.kind === 'vod' ? 'vod' : 'series',
+    {
+      accountId: entry.accountId,
+      categoryId: entry.categoryId ?? '',
+      name: '',
+      id: entry.watchlistOwner?.itemId ?? entry.itemId,
+    },
+  )));
 }
 
 export function categoryLockBadge(

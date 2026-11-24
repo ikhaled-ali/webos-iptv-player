@@ -29,6 +29,8 @@ export const CONFIG = {
     // Room kept between a focused item and its scroller's edges, so a D-pad
     // move never leaves focus flush with (or grown past) the edge.
     REVEAL_MARGIN: 40,
+    // Holding OK this long on an item with options opens them.
+    LONG_PRESS_MS: 600,
     // Treat fast successive focus changes as held-key navigation. The repeat
     // interval measured on LG remotes is around 80 ms; leave room for load.
     FOCUS_REPEAT_WINDOW_MS: 180,
@@ -128,6 +130,7 @@ export const CONFIG = {
     CATALOG_MAX_BYTES: 32 * 1024 * 1024, // full or per-category stream-list budget
     DETAIL_MAX_BYTES: 8 * 1024 * 1024,   // VOD/series detail and episode response budget
     BACKGROUND_REFRESH_CONCURRENCY: 2,   // stale catalog lists re-fetched at once; the rest queue
+    HOME_PICKS_TTL_MS: 60 * 60 * 1000,   // Home's Top rated / Recently added rows are re-picked after this
     RAIL_CATEGORIES: 6,                  // categories preloaded as rails in the browse view
     RAIL_ITEMS: 20,                      // posters shown per rail before the "all categories" drill-in
     RESUME_MIN_SECS: 15,                 // below this, treat as "start over" (don't store a resume point)

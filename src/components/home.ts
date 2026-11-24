@@ -3,19 +3,20 @@ import type {
 } from '../types';
 import { SpatialNav } from '../navigation/spatial-nav';
 import { Focus, type FocusScope } from '../navigation/focus-scope';
-import { html, raw, type Safe } from '../utils/dom';
+import { html, raw, scrollInsetTop, type Safe } from '../utils/dom';
 import { morph } from '../utils/morph';
 import { onClockTick } from '../utils/clock';
 import { formatDayLabel, formatTime } from '../utils/time';
 import { channelKey } from '../utils/channel';
-import { latestPerSeries } from '../utils/vod-progress';
+import { latestPerSeries, resumeSeriesId } from '../utils/vod-progress';
 import { t, type TextMessageKey } from '../i18n';
+import { CONFIG } from '../config';
 import { EpgService } from '../services/epg-service';
 import { PlaylistService } from '../services/playlist-service';
 import { ReminderService } from '../services/reminder-service';
 import { StorageService } from '../services/storage-service';
 import {
-  loadAllSeries, loadAllVodStreams, onCatalogListRefreshed, onCatalogListWritten,
+  loadAllSeries, loadAllVodStreams,
 } from '../services/xtream-catalog';
 import {
   isResumeConcealed,
@@ -25,14 +26,11 @@ import {
   liveParentalRequest,
   ParentalControlService,
 } from '../services/parental-control';
-import { channelLockBadge } from './parental-badge';
-import {
-  bellIcon, favoriteIcon, RECORD_ICON, SEARCH_ICON, SEE_ALL_ICON, SETTINGS_ICON,
-  TAB_GUIDE_ICON, TAB_LIVE_ICON, TAB_MOVIES_ICON, TAB_SERIES_ICON,
-} from './icons';
-
-export type HomeShortcut =
-  | 'live' | 'epg' | 'movies' | 'series' | 'recordings' | 'reminders' | 'search' | 'settings';
+import { resumeLockBadge, seriesLockBadge, vodLockBadge } from './parental-badge';
+import { bellIcon } from './icons';
+import { RemoveTip } from './remove-tip';
+import { showToast } from './toast';
+import { channelCard, channelSeeAllCard, posterCard, posterSeeAllCard } from './item-cards';
 
 // The rows with a See all tile, each opening its full list in its own section.
 export type HomeRow = 'resume' | 'watchlist' | 'recent' | 'favorites' | 'top' | 'new' | 'reminders';
@@ -65,14 +63,17 @@ export interface HomeSources {
   loadCatalog(onReady: () => void): void;
   reminders(now: number): Reminder[];
   hasXtream(): boolean;
-  hasRecordings(): boolean;
-  channelCount(): number;
+  // The live channel playing now, or -1.
+  playingIndex(): number;
+  // Drops an item from its row's list (Continue watching, Recently watched,
+  // or the Watchlist).
+  remove(item: HomeRemoval): void;
 }
 
-export interface HomeShortcutTile {
-  id: HomeShortcut;
-  count: number | null;
-}
+export type HomeRemoval =
+  | { row: 'resume'; entry: ResumeEntry }
+  | { row: 'recent'; channel: Channel }
+  | { row: 'watchlist'; entry: WatchlistEntry };
 
 // A row's first items; `more` when it holds more than a row shows.
 export interface HomeRail<T> {
@@ -86,40 +87,23 @@ export interface HomeModel {
   resume: HomeRail<ResumeEntry>;
   watchlist: HomeRail<WatchlistEntry>;
   recent: HomeRail<HomeChannelItem>;
-  shortcuts: HomeShortcutTile[];
   favorites: HomeRail<HomeChannelItem>;
   topRated: HomeRail<VodItem>;
   recentlyAdded: HomeRail<HomeTitle>;
   reminders: HomeRail<Reminder>;
 }
 
-const SHORTCUT_LABELS: Record<HomeShortcut, TextMessageKey> = {
-  live: 'nav.live',
-  epg: 'nav.epg',
-  movies: 'nav.movies',
-  series: 'nav.series',
-  recordings: 'nav.recordings',
-  reminders: 'reminderManager.title',
-  search: 'nav.search',
-  settings: 'nav.settings',
-};
-
-const SHORTCUT_ICONS: Record<HomeShortcut, string> = {
-  live: TAB_LIVE_ICON,
-  epg: TAB_GUIDE_ICON,
-  movies: TAB_MOVIES_ICON,
-  series: TAB_SERIES_ICON,
-  recordings: RECORD_ICON,
-  reminders: bellIcon(false),
-  search: SEARCH_ICON,
-  settings: SETTINGS_ICON,
-};
-
 // Each row shows this many, then See all opens the full list.
 export const HOME_ROW_ITEMS = 10;
 // Extra catalog picks leave room for titles parental controls hide, and still
 // tell whether there are more than a row shows.
 const CATALOG_PICKS = HOME_ROW_ITEMS * 3;
+
+const REMOVE_LABELS: Record<HomeRemoval['row'], { action: TextMessageKey; done: TextMessageKey }> = {
+  resume: { action: 'catalog.removeContinueWatching', done: 'catalog.continueWatchingRemoved' },
+  recent: { action: 'home.removeRecentlyWatched', done: 'home.recentlyWatchedRemoved' },
+  watchlist: { action: 'catalog.removeWatchlist', done: 'catalog.watchlistRemoved' },
+};
 
 // Kept apart from the scroller's edge when a focused row or tile is revealed.
 const REVEAL_MARGIN_Y = 24;
@@ -138,22 +122,11 @@ export function buildHomeModel(sources: HomeSources, now: number): HomeModel {
   };
   const reminders = sources.reminders(now);
   const xtream = sources.hasXtream();
-  const recordings = sources.hasRecordings();
-  const shortcuts: HomeShortcutTile[] = [
-    { id: 'live', count: sources.channelCount() },
-    { id: 'epg', count: null },
-    ...(xtream ? [{ id: 'movies' as const, count: null }, { id: 'series' as const, count: null }] : []),
-    ...(recordings ? [{ id: 'recordings' as const, count: null }] : []),
-    { id: 'reminders', count: reminders.length },
-    { id: 'search', count: null },
-    { id: 'settings', count: null },
-  ];
   const catalog = xtream ? sources.catalog() : null;
   return {
     resume: rail(xtream ? sources.resume() : []),
     watchlist: rail(xtream ? sources.watchlist() : []),
     recent: channelRail(sources.recent()),
-    shortcuts,
     favorites: channelRail(sources.favorites()),
     topRated: rail(catalog ? catalog.topRated : []),
     recentlyAdded: rail(catalog ? catalog.recentlyAdded : []),
@@ -222,17 +195,13 @@ function resolve(key: string): HomeChannel | null {
 
 export function liveHomeSources(
   activeAccount: () => PlaylistEntry | null,
-  hasRecordings: () => boolean,
+  playingIndex: () => number,
 ): HomeSources {
   const activeAccountId = () => activeAccount()?.id ?? null;
-  let catalog: HomeCatalog | null = null;
-  let catalogAccount: string | null = null;
+  // Picked once per account and kept for an hour, so Home doesn't re-pick
+  // (and flicker) every time a catalog list is written or refreshed.
+  const picks = new Map<string, { catalog: HomeCatalog; pickedAt: number }>();
   let loading: string | null = null;
-  const invalidate = (key: string) => {
-    if (catalogAccount && key.startsWith(`${catalogAccount}|`)) catalogAccount = null;
-  };
-  onCatalogListRefreshed(invalidate);
-  onCatalogListWritten(invalidate);
   return {
     recent: () => StorageService.getRecentlyWatchedLive()
       .map(entry => resolve(entry.channelKey))
@@ -257,40 +226,52 @@ export function liveHomeSources(
         .sort((a, b) => b.addedAt - a.addedAt);
     },
     catalog: () => {
-      if (!catalog || catalogAccount !== activeAccountId()) return null;
+      const id = activeAccountId();
+      const cached = id ? picks.get(id) : undefined;
+      if (!cached) return null;
       return {
-        topRated: catalog.topRated.filter(item => !isVodConcealed(item)),
-        recentlyAdded: catalog.recentlyAdded.filter(title => !titleConcealed(title)),
+        topRated: cached.catalog.topRated.filter(item => !isVodConcealed(item)),
+        recentlyAdded: cached.catalog.recentlyAdded.filter(title => !titleConcealed(title)),
       };
     },
     loadCatalog: (onReady) => {
       const account = activeAccount();
-      if (!account || account.id === catalogAccount || account.id === loading) return;
+      if (!account || account.id === loading) return;
       const id = account.id;
+      const cached = picks.get(id);
+      if (cached && Date.now() - cached.pickedAt < CONFIG.XTREAM.HOME_PICKS_TTL_MS) return;
       loading = id;
       Promise.all([loadAllVodStreams(account), loadAllSeries(account)])
         .then(([movies, series]) => {
-          if (activeAccountId() !== id) return;
-          catalog = pickHomeCatalog(movies, series);
-          catalogAccount = id;
-          onReady();
+          picks.set(id, { catalog: pickHomeCatalog(movies, series), pickedAt: Date.now() });
+          if (activeAccountId() === id) onReady();
         })
-        // The catalog loader logs its own failures; the rows just stay hidden.
+        // The catalog loader logs its own failures; the rows keep their last picks.
         .catch(() => undefined)
         .then(() => { if (loading === id) loading = null; });
     },
     reminders: (now) => ReminderService.listManageable(now),
     hasXtream: () => activeAccountId() !== null,
-    hasRecordings,
-    channelCount: () => PlaylistService.channels.length,
+    playingIndex,
+    remove: (item) => {
+      if (item.row === 'recent') {
+        StorageService.removeRecentlyWatchedLive(channelKey(item.channel));
+      } else if (item.row === 'watchlist') {
+        StorageService.removeWatchlist(item.entry.accountId, item.entry.kind, item.entry.itemId);
+      } else {
+        // A series leaves as a whole, as in the Series section.
+        const series = resumeSeriesId(item.entry);
+        if (series) StorageService.clearSeriesResume(item.entry.accountId, series);
+        else StorageService.clearResume(item.entry.accountId, item.entry.kind, item.entry.itemId);
+      }
+    },
   };
 }
 
 interface HomeViewOptions {
   sources: HomeSources;
-  onRevealTabBar: () => void;
+  onRevealTabBar: (dir: 'up' | 'left') => void;
   onBack: () => void;
-  onShortcut: (id: HomeShortcut) => void;
   onPlayChannel: (channelIndex: number) => void;
   onOpenGuide: (channelIndex: number) => void;
   onOpenResume: (entry: ResumeEntry) => void;
@@ -299,8 +280,8 @@ interface HomeViewOptions {
 }
 
 /**
- * The landing section: rows for Continue watching, the Watchlist, recently
- * watched channels, one-press shortcuts to every section, favorite channels, top rated and
+ * The landing section: rows for Continue watching, recently watched
+ * channels, the Watchlist, favorite channels, top rated and
  * recently added titles, and upcoming reminders. Each row borrows its
  * section's tile, so it looks and focuses the same as there. Channel, program,
  * and title text is untrusted, so it renders only through `html`.
@@ -309,12 +290,17 @@ export class HomeView {
   readonly focusScope: FocusScope;
   private nav: SpatialNav;
   private model: HomeModel | null = null;
+  private readonly removeTip = new RemoveTip('tip.home.remove');
+  // A Magic Remote hold on a tile: its timer, then the click its release
+  // fires, which must not also open the tile.
+  private pointerHold: ReturnType<typeof setTimeout> | null = null;
+  private swallowClick = false;
 
   constructor(private container: HTMLElement, private options: HomeViewOptions) {
     this.focusScope = Focus.register({
       id: 'view.home',
       root: container,
-      leaveFor: { up: 'tabbar' },
+      leaveFor: { up: 'tabbar', left: 'tabbar' },
       defaultKey: () => {
         const el = this.nav.focused;
         return el && this.container.contains(el) ? el.dataset.key ?? null : null;
@@ -326,13 +312,38 @@ export class HomeView {
       follow: false,
       onRequest: (el, via) => { if (el && via === 'key') this.reveal(el); },
     });
+    // The pointer moves focus where it rests; only keys scroll Home.
+    this.container.addEventListener('nav:hover', (event: Event) => {
+      const el = event.target as HTMLElement;
+      if (el.hasAttribute('data-focusable') && this.container.contains(el)) this.nav.focus(el, 'pointer');
+    });
+    this.container.addEventListener('nav:unhover', (event: Event) => {
+      if (event.target === this.nav.focused) this.focusScope.conceal();
+    });
     this.container.setAttribute('data-self-activate', '');
     this.container.addEventListener('click', (event: MouseEvent) => {
+      if (this.swallowClick) {
+        this.swallowClick = false;
+        return;
+      }
       const control = (event.target as HTMLElement).closest<HTMLElement>('[data-focusable]');
       if (!control) return;
       this.nav.focus(control, 'pointer');
       this.activate(control);
     });
+    this.container.addEventListener('mousedown', (event: MouseEvent) => {
+      const control = (event.target as HTMLElement).closest<HTMLElement>('[data-long-press]');
+      this.cancelPointerHold();
+      this.swallowClick = false;
+      if (!control) return;
+      this.pointerHold = setTimeout(() => {
+        this.pointerHold = null;
+        this.swallowClick = true;
+        this.nav.focus(control, 'pointer');
+        this.promptRemove(control);
+      }, CONFIG.NAVIGATION.LONG_PRESS_MS);
+    });
+    this.container.addEventListener('mouseup', () => this.cancelPointerHold());
     // Now-playing titles move with the clock.
     onClockTick(() => this.refresh());
   }
@@ -367,9 +378,41 @@ export class HomeView {
       this.options.onBack();
     } else if (action === 'select' && focused) {
       this.activate(focused);
+    } else if (action === 'long_select' && focused) {
+      this.promptRemove(focused);
+    } else if (action === 'right' && focused && this.atRowEdge(focused, 'end')) {
+      // Right at a row's end stays put rather than jumping to another row.
+    } else if (action === 'left' && focused && this.atRowEdge(focused, 'start')) {
+      // Left at a row's start opens the side menu, never another row.
+      this.options.onRevealTabBar('left');
+      this.rewind('left');
     } else if (action === 'up' || action === 'down' || action === 'left' || action === 'right') {
-      if (!this.nav.move(action) && action === 'up') this.options.onRevealTabBar();
+      if (!this.nav.move(action) && (action === 'up' || action === 'left')) {
+        this.options.onRevealTabBar(action);
+        this.rewind(action);
+      }
     }
+  }
+
+  // Leaving for the tab bar rewinds only the way it left: Up scrolls Home
+  // back to its top, Left scrolls every row back to its first tile. Focus
+  // stays on the tile it left from.
+  private rewind(dir: 'up' | 'left'): void {
+    if (dir === 'up') {
+      const view = this.container.querySelector<HTMLElement>('.home-view');
+      if (view) view.scrollTop = 0;
+      return;
+    }
+    const tracks = this.container.querySelectorAll<HTMLElement>('.home-rail-track');
+    for (let i = 0; i < tracks.length; i++) tracks[i].scrollLeft = 0;
+    this.nav.forgetLastFocused();
+  }
+
+  private atRowEdge(el: HTMLElement, edge: 'start' | 'end'): boolean {
+    const row = el.closest('.home-rail-track');
+    if (!row) return false;
+    const items = row.querySelectorAll('[data-focusable]');
+    return items[edge === 'start' ? 0 : items.length - 1] === el;
   }
 
   private render(): void {
@@ -380,14 +423,9 @@ export class HomeView {
       <div class="home-view">
         ${this.posterRail('resume', t('catalog.continueWatching'), model.resume,
           entry => this.resumeTile(entry))}
+        ${this.channelRail('recent', t('channel.recentlyWatched'), model.recent)}
         ${this.posterRail('watchlist', t('common.watchlist'), model.watchlist,
           entry => this.titleTile(watchlistTitle(entry), 'watchlist'))}
-        ${this.channelRail('recent', t('channel.recentlyWatched'), model.recent)}
-        <section class="home-row" data-home-row="shortcuts">
-          <div class="home-shortcuts" data-nav-container data-nav-enter="last-focused">
-            ${model.shortcuts.map(tile => this.shortcut(tile))}
-          </div>
-        </section>
         ${this.channelRail('favorites', t('channel.favorites'), model.favorites)}
         ${this.posterRail('top', t('home.topRatedMovies'), model.topRated,
           item => this.titleTile({ kind: 'vod', item }, 'top'))}
@@ -422,122 +460,69 @@ export class HomeView {
     return this.section(row, title, html`${rail.items.map(tile)}${rail.more ? this.posterSeeAll(row) : ''}`);
   }
 
-  private shortcut(tile: HomeShortcutTile): Safe {
-    return html`
-      <button class="home-shortcut" type="button" data-focusable
-              data-key="sc:${tile.id}" data-home-shortcut="${tile.id}">
-        <span class="home-shortcut-icon">${raw(SHORTCUT_ICONS[tile.id])}</span>
-        <span class="home-shortcut-label">${t(SHORTCUT_LABELS[tile.id])}</span>
-        ${tile.count ? html`<span class="home-shortcut-count">${String(tile.count)}</span>` : ''}
-      </button>
-    `;
-  }
-
-  // The Live grid's own tile, so a channel looks and focuses the same here.
+  // The shared channel card, as in Live and Search.
   private channelTile(item: HomeChannelItem, row: HomeRow): Safe {
     const { channel, channelIndex, now: program } = item;
-    const favorite = row !== 'favorites' && StorageService.getFavorites().includes(channelKey(channel));
-    return html`
-      <div class="channel-item channel-tile" data-focusable
-           data-key="${row}:${channelKey(channel)}" data-home-action="watch" data-channel-index="${channelIndex}">
-        <div class="channel-tile-art">
-          <div class="channel-logo-wrap">${this.logo(channel)}</div>
-          <div class="channel-number">${channelIndex + 1}</div>
-        </div>
-        <div class="channel-info">
-          <div class="channel-name">${raw(channelLockBadge(channel))}${
-            favorite ? raw(favoriteIcon(true)) : ''}${channel.name}</div>
-          ${program ? html`<div class="channel-now">${program.title}</div>` : ''}
-        </div>
-      </div>
-    `;
+    return channelCard({
+      key: `${row}:${channelKey(channel)}`,
+      channel,
+      subtitle: program?.title,
+      favorite: row !== 'favorites' && StorageService.getFavorites().includes(channelKey(channel)),
+      playing: channelIndex === this.options.sources.playingIndex(),
+      attrs: html`data-home-action="watch" data-channel-index="${channelIndex}" ${
+        raw(row === 'recent' ? 'data-long-press' : '')}`,
+    });
   }
 
-  // A reminder is a Live tile for its channel, titled by the program.
+  // A reminder is a channel card for its channel, titled by the program.
   private reminderTile(reminder: Reminder, now: number): Safe {
     const start = new Date(reminder.startMs);
     const day = formatDayLabel(start);
     const today = formatDayLabel(new Date(now)).date === day.date;
     const resolved = PlaylistService.resolveChannelKey(reminder.channelKey);
     const when = today ? formatTime(start) : `${day.weekday} ${formatTime(start)}`;
-    return html`
-      <div class="channel-item channel-tile" data-focusable
-           data-key="reminders:${reminder.channelKey}:${String(reminder.startMs)}"
-           data-home-action="guide" data-channel-index="${resolved ? resolved.channelIndex : -1}">
-        <div class="channel-tile-art">
-          <div class="channel-logo-wrap">${resolved
-            ? this.logo(resolved.channel)
-            : html`<span class="channel-logo-placeholder">${reminder.channelName.charAt(0)}</span>`}</div>
-          <div class="channel-tile-status"><span class="home-reminder-icon">${raw(bellIcon(true))}</span></div>
-        </div>
-        <div class="channel-info">
-          <div class="channel-name">${reminder.title}</div>
-          <div class="channel-now">${when} · ${reminder.channelName}</div>
-        </div>
-      </div>
-    `;
+    return channelCard({
+      key: `reminders:${reminder.channelKey}:${String(reminder.startMs)}`,
+      channel: resolved ? resolved.channel : null,
+      title: reminder.title,
+      subtitle: `${when} · ${reminder.channelName}`,
+      status: html`<span class="home-reminder-icon">${raw(bellIcon(true))}</span>`,
+      attrs: html`data-home-action="guide" data-channel-index="${resolved ? resolved.channelIndex : -1}"`,
+    });
   }
 
   private channelSeeAll(row: HomeRow): Safe {
-    return html`
-      <div class="channel-item channel-tile home-see-all" data-focusable
-           data-key="${row}:all" data-home-see-all="${row}">
-        <div class="channel-tile-art">${raw(SEE_ALL_ICON)}</div>
-        <div class="channel-info"><div class="channel-name">${t('catalog.seeAll')}</div></div>
-      </div>
-    `;
+    return channelSeeAllCard(`${row}:all`, html`data-home-see-all="${row}"`);
   }
 
-  // The Movies section's own poster tile.
+  // The shared poster card, as in Movies, Series, and Search.
   private resumeTile(entry: ResumeEntry): Safe {
-    const percent = entry.duration > 0
-      ? Math.max(2, Math.min(100, Math.round(entry.position / entry.duration * 100))) : 0;
-    return html`
-      <div class="catalog-tile" data-focusable data-key="resume:${entry.kind}:${entry.itemId}"
-           data-resume-kind="${entry.kind}" data-resume-id="${entry.itemId}">
-        <div class="catalog-poster-wrap">
-          ${this.poster(entry.name, entry.poster)}
-          ${percent ? html`<div class="catalog-progress"><div class="catalog-progress-fill" style="width:${percent}%"></div></div>` : ''}
-        </div>
-        <div class="catalog-tile-name">${entry.name}</div>
-      </div>
-    `;
+    return posterCard({
+      key: `resume:${entry.kind}:${entry.itemId}`,
+      name: entry.name,
+      poster: entry.poster,
+      art: entry.kind === 'vod' ? 'movie' : 'series',
+      lock: resumeLockBadge(entry),
+      progress: entry,
+      attrs: html`data-resume-kind="${entry.kind}" data-resume-id="${entry.itemId}" data-long-press`,
+    });
   }
 
   private titleTile(title: HomeTitle, row: HomeRow): Safe {
     const id = titleId(title);
-    const { name, poster } = title.item;
-    return html`
-      <div class="catalog-tile" data-focusable data-key="${row}:${title.kind}:${id}"
-           data-title-kind="${title.kind}" data-title-id="${id}">
-        <div class="catalog-poster-wrap">${this.poster(name, poster)}</div>
-        <div class="catalog-tile-name">${name}</div>
-      </div>
-    `;
+    return posterCard({
+      key: `${row}:${title.kind}:${id}`,
+      name: title.item.name,
+      poster: title.item.poster,
+      art: title.kind === 'vod' ? 'movie' : 'series',
+      lock: title.kind === 'vod' ? vodLockBadge(title.item) : seriesLockBadge(title.item),
+      attrs: html`data-title-kind="${title.kind}" data-title-id="${id}" ${
+        raw(row === 'watchlist' ? 'data-long-press' : '')}`,
+    });
   }
 
-  // The Movies section's See all tile.
   private posterSeeAll(row: HomeRow): Safe {
-    return html`
-      <div class="catalog-tile catalog-see-all" data-focusable data-key="${row}:all" data-home-see-all="${row}">
-        <div class="catalog-poster-wrap catalog-see-all-card">
-          ${raw(SEE_ALL_ICON)}
-          <div class="catalog-see-all-label">${t('catalog.seeAll')}</div>
-        </div>
-      </div>
-    `;
-  }
-
-  private poster(name: string, poster: string): Safe {
-    return poster
-      ? html`<img class="catalog-poster" src="${poster}" alt="" loading="lazy" decoding="async" onerror="this.style.display='none'">`
-      : html`<div class="catalog-poster catalog-poster-empty">${name.charAt(0)}</div>`;
-  }
-
-  private logo(channel: Channel): Safe {
-    return channel.logo
-      ? html`<img class="channel-logo" src="${channel.logo}" alt="" loading="lazy" onerror="this.style.display='none'">`
-      : html`<span class="channel-logo-placeholder">${channel.name.charAt(0)}</span>`;
+    return posterSeeAllCard({ key: `${row}:all`, attrs: html`data-home-see-all="${row}"` });
   }
 
   // Bring the focused tile's whole row into view vertically, and the tile
@@ -547,7 +532,8 @@ export class HomeView {
     const view = this.container.querySelector<HTMLElement>('.home-view');
     const row = el.closest<HTMLElement>('[data-home-row]');
     if (view && row) {
-      const top = row.offsetTop - REVEAL_MARGIN_Y;
+      // Clear of the search strip the view scrolls under, where it does.
+      const top = row.offsetTop - REVEAL_MARGIN_Y - scrollInsetTop(view);
       const bottom = row.offsetTop + row.offsetHeight + REVEAL_MARGIN_Y;
       if (!row.previousElementSibling || top < view.scrollTop) {
         view.scrollTop = row.previousElementSibling ? Math.max(0, top) : 0;
@@ -557,19 +543,18 @@ export class HomeView {
     }
     const track = el.closest<HTMLElement>('.home-rail-track');
     if (track) {
-      const left = el.offsetLeft - REVEAL_MARGIN_X;
-      const right = el.offsetLeft + el.offsetWidth + REVEAL_MARGIN_X;
-      if (left < track.scrollLeft) track.scrollLeft = Math.max(0, left);
-      else if (right > track.scrollLeft + track.clientWidth) track.scrollLeft = right - track.clientWidth;
+      // Screen-relative, so it holds in either reading direction: scrollLeft
+      // moves content the same physical way in every engine.
+      const box = el.getBoundingClientRect();
+      const portLeft = track.getBoundingClientRect().left + track.clientLeft;
+      const left = box.left - REVEAL_MARGIN_X - portLeft;
+      const right = box.right + REVEAL_MARGIN_X - portLeft;
+      if (left < 0) track.scrollLeft += left;
+      else if (right > track.clientWidth) track.scrollLeft += right - track.clientWidth;
     }
   }
 
   private activate(control: HTMLElement): void {
-    const shortcut = control.dataset.homeShortcut as HomeShortcut | undefined;
-    if (shortcut) {
-      this.options.onShortcut(shortcut);
-      return;
-    }
     const seeAll = control.dataset.homeSeeAll as HomeRow | undefined;
     if (seeAll && this.model) {
       this.options.onSeeAll(seeAll, this.model);
@@ -600,6 +585,67 @@ export class HomeView {
       ? this.model?.resume.items.find(e => e.itemId === resumeId && e.kind === control.dataset.resumeKind)
       : null;
     if (entry) this.options.onOpenResume(entry);
+  }
+
+  private cancelPointerHold(): void {
+    if (this.pointerHold) clearTimeout(this.pointerHold);
+    this.pointerHold = null;
+  }
+
+  private removal(control: HTMLElement): { item: HomeRemoval; name: string } | null {
+    const model = this.model;
+    const row = control.closest<HTMLElement>('[data-home-row]')?.dataset.homeRow;
+    if (!model || !control.hasAttribute('data-long-press')) return null;
+    if (row === 'recent') {
+      const index = Number(control.dataset.channelIndex);
+      const found = model.recent.items.find(item => item.channelIndex === index);
+      return found ? { item: { row, channel: found.channel }, name: found.channel.name } : null;
+    }
+    if (row === 'watchlist') {
+      const kind = control.dataset.titleKind;
+      const entry = model.watchlist.items.find(e => e.kind === kind && e.itemId === control.dataset.titleId);
+      return entry ? { item: { row, entry }, name: entry.name } : null;
+    }
+    if (row === 'resume') {
+      const entry = model.resume.items.find(e =>
+        e.kind === control.dataset.resumeKind && e.itemId === control.dataset.resumeId);
+      return entry ? { item: { row, entry }, name: entry.name } : null;
+    }
+    return null;
+  }
+
+  // Holding OK on a Continue watching, Recently watched, or Watchlist tile
+  // shows a tooltip that takes it off that list.
+  private promptRemove(control: HTMLElement): void {
+    const found = this.removal(control);
+    if (!found) return;
+    const { item } = found;
+    const labels = REMOVE_LABELS[item.row];
+    this.removeTip.show({
+      anchor: control,
+      label: t(labels.action),
+      onRemove: () => {
+        // Focus lands on the tile beside it, or on the next row when the
+        // row empties and goes.
+        const next = this.neighborKey(control);
+        this.options.sources.remove(item);
+        showToast(t(labels.done));
+        this.render();
+        this.refocus(next);
+      },
+      onClose: () => this.refocus(control.dataset.key ?? null),
+    });
+  }
+
+  private neighborKey(control: HTMLElement): string | null {
+    const track = control.closest('.home-rail-track');
+    const tiles = track ? Array.from(track.querySelectorAll<HTMLElement>('[data-long-press]')) : [];
+    const at = tiles.indexOf(control);
+    const beside = tiles[at + 1] ?? tiles[at - 1];
+    if (beside) return beside.dataset.key ?? null;
+    const row = control.closest('[data-home-row]');
+    const nextRow = row?.nextElementSibling ?? row?.previousElementSibling;
+    return nextRow?.querySelector<HTMLElement>('[data-focusable]')?.dataset.key ?? null;
   }
 
   private refocus(key: string | null): void {

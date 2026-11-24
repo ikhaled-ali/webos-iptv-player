@@ -2,6 +2,7 @@ import { CONFIG } from '../config';
 import { withInstantScroll } from '../utils/dom';
 import { Focus, Tier, type FocusScope } from './focus-scope';
 import { InputMode } from './input-mode';
+import { physicalScrollLeft, setPhysicalScrollLeft } from '../utils/scroll-axis';
 
 interface Edge {
   track: HTMLElement;
@@ -91,7 +92,8 @@ export function installEdgeScroll(
     if (point.y < top || point.y >= bottom) return null;
     const zone = Math.min(N.EDGE_SCROLL_ZONE_PX, (right - left) / 3);
     const direction = point.x < left + zone ? -1 : point.x >= right - zone ? 1 : 0;
-    if (!direction || (!atEnd && (direction < 0 ? track.scrollLeft <= 0 : track.scrollLeft >= max - 1))) return null;
+    if (!direction || (!atEnd && (direction < 0
+      ? physicalScrollLeft(track) <= 0 : physicalScrollLeft(track) >= max - 1))) return null;
     return { track, owner, direction };
   };
 
@@ -109,7 +111,7 @@ export function installEdgeScroll(
       // A rAF timestamp may precede the clock read that started the run.
       const elapsed = Math.max(0, Math.min(now - lastFrame, 50));
       const track = edge.track;
-      const before = track.scrollLeft;
+      const before = physicalScrollLeft(track);
       const max = track.scrollWidth - track.clientWidth;
       if (edge.direction < 0 ? before <= 0 : before >= max - 1) {
         const end = edge;
@@ -123,8 +125,8 @@ export function installEdgeScroll(
         max,
         before + edge.direction * edgeScrollSpeed(now - enteredAt - N.EDGE_SCROLL_DWELL_MS) * elapsed / 1000,
       ));
-      withInstantScroll([track], () => { track.scrollLeft = offset; });
-      if (track.scrollLeft !== before) {
+      withInstantScroll([track], () => { setPhysicalScrollLeft(track, offset); });
+      if (physicalScrollLeft(track) !== before) {
         if (!handed && Focus.owner() !== edge.owner) {
           handed = true;
           track.dispatchEvent(new CustomEvent('nav:edge-scroll', { bubbles: true }));

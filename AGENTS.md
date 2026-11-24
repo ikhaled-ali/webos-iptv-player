@@ -3,7 +3,8 @@
 IPTV player for LG webOS TVs. Vanilla TypeScript (no UI framework), bundled
 with esbuild and packaged as a webOS `.ipk`. A separate bundled webOS JS
 service (`bundled-service/`) provides LAN M3U uploads over Luna + HTTP. App
-id `com.ikhaled.iptv`; targets webOS 4+ (Chromium 53).
+id `com.ikhaled.iptv`; targets webOS 23+ (Chromium 94). See
+`docs/webos-23-baseline.md` for what the older-engine support removed.
 
 ## Skills
 
@@ -22,8 +23,10 @@ Procedural workflows live in `.agents/skills/` (open Agent Skills format;
 
 ## Key rules
 
-- Modern *APIs* silently break webOS 4. `npm run lint` and the build gate
-  must pass; never change the esbuild `chrome53` target without reason.
+- APIs newer than Chromium 94 silently break webOS 23. `npm run lint` and
+  the build gate must pass; the floor is `MIN_CHROME` in
+  `scripts/compat-gate.mjs` (esbuild's target and the API denylist follow
+  it, `browserslist` in `package.json` must match it).
 - Render with `morph()` + the `html` template — never `innerHTML =`.
   Interpolate untrusted M3U/XMLTV text only through `html`.
 - Every bug fix ships with a regression test that fails without the fix.
@@ -31,16 +34,11 @@ Procedural workflows live in `.agents/skills/` (open Agent Skills format;
   failure without it; no event beats a noisy one.
 - Tests and docs use synthetic identifiers only.
 - Never hand-edit the version in `appinfo.json` (it syncs from
-  `package.json`), and never hand-edit the generated
-  `css/legacy-webos-base.css`.
-- CSS: never put a modern selector (e.g. `:focus-within`) in the same rule
-  as a legacy one — Chromium 53 drops the whole rule (stylelint
-  `iptv/no-mixed-legacy-selector` enforces it). Every legacy fallback
-  sits under a top-level `@supports not (...)` or an `html.q-*` class
-  that `src/engine-quirks.ts` measures at boot; every polyfill is
-  feature-detected.
-- Chromium 53 treats a `scrollIntoView` options object as `true`;
-  `src/polyfills.ts` fixes it, so never bypass or reimplement that call.
+  `package.json`).
+- CSS: never put a selector newer than Chromium 94 (e.g. `:has()`) in the
+  same rule as other selectors — the engine drops the whole rule (stylelint
+  `iptv/no-mixed-legacy-selector` still enforces the stricter Chromium 53
+  list). Any fallback for a post-94 feature must be feature-detected.
 - Only the surface that owns the keys shows a focus ring. Every surface
   owns its focus through a scope on the `Focus` owner stack
   (`src/navigation/focus-scope.ts`): the scope tracks its focused
@@ -71,7 +69,7 @@ Procedural workflows live in `.agents/skills/` (open Agent Skills format;
 ```bash
 npm install                    # setup
 npm run typecheck              # tsc --noEmit (strict)
-npm run lint                   # stylelint + eslint Chromium 53 compat gate
+npm run lint                   # stylelint + eslint Chromium 94 compat gate
 npm run build                  # typecheck + esbuild bundle into dist/
 npm run preview                # build + serve dist/ at http://localhost:3000
 npm test                       # vitest run (unit/integration)

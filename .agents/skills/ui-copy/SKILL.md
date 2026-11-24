@@ -133,12 +133,14 @@ a new term after review, add a row here.
 | Name sort direction | A–Z / Z–A | A–Z / Z–A |
 | Date added / Year sort direction | Newest / Oldest | 最新 / 最早 |
 | Rating sort direction | Highest / Lowest | 最高 / 最低 |
+| Catalog panel row for the rails page | Featured | 精选 |
 
 Rejected: 片单 (watchlist), 正在播放 for NOW, 节目单 (guide),
 全局频道 / "Global" for all channels, "programme",
 Ascending / Descending / 升序 / 降序 / Asc / Desc and 最旧 (sort
 direction),
-"Exception" / 例外 (set separately), "Mixed" / 混合 (partly locked).
+"Exception" / 例外 (set separately), "Mixed" / 混合 (partly locked),
+"Default" / 推荐 / Empfohlen / Рекомендуемое (featured page).
 
 ## Checks
 

@@ -45,8 +45,8 @@ function sources(overrides: Partial<HomeSources> = {}): HomeSources {
     loadCatalog: () => undefined,
     reminders: () => [reminder(5000)],
     hasXtream: () => true,
-    hasRecordings: () => false,
-    channelCount: () => 2,
+    playingIndex: () => -1,
+    remove: () => undefined,
     ...overrides,
   };
 }
@@ -59,26 +59,9 @@ describe('buildHomeModel', () => {
     expect(model.recent.items[1].now).toBeNull();
   });
 
-  it('shows Movies and Series shortcuts and Continue watching only with an Xtream account', () => {
-    const xtream = buildHomeModel(sources(), 0);
-    expect(xtream.shortcuts.map(s => s.id)).toEqual(
-      ['live', 'epg', 'movies', 'series', 'reminders', 'search', 'settings']);
-    expect(xtream.resume.items).toHaveLength(1);
-
-    const m3u = buildHomeModel(sources({ hasXtream: () => false }), 0);
-    expect(m3u.shortcuts.map(s => s.id)).toEqual(['live', 'epg', 'reminders', 'search', 'settings']);
-    expect(m3u.resume.items).toEqual([]);
-  });
-
-  it('shows Recordings only while there are recordings', () => {
-    const model = buildHomeModel(sources({ hasRecordings: () => true }), 0);
-    expect(model.shortcuts.map(s => s.id)).toContain('recordings');
-  });
-
-  it('counts channels and reminders on their shortcuts', () => {
-    const model = buildHomeModel(sources(), 0);
-    expect(model.shortcuts.find(s => s.id === 'live')?.count).toBe(2);
-    expect(model.shortcuts.find(s => s.id === 'reminders')?.count).toBe(1);
+  it('shows Continue watching only with an Xtream account', () => {
+    expect(buildHomeModel(sources(), 0).resume.items).toHaveLength(1);
+    expect(buildHomeModel(sources({ hasXtream: () => false }), 0).resume.items).toEqual([]);
   });
 
   it('shows the Watchlist only with an Xtream account', () => {

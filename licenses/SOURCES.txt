@@ -29,6 +29,14 @@ qrcode-generator.txt
   The npm 2.0.4 distribution provides the copyright and MIT identifier in
   dist/qrcode.mjs, but omits a standalone license file.
 
+noto-kufi-arabic.txt
+  Noto Kufi Arabic v2.110, OFL.txt from the release archive:
+  https://github.com/notofonts/arabic/releases/download/NotoKufiArabic-v2.110/NotoKufiArabic-v2.110.zip
+  Archive SHA-256: 34390882c196f032811f2a3db8982c1e839f69aae3e4c2c1fdd63203150690df
+  assets/fonts/NotoKufiArabic-*.woff are the unhinted Light, Regular,
+  Medium, SemiBold, and Bold TTFs, subset with fontTools to the Arabic
+  blocks (all layout features kept) and converted to WOFF.
+
 twemoji.txt
   Twemoji v17.0.3:
   https://raw.githubusercontent.com/jdecked/twemoji/b6b55fef1e8636b540a6d016a4729ca8cdf2e60b/LICENSE-GRAPHICS

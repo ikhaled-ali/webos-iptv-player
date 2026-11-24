@@ -7,23 +7,14 @@ import {
   type PluralMessageKey,
   type TextMessageKey,
 } from './en';
-import { DE_MESSAGES } from './de';
-import { ES_MESSAGES } from './es';
-import { FR_MESSAGES } from './fr';
-import { IT_MESSAGES } from './it';
-import { PL_MESSAGES } from './pl';
-import { PT_BR_MESSAGES } from './pt-BR';
+import { BUNDLED_CATALOGS } from './catalogs';
 import { pseudoLocalize } from './pseudo';
-import { RU_MESSAGES } from './ru';
-import { TR_MESSAGES } from './tr';
-import { UK_MESSAGES } from './uk';
-import { ZH_CN_MESSAGES } from './zh-CN';
+import { applyStylesheetDirection } from '../utils/stylesheet-direction';
 
 export type { MessageKey, PluralMessageKey, TextMessageKey } from './en';
 type Messages = Readonly<MessageCatalog>;
 type Params = Record<string, string | number>;
 type LocaleDefinition = {
-  messages: Messages;
   displayName: string;
   systemExact: readonly string[];
   systemPrefixes: readonly string[];
@@ -31,67 +22,61 @@ type LocaleDefinition = {
 
 const LOCALES = {
   en: {
-    messages: EN_MESSAGES,
     displayName: 'English',
     systemExact: [],
     systemPrefixes: [],
   },
+  ar: {
+    displayName: 'العربية',
+    systemExact: [],
+    systemPrefixes: ['ar'],
+  },
   de: {
-    messages: DE_MESSAGES,
     displayName: 'Deutsch',
     systemExact: [],
     systemPrefixes: ['de'],
   },
   es: {
-    messages: ES_MESSAGES,
     displayName: 'Español',
     systemExact: [],
     systemPrefixes: ['es'],
   },
   fr: {
-    messages: FR_MESSAGES,
     displayName: 'Français',
     systemExact: [],
     systemPrefixes: ['fr'],
   },
   it: {
-    messages: IT_MESSAGES,
     displayName: 'Italiano',
     systemExact: [],
     systemPrefixes: ['it'],
   },
   pl: {
-    messages: PL_MESSAGES,
     displayName: 'Polski',
     systemExact: [],
     systemPrefixes: ['pl'],
   },
   'pt-BR': {
-    messages: PT_BR_MESSAGES,
     displayName: 'Português (Brasil)',
     systemExact: [],
     systemPrefixes: ['pt'],
   },
   ru: {
-    messages: RU_MESSAGES,
     displayName: 'Русский',
     systemExact: [],
     systemPrefixes: ['ru'],
   },
   tr: {
-    messages: TR_MESSAGES,
     displayName: 'Türkçe',
     systemExact: [],
     systemPrefixes: ['tr'],
   },
   uk: {
-    messages: UK_MESSAGES,
     displayName: 'Українська',
     systemExact: [],
     systemPrefixes: ['uk'],
   },
   'zh-CN': {
-    messages: ZH_CN_MESSAGES,
     displayName: '简体中文',
     systemExact: ['zh'],
     systemPrefixes: ['zh-cn', 'zh-sg', 'zh-hans'],
@@ -114,6 +99,52 @@ export function localeOptions(): { value: SupportedLocale; label: string }[] {
 
 let currentLocale: SupportedLocale = DEFAULT_LOCALE;
 
+// Catalogs that arrived through their locale script (app build only).
+const LOADED_CATALOGS_KEY = '__IPTV_LOCALES__';
+const pendingLoads = new Map<SupportedLocale, Promise<boolean>>();
+
+function catalogFor(locale: SupportedLocale): Messages | null {
+  if (locale === DEFAULT_LOCALE) return EN_MESSAGES;
+  const bundled = BUNDLED_CATALOGS[locale];
+  if (bundled) return bundled;
+  const loaded = typeof self === 'undefined'
+    ? undefined
+    : (self as unknown as Record<string, Record<string, Messages> | undefined>)[LOADED_CATALOGS_KEY];
+  return loaded?.[locale] ?? null;
+}
+
+function loadLocaleScript(locale: SupportedLocale): Promise<boolean> {
+  const pending = pendingLoads.get(locale);
+  if (pending) return pending;
+  const load = new Promise<boolean>((resolve) => {
+    if (typeof document === 'undefined') {
+      resolve(false);
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = `js/locales/${locale}.js`;
+    script.onload = () => resolve(catalogFor(locale) !== null);
+    script.onerror = () => resolve(false);
+    document.head.appendChild(script);
+  }).then((loaded) => {
+    // A failed load may be retried later (e.g. from Settings).
+    if (!loaded) pendingLoads.delete(locale);
+    return loaded;
+  });
+  pendingLoads.set(locale, load);
+  return load;
+}
+
+/**
+ * Makes `locale`'s catalog available, loading its script when it is not
+ * bundled. Resolves to the locale to apply: `locale`, or English when its
+ * catalog could not be loaded.
+ */
+export async function loadLocale(locale: SupportedLocale): Promise<SupportedLocale> {
+  if (catalogFor(locale) || await loadLocaleScript(locale)) return locale;
+  return DEFAULT_LOCALE;
+}
+
 function pseudoLocaleRequested(): boolean {
   return typeof location !== 'undefined' && /(?:^|[?&])pseudo=1(?:&|$)/.test(location.search);
 }
@@ -135,16 +166,31 @@ export function resolveLocale(
   return DEFAULT_LOCALE;
 }
 
+const RTL_LOCALES: readonly SupportedLocale[] = ['ar'];
+
+export function isRtlLocale(locale: SupportedLocale = currentLocale): boolean {
+  return RTL_LOCALES.indexOf(locale) >= 0;
+}
+
+// Arabic shows Western digits (an approved product choice), so number
+// formatting pins the Latin numbering system.
+function intlLocale(locale: SupportedLocale): string {
+  return locale === 'ar' ? 'ar-u-nu-latn' : locale;
+}
+
 export function setLocale(locale: SupportedLocale): void {
   currentLocale = locale;
   if (typeof document !== 'undefined') {
-    document.documentElement.lang =
-      __ENABLE_PSEUDO_LOCALE__ && pseudoLocaleRequested() ? 'en-XA' : locale;
+    const pseudo = __ENABLE_PSEUDO_LOCALE__ && pseudoLocaleRequested();
+    document.documentElement.lang = pseudo ? 'en-XA' : locale;
+    const rtl = !pseudo && isRtlLocale(locale);
+    document.documentElement.dir = rtl ? 'rtl' : 'ltr';
+    applyStylesheetDirection(rtl);
   }
 }
 
-export function initLocale(preference: LocalePreference): void {
-  setLocale(resolveLocale(preference));
+export async function initLocale(preference: LocalePreference): Promise<void> {
+  setLocale(await loadLocale(resolveLocale(preference)));
 }
 
 export function getLocale(): SupportedLocale {
@@ -158,11 +204,11 @@ export function formatNumber(
   const locale = __ENABLE_PSEUDO_LOCALE__ && pseudoLocaleRequested()
     ? DEFAULT_LOCALE
     : currentLocale;
-  return new Intl.NumberFormat(locale, options).format(value);
+  return new Intl.NumberFormat(intlLocale(locale), options).format(value);
 }
 
 export function t(key: TextMessageKey, params?: Params): string {
-  let message = LOCALES[currentLocale].messages[key] as string;
+  let message = (catalogFor(currentLocale) ?? EN_MESSAGES)[key] as string;
   if (__ENABLE_PSEUDO_LOCALE__ && pseudoLocaleRequested()) {
     message = pseudoLocalize(EN_MESSAGES[key]);
   }
@@ -173,7 +219,7 @@ export function t(key: TextMessageKey, params?: Params): string {
 export function tp(key: PluralMessageKey, count: number, params?: Params): string {
   const pseudo = __ENABLE_PSEUDO_LOCALE__ && pseudoLocaleRequested();
   const locale = pseudo ? DEFAULT_LOCALE : currentLocale;
-  const forms = LOCALES[locale].messages[key] as PluralMessage;
+  const forms = (catalogFor(locale) ?? EN_MESSAGES)[key] as PluralMessage;
   const category = new Intl.PluralRules(locale).select(count);
   const message = forms[category] ?? forms.other;
   return interpolate(pseudo ? pseudoLocalize(message) : message, { ...params, count });
@@ -196,8 +242,11 @@ export function validateTranslations(): string[] {
   const errors: string[] = [];
   const keys = Object.keys(EN_MESSAGES) as MessageKey[];
   for (const locale of Object.keys(LOCALES) as SupportedLocale[]) {
-    const definition: LocaleDefinition = LOCALES[locale];
-    const messages = definition.messages;
+    const messages = catalogFor(locale);
+    if (!messages) {
+      errors.push(`${locale} catalog is not loaded`);
+      continue;
+    }
     for (const key of keys) {
       const source = EN_MESSAGES[key];
       const value = messages[key];

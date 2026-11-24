@@ -18,7 +18,8 @@ import { groupDisplayLabel } from '../utils/channel';
 import { formatPosition } from '../utils/time';
 import { getLocale, t, type SupportedLocale } from '../i18n';
 import { groupIcon } from './group-icon';
-import { CHEVRON_LEFT_ICON } from './icons';
+import { LIVE_CATEGORIES_ICON, SEARCH_ICON, chevronLeftIcon } from './icons';
+import { artPlaceholder } from './item-cards';
 import { channelLockBadge, liveGroupLockBadge } from './parental-badge';
 import { showToast } from './toast';
 import { VirtualList } from '../utils/virtual-list';
@@ -45,12 +46,6 @@ type SidebarGroup = {
 };
 
 const AUTO_HIDE_MS = 5000;
-const GROUP_PANEL_MIN_WIDTH = 280;
-const CHANNEL_PANEL_WIDTH = 420;
-const POINTER_MARGIN = 40;
-const GROUP_DWELL_EDGE = 48;
-const GROUP_DWELL_MS = 500;
-const POINTER_EXIT_DWELL_MS = 500;
 // Row strides mirror the fixed row geometry in css/player.css: .sidebar-ch-item
 // is 84px plus a 4px gap, .sidebar-group-item is 64px.
 const CHANNEL_ROW_STRIDE = 88;
@@ -100,10 +95,6 @@ export class Sidebar {
   private scrollFrame: number | null = null;
   private groupScrollFrame: number | null = null;
   private readonly scrollGuard = new VirtualScrollGuard();
-  private groupDwellTimer: ReturnType<typeof setTimeout> | null = null;
-  private pointerAtGroupEdge = false;
-  private pointerExitTimer: ReturnType<typeof setTimeout> | null = null;
-  private pointerExitPending = false;
   private failedLogos = new Set<string>();
   private channelSource: SidebarSource | null = null;
   private channelSearchResults: Channel[] | null = null;
@@ -157,22 +148,11 @@ export class Sidebar {
       revealOnHover: (key) => key.startsWith('tab:'),
       concealOnLeave: true,
     });
-    // The D-pad taking over cancels what the pointer had started.
-    InputMode.onChange((mode) => {
-      if (mode === 'keys') this.dropPointerIntent();
-    });
     this.bindEvents();
   }
 
   get visible(): boolean {
     return this.isVisible;
-  }
-
-  get pointerDismissX(): number {
-    const groupWidth = this.el?.querySelector<HTMLElement>('.sidebar-group-panel')
-      ?.getBoundingClientRect().width || GROUP_PANEL_MIN_WIDTH;
-    return (this.groupsExpanded ? groupWidth + CHANNEL_PANEL_WIDTH : CHANNEL_PANEL_WIDTH)
-      + POINTER_MARGIN;
   }
 
   refresh(): void {
@@ -185,42 +165,9 @@ export class Sidebar {
     this.resetTimer();
   }
 
-  // `overTabs`: the tab row's own edge belongs to edge scrolling.
-  handlePointerMove(clientX: number, overSidebar: boolean, overTabs = false): boolean {
-    if (!this.isVisible || this.keyboardOn) {
-      this.pointerAtGroupEdge = false;
-      this.clearGroupDwell();
-      return false;
-    }
-
-    if (overSidebar) this.resetTimer();
-
-    this.pointerAtGroupEdge = clientX <= GROUP_DWELL_EDGE && !overTabs;
-    if (!this.groupsExpanded && this.pointerAtGroupEdge && !this.opening) {
-      this.startGroupDwell();
-    } else {
-      this.clearGroupDwell();
-    }
-
-    if (this.groupsExpanded && !overSidebar && clientX > this.pointerDismissX) {
-      this.collapseGroups(true);
-      // The hovered row may have been re-rendered away, so no mouseout
-      // reached the panel to conceal its ring.
-      this.focusScope.conceal();
-      this.pointerExitPending = true;
-      this.pointerExitTimer = setTimeout(() => {
-        this.pointerExitTimer = null;
-        if (this.pointerExitPending) this.hide();
-      }, POINTER_EXIT_DWELL_MS);
-      return true;
-    }
-
-    if (this.pointerExitPending) {
-      if (clientX <= CHANNEL_PANEL_WIDTH) this.clearPointerExit();
-      return true;
-    }
-
-    return false;
+  // A moving pointer only keeps the panel up; it never opens or closes anything.
+  handlePointerMove(overSidebar: boolean): void {
+    if (this.isVisible && overSidebar) this.resetTimer();
   }
 
   show(): void {
@@ -242,9 +189,6 @@ export class Sidebar {
     this.channelSearchRoot = null;
     this.channelSource = null;
     this.groupSource = null;
-    this.pointerAtGroupEdge = false;
-    this.clearGroupDwell();
-    this.clearPointerExit();
     this.focusCurrentChannel(true);
     if (this.el) {
       this.syncPanelState();
@@ -268,9 +212,6 @@ export class Sidebar {
     this.keyboardOn = false;
     this.opening = false;
     this.cancelLogoLoads();
-    this.pointerAtGroupEdge = false;
-    this.clearGroupDwell();
-    this.clearPointerExit();
     const el = this.el;
     if (el) {
       el.querySelector<HTMLInputElement>('.sidebar-search-input')?.blur(); // dismiss keyboard
@@ -316,9 +257,6 @@ export class Sidebar {
 
   handleAction(action: Action): void {
     if (!this.el) return;
-    // A cursor resting at the edge leaves the mode on keys, so a key must
-    // cancel the dwell itself too.
-    this.dropPointerIntent();
     if (this.applyAction(action)) this.paint('key');
   }
 
@@ -752,7 +690,6 @@ export class Sidebar {
   }
 
   private openGroups(): void {
-    this.clearGroupDwell();
     this.groupsExpanded = true;
     this.activePane = 'groups';
     const groups = this.getGroups();
@@ -801,38 +738,6 @@ export class Sidebar {
   private syncPanelState(): void {
     this.el?.classList.toggle('groups-expanded', this.groupsExpanded);
     this.el?.classList.toggle('channels-only', !this.groupsExpanded);
-  }
-
-  private dropPointerIntent(): void {
-    this.pointerAtGroupEdge = false;
-    this.clearGroupDwell();
-    this.clearPointerExit();
-  }
-
-  private clearGroupDwell(): void {
-    if (!this.groupDwellTimer) return;
-    clearTimeout(this.groupDwellTimer);
-    this.groupDwellTimer = null;
-  }
-
-  private startGroupDwell(): void {
-    if (this.groupDwellTimer) return;
-    this.groupDwellTimer = setTimeout(() => {
-      this.groupDwellTimer = null;
-      if (this.isVisible && !this.groupsExpanded && !this.keyboardOn
-          && this.pointerAtGroupEdge) {
-        this.openGroups();
-        this.paint('pointer');
-        this.resetTimer();
-      }
-    }, GROUP_DWELL_MS);
-  }
-
-  private clearPointerExit(): void {
-    this.pointerExitPending = false;
-    if (!this.pointerExitTimer) return;
-    clearTimeout(this.pointerExitTimer);
-    this.pointerExitTimer = null;
   }
 
   // Only opening the groups pane reveals its focus; key moves reveal through
@@ -889,7 +794,10 @@ export class Sidebar {
           <span class="sidebar-group-name">${widthProbeGroup.label}</span>
           <span class="sidebar-group-count">${widthProbeGroup.count}</span>
         </div>
-        <div class="sidebar-title">${t('common.groups')}</div>
+        <div class="sidebar-title">
+          <span class="sidebar-title-icon">${raw(LIVE_CATEGORIES_ICON)}</span>
+          <span class="sidebar-title-label">${t('common.groups')}</span>
+        </div>
         <div class="sidebar-group-list">
           <div class="sidebar-group-spacer"
                style="height:${this.groupVirtualizer.getTotalSize(groups.length)}px">
@@ -912,16 +820,19 @@ export class Sidebar {
       </div>
       <div class="sidebar-channel-panel" data-key="channel-panel">
         <button type="button" class="sidebar-title sidebar-channel-title" data-open-groups>
-          <span class="sidebar-picker-label">${activeGroup?.label || t('common.channels')}</span>
-          <span class="sidebar-picker-arrow" aria-hidden="true">
-            ${raw(CHEVRON_LEFT_ICON)}
+          <span class="sidebar-title-icon sidebar-picker-arrow" aria-hidden="true">
+            ${raw(chevronLeftIcon())}
           </span>
+          <span class="sidebar-title-label sidebar-picker-label">${activeGroup?.label || t('common.channels')}</span>
         </button>
-        <input type="text" class="sidebar-search-input" data-hover-target
-               data-key="search" aria-label="${t('search.ariaChannels')}"
-               data-search-query="${this.channelSearchResultQuery}"
-               data-search-pending="${this.channelSearchPending ? 'true' : 'false'}"
-               placeholder="${searchPlaceholder}" value="${this.searchQuery}">
+        <div class="sidebar-search" data-key="search-box">
+          <span class="sidebar-search-icon" aria-hidden="true">${raw(SEARCH_ICON)}</span>
+          <input type="text" class="sidebar-search-input" data-hover-target
+                 data-key="search" aria-label="${t('search.ariaChannels')}"
+                 data-search-query="${this.channelSearchResultQuery}"
+                 data-search-pending="${this.channelSearchPending ? 'true' : 'false'}"
+                 placeholder="${searchPlaceholder}" value="${this.searchQuery}">
+        </div>
         ${showTabs ? html`
           <div class="sidebar-tabs" data-edge-scroll>
             <div class="sidebar-tab ${!this.playlist ? 'active' : ''}" data-hover-target
@@ -999,15 +910,10 @@ export class Sidebar {
   }
 
   private renderLogo(ch: Channel): Safe {
-    if (!ch.logo) {
-      return html`
-        <div class="ch-logo-wrap">
-          <div class="ch-logo-placeholder">${ch.name.charAt(0)}</div>
-        </div>
-      `;
+    if (!ch.logo || this.failedLogos.has(ch.logo)) {
+      return html`<div class="ch-logo-wrap">${artPlaceholder('channel')}</div>`;
     }
 
-    if (this.failedLogos.has(ch.logo)) return html`<div class="ch-logo-wrap"></div>`;
     if (this.decodedLogos.has(ch.logo) && !this.opening) {
       return html`
         <div class="ch-logo-wrap">
@@ -1015,7 +921,7 @@ export class Sidebar {
         </div>
       `;
     }
-    return html`<div class="ch-logo-wrap" data-logo-src="${ch.logo}"></div>`;
+    return html`<div class="ch-logo-wrap" data-logo-src="${ch.logo}">${artPlaceholder('channel')}</div>`;
   }
 
   private renderHealthDot(ch: Channel): Safe | string {
@@ -1118,6 +1024,7 @@ export class Sidebar {
         image.className = 'ch-logo';
         image.alt = '';
         image.src = src;
+        target.textContent = '';
         target.appendChild(image);
       }
       if (this.logoRevealQueue.length) this.scheduleLogoReveal(generation);
@@ -1165,7 +1072,6 @@ export class Sidebar {
       Focus.hoverPointerIn(this.focusScope);
       if (!this.opening) return;
       this.opening = false;
-      if (this.pointerAtGroupEdge) this.startGroupDwell();
       this.measureMarquees();
       this.scheduleVisibleLogoLoads();
     });

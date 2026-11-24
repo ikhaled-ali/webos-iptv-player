@@ -1,6 +1,7 @@
 import type { Action, NavDirection } from '../types';
 import { CONFIG } from '../config';
 import type { FocusScope } from './focus-scope';
+import { screenSide } from './reading-direction';
 
 interface Candidate {
   el: HTMLElement;
@@ -110,6 +111,11 @@ export class SpatialNav {
     this.lastRect = null;
   }
 
+  // Every container enters at its first item again, not the last one focused.
+  forgetLastFocused(): void {
+    this.lastFocusedIn.clear();
+  }
+
   /**
    * Trap navigation inside `el` (a dialog, menu or picker) so d-pad can't reach
    * the view behind it. Pass null to release. Focus sitting outside the trap is
@@ -195,8 +201,9 @@ export class SpatialNav {
   private findBest(
     candidates: Candidate[],
     current: Candidate,
-    direction: NavDirection,
+    action: NavDirection,
   ): { candidate: Candidate | null; score: number } {
+    const direction = screenSide(action) as NavDirection;
     const rect = current.rect;
     const cx = rect.left + rect.width / 2;
     const cy = rect.top + rect.height / 2;
@@ -250,6 +257,10 @@ export class SpatialNav {
       if (!valid) continue;
 
       const sameContainer = candidate.container === currentContainer;
+      // Right stops at the end of its row: within a region it never runs on
+      // to an item on another row.
+      if (action === 'right' && sameContainer
+          && Math.min(r.bottom, rect.bottom) - Math.max(r.top, rect.top) <= 0) continue;
       const score = primary + secondary * 3 + (sameContainer ? 0 : 5000);
 
       if (score < bestScore) {

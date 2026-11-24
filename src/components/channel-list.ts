@@ -4,7 +4,6 @@ import type {
   CatchupInfo,
   Channel,
   ChannelGroupId,
-  ChannelHealthStatus,
   ChannelScope,
   NumberEvent,
 } from '../types';
@@ -20,7 +19,6 @@ import { PlaylistService } from '../services/playlist-service';
 import { EpgService } from '../services/epg-service';
 import { StorageService } from '../services/storage-service';
 import { RecentlyWatchedService, type RecentlyWatchedItem } from '../services/recently-watched';
-import { ChannelHealthService } from '../services/channel-health';
 import { groupIcon } from './group-icon';
 import { LIVE_CATEGORIES_ICON, NAV_HORIZONTAL_ICON, favoriteIcon } from './icons';
 import { backKey, okHint } from './key-hints';
@@ -28,23 +26,25 @@ import { channelLockBadge, liveGroupLockBadge } from './parental-badge';
 import { showToast } from './toast';
 import { getLocale, t, type SupportedLocale } from '../i18n';
 import { ChannelListEditor } from './channel-list-editor';
+import { channelCard, channelHealthDot, channelLogo, PLAYING_MARK } from './item-cards';
 import { VirtualList } from '../utils/virtual-list';
 import { VirtualScrollGuard } from '../utils/virtual-scroll';
 import { CONFIG } from '../config';
+import { inlineStartSide } from '../utils/scroll-axis';
 
 // Row strides mirror the fixed row geometry in css/channel-list.css:
 // .channel-item is 88px, .group-item is 60px plus its 8px vertical margin.
 const CHANNEL_ROW_STRIDE = 88;
 const GROUP_ROW_STRIDE = 68;
-// The browse grid mirrors .channel-tile: a 204px tile plus the 24px gap.
-const CHANNEL_GRID_ROW_STRIDE = 228;
+// The browse grid mirrors .channel-tile: a 156px tile plus the 24px gap.
+const CHANNEL_GRID_ROW_STRIDE = 180;
 const CHANNEL_GRID_GAP = 24;
-const CHANNEL_GRID_MIN_TILE = 210;
+const CHANNEL_GRID_MIN_TILE = 240;
 const CHANNEL_GRID_OVERSCAN = 2;
 // .channel-main-grid's top padding, above the first row.
 const CHANNEL_GRID_PADDING_TOP = 24;
-// Room kept between a focused tile and the grid's edges: the tile grows 10%
-// and casts a deep shadow, which must never touch or get cut by them.
+// Room kept between a focused tile and the grid's edges, which its growth
+// must never touch or get cut by.
 const CHANNEL_GRID_FOCUS_MARGIN = 56;
 const CHANNEL_OVERSCAN = 12;
 const CHANNEL_VIEWPORT_FALLBACK = 900;
@@ -175,7 +175,7 @@ export class ChannelList {
     this.focusScope = Focus.register({
       id: 'live.channels',
       root: () => this.container.closest<HTMLElement>('.view') ?? this.container,
-      leaveFor: { up: 'tabbar' },
+      leaveFor: { up: 'tabbar', left: 'tabbar' },
       defaultKey: () => this.defaultKey(),
       has: (key) => this.rowPosition(key) !== null,
       reveal: (key) => this.reveal(key),
@@ -872,6 +872,11 @@ export class ChannelList {
     `;
   }
 
+  // The live channel playing now, or -1 (catch-up plays a recording).
+  get livePlayingIndex(): number {
+    return this.playingCatchupStart === null ? this.playingIndex : -1;
+  }
+
   setPlaying(idx: number, catchupStart?: number | null): void {
     // Stopping playback tunes nothing for the list to land on.
     const moved = idx >= 0 && idx !== this.playingIndex;
@@ -938,16 +943,18 @@ export class ChannelList {
   }
 
   // Back and the bar resume where focus was left; a channel tuned elsewhere
-  // meanwhile wins. Any other entry starts at the playing channel or the top.
+  // meanwhile wins. Any other entry starts on the selected category.
   private placeEntry(via: Via): void {
     const moved = this.playingMoved;
     this.playingMoved = false;
-    const resume = via === 'back' || via === 'resume';
     const playing = this.playingIndex;
-    if ((!resume || moved) && playing >= 0 && this.revealChannel(playing)) return;
-    const key = this.focusScope.focusKey;
-    if (resume && key !== null && this.revealKey(key)) return;
-    if (playing >= 0 && this.revealChannel(playing)) return;
+    if (via === 'back' || via === 'resume') {
+      if (moved && playing >= 0 && this.revealChannel(playing)) return;
+      const key = this.focusScope.focusKey;
+      if (key !== null && this.revealKey(key)) return;
+      if (playing >= 0 && this.revealChannel(playing)) return;
+    }
+    if (this.focusActiveGroup()) return;
     const entry = this.container.querySelector<HTMLElement>('.channel-main [data-channel-index]');
     if (entry) this.nav.focus(entry);
     else this.nav.focusFirst();
@@ -1041,30 +1048,28 @@ export class ChannelList {
            data-key="ch:${String(globalIdx)}"
            data-focusable data-channel-index="${globalIdx}"
            data-list-position="${position}" style="top:${top}px">
-        <div class="channel-number">${globalIdx + 1}</div>
         ${this.renderLogo(ch)}
         <div class="channel-info">
           ${renaming
             ? html`<input class="edit-text-input" type="text" value="${this.editor.renameValue(ch.name)}">`
-            : html`<div class="channel-name">${raw(channelLockBadge(ch))}${
+            : html`<div class="channel-name" dir="auto">${raw(channelLockBadge(ch))}${
                 showFavoriteStar ? raw(favoriteIcon(true)) : ''
               }${ch.name}</div>`}
           ${this.editor.isChannelEditing && ch.sourceName
             ? html`<div class="channel-now channel-source-name">${ch.sourceName}</div>`
             : (nowPlaying
-                ? html`<div class="channel-now">${nowPlaying.title}</div>`
+                ? html`<div class="channel-now" dir="auto">${nowPlaying.title}</div>`
                 : '')}
         </div>
         ${this.editor.renderChannelEditStatus(ch)}
-        ${this.renderHealth(ch)}
-        ${isPlaying ? raw('<div class="playing-indicator">&#9654;</div>') : ''}
+        ${channelHealthDot(ch)}
+        ${isPlaying ? PLAYING_MARK : ''}
       </div>
     `;
   }
 
-  // Logo first, name along the bottom; the number and status sit in the
-  // tile's corners. Tiles keep .channel-item so edit, focus, and playing
-  // state apply unchanged.
+  // The shared channel card, placed in the virtual grid. Tiles keep
+  // .channel-item so edit, focus, and playing state apply unchanged.
   private renderChannelTile(
     ch: Channel,
     favs: string[],
@@ -1075,35 +1080,24 @@ export class ChannelList {
     const globalIdx = PlaylistService.indexOf(ch);
     const epgId = EpgService.findChannelId(ch);
     const nowPlaying = epgId ? EpgService.getNowPlaying(epgId) : null;
-    const isPlaying = globalIdx === this.playingIndex && this.playingCatchupStart === null;
-    const showFavoriteStar = favs.includes(channelKey(ch)) && this.currentGroup !== 'builtin:favorites';
+    return channelCard({
+      key: `ch:${String(globalIdx)}`,
+      channel: ch,
+      subtitle: nowPlaying?.title,
+      favorite: favs.includes(channelKey(ch)) && this.currentGroup !== 'builtin:favorites',
+      playing: globalIdx === this.playingIndex && this.playingCatchupStart === null,
+      logoFailed: this.failedLogos.has(ch.logo),
+      attrs: html`data-channel-index="${globalIdx}" data-list-position="${position}"`,
+      style: this.gridCellStyle(position, top, columns),
+    });
+  }
+
+  private gridCellStyle(position: number, top: number, columns: number): string {
     const column = position % columns;
     const gaps = CHANNEL_GRID_GAP * (columns - 1);
     const width = `calc((100% - ${gaps}px) / ${columns})`;
     const left = `calc((100% + ${CHANNEL_GRID_GAP}px) * ${column} / ${columns})`;
-
-    return html`
-      <div class="channel-item channel-tile ${isPlaying ? 'playing' : ''}"
-           data-key="ch:${String(globalIdx)}"
-           data-focusable data-channel-index="${globalIdx}"
-           data-list-position="${position}"
-           style="top:${top}px;left:${left};width:${width}">
-        <div class="channel-tile-art">
-          ${this.renderLogo(ch)}
-          <div class="channel-number">${globalIdx + 1}</div>
-          <div class="channel-tile-status">
-            ${this.renderHealth(ch)}
-            ${isPlaying ? raw('<div class="playing-indicator">&#9654;</div>') : ''}
-          </div>
-        </div>
-        <div class="channel-info">
-          <div class="channel-name">${raw(channelLockBadge(ch))}${
-            showFavoriteStar ? raw(favoriteIcon(true)) : ''
-          }${ch.name}</div>
-          ${nowPlaying ? html`<div class="channel-now">${nowPlaying.title}</div>` : ''}
-        </div>
-      </div>
-    `;
+    return `top:${top}px;${inlineStartSide()}:${left};width:${width}`;
   }
 
   private renderRecentItem(
@@ -1117,8 +1111,6 @@ export class ChannelList {
     const live = item.kind === 'live';
     const epgId = live ? EpgService.findChannelId(ch) : null;
     const nowPlaying = epgId ? EpgService.getNowPlaying(epgId) : null;
-    const isPlaying = item.channelIndex === this.playingIndex
-      && this.playingCatchupStart === (live ? null : item.progress.progStart);
     let percent = 0;
     if (!live) {
       const duration = item.progress.duration > 0
@@ -1126,71 +1118,31 @@ export class ChannelList {
         : Math.max(1, (item.progress.progEnd - item.progress.progStart) / 1000);
       percent = Math.round(Math.max(0, Math.min(1, item.progress.position / duration)) * 100);
     }
-    const column = index % columns;
-    const gaps = CHANNEL_GRID_GAP * (columns - 1);
-    const width = `calc((100% - ${gaps}px) / ${columns})`;
-    const left = `calc((100% + ${CHANNEL_GRID_GAP}px) * ${column} / ${columns})`;
-    return html`
-      <div class="channel-item channel-tile recent-item ${live ? 'recent-live' : 'recent-catchup'} ${
-        isPlaying ? 'playing' : ''}"
-           data-key="${recentKey(item)}"
-           data-focusable data-recent-index="${index}" data-channel-index="${item.channelIndex}"
-           data-list-position="${index}"
-           style="top:${top}px;left:${left};width:${width}">
-        <div class="channel-tile-art">
-          ${this.renderLogo(ch)}
-          <div class="channel-number">${item.channelIndex + 1}</div>
-          <div class="channel-tile-status">
-            ${live ? this.renderHealth(ch) : ''}
-            <div class="recent-kind-badge ${live ? 'live' : 'catchup'}">${
-              t(live ? 'common.live' : 'common.catchup')}</div>
-            ${isPlaying ? raw('<div class="playing-indicator">&#9654;</div>') : ''}
-          </div>
-          ${live ? '' : html`
-            <div class="recent-progress"><div class="recent-progress-fill" style="width:${percent}%"></div></div>`}
-        </div>
-        <div class="channel-info">
-          <div class="channel-name">${raw(channelLockBadge(ch))}${
-            favs.includes(channelKey(ch)) ? raw(favoriteIcon(true)) : ''
-          }${live ? ch.name : item.progress.title ?? ''}</div>
-          ${live
-            ? (nowPlaying ? html`<div class="channel-now">${nowPlaying.title}</div>` : '')
-            : html`<div class="channel-now">${t('channel.resumeAt', {
-                channel: ch.name,
-                position: formatPosition(item.progress.position),
-              })}</div>`}
-        </div>
-      </div>
-    `;
+    return channelCard({
+      key: recentKey(item),
+      channel: ch,
+      title: live ? ch.name : item.progress.title ?? '',
+      subtitle: live
+        ? nowPlaying?.title
+        : t('channel.resumeAt', { channel: ch.name, position: formatPosition(item.progress.position) }),
+      favorite: favs.includes(channelKey(ch)),
+      playing: item.channelIndex === this.playingIndex
+        && this.playingCatchupStart === (live ? null : item.progress.progStart),
+      logoFailed: this.failedLogos.has(ch.logo),
+      // Health describes the live stream, not a catch-up recording.
+      health: live,
+      status: html`<div class="recent-kind-badge ${live ? 'live' : 'catchup'}">${
+        t(live ? 'common.live' : 'common.catchup')}</div>`,
+      overlay: live ? '' : html`
+        <div class="recent-progress"><div class="recent-progress-fill" style="width:${percent}%"></div></div>`,
+      classes: `recent-item ${live ? 'recent-live' : 'recent-catchup'}`,
+      attrs: html`data-recent-index="${index}" data-channel-index="${item.channelIndex}" data-list-position="${index}"`,
+      style: this.gridCellStyle(index, top, columns),
+    });
   }
 
   private renderLogo(ch: Channel): Safe {
-    let logo: Safe | string = '';
-    if (!ch.logo) {
-      logo = html`<div class="channel-logo-placeholder">${ch.name.charAt(0)}</div>`;
-    } else if (!this.failedLogos.has(ch.logo)) {
-      logo = html`<img class="channel-logo" src="${ch.logo}" alt="" loading="lazy">`;
-    }
-
-    return html`
-      <div class="channel-logo-wrap">
-        ${logo}
-      </div>
-    `;
-  }
-
-  private renderHealth(ch: Channel): Safe | string {
-    const status = ChannelHealthService.getRecord(ch)?.status;
-    if (!status) return '';
-    const labels: Record<ChannelHealthStatus, string> = {
-      healthy: t('channel.healthHealthy'),
-      suspect: t('channel.healthSuspect'),
-      unavailable: t('channel.healthUnavailable'),
-    };
-    return html`
-      <span class="channel-health-status channel-health-dot ${status}" title="${labels[status]}"
-            aria-label="${labels[status]}"></span>
-    `;
+    return channelLogo(ch, this.failedLogos.has(ch.logo));
   }
 
   private async playRecentCatchup(item: Extract<RecentlyWatchedItem, { kind: 'catchup' }>): Promise<void> {

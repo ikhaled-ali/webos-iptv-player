@@ -1,7 +1,7 @@
 import * as esbuild from 'esbuild';
 import { mkdir, readFile } from 'node:fs/promises';
 import {
-  LEGACY_JS_BANNER,
+  MIN_CHROME,
   formatViolations,
   scanBundle,
 } from '../scripts/compat-gate.mjs';
@@ -21,8 +21,7 @@ await esbuild.build({
   bundle: true,
   outfile,
   format: 'iife',
-  target: ['chrome53'],
-  banner: { js: LEGACY_JS_BANNER },
+  target: [`chrome${MIN_CHROME}`],
   define,
   minify: true,
 });
@@ -30,8 +29,7 @@ const scan = await esbuild.build({
   entryPoints: ['benchmarks/parser-entry.ts'],
   bundle: true,
   format: 'iife',
-  target: ['chrome53'],
-  banner: { js: LEGACY_JS_BANNER },
+  target: [`chrome${MIN_CHROME}`],
   define,
   minify: false,
   write: false,
@@ -39,3 +37,16 @@ const scan = await esbuild.build({
 const violations = scanBundle(scan.outputFiles[0].text);
 if (violations.length > 0) throw new Error(formatViolations(violations));
 console.log(`Built ${outfile}`);
+
+// Writes fixtures through the production persistence code (desktop runs).
+const seedOutfile = 'test-output/benchmarks/seed-bundle.js';
+await esbuild.build({
+  entryPoints: ['benchmarks/seed-entry.ts'],
+  bundle: true,
+  outfile: seedOutfile,
+  format: 'iife',
+  target: [`chrome${MIN_CHROME}`],
+  define,
+  minify: true,
+});
+console.log(`Built ${seedOutfile}`);

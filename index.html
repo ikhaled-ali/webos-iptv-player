@@ -11,11 +11,12 @@
     try { var s = JSON.parse(localStorage.getItem('iptv_text_size')); if (s) document.documentElement.dataset.textSize = s; } catch (e) {}
     try { var a = JSON.parse(localStorage.getItem('iptv_animation_mode')); if (a) document.documentElement.dataset.animation = a; } catch (e) {}
   </script>
-  <link rel="stylesheet" href="css/legacy-webos-base.css">
   <link rel="stylesheet" href="css/main.css">
   <link rel="stylesheet" href="css/themes.css">
   <link rel="stylesheet" href="css/navigation.css">
   <link rel="stylesheet" href="css/channel-list.css">
+  <link rel="stylesheet" href="css/item-cards.css">
+  <link rel="stylesheet" href="css/status-clock.css">
   <link rel="stylesheet" href="css/live-preview.css">
   <link rel="stylesheet" href="css/player.css">
   <link rel="stylesheet" href="css/epg.css">
@@ -29,7 +30,6 @@
   <link rel="stylesheet" href="css/account-switcher.css">
   <link rel="stylesheet" href="css/parental-controls.css">
   <link rel="stylesheet" href="css/live-category-picker.css">
-  <link rel="stylesheet" href="css/legacy-webos-overrides.css">
 </head>
 <body>
   <video id="video-player" autoplay></video>
@@ -62,7 +62,7 @@
     <div id="player-sidebar" class="player-sidebar hidden"></div>
     <div id="player-menu" class="side-panel player-menu hidden"></div>
     <div id="player-osd" class="player-osd hidden"></div>
-    <time class="osd-clock hidden"></time>
+    <div class="osd-clock hidden"></div>
     <div id="subtitle-search" class="hidden"></div>
     <div id="subtitle-offset" class="hidden"></div>
     <div id="vod-info" class="side-panel hidden"></div>

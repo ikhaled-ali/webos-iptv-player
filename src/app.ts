@@ -1,5 +1,3 @@
-import './polyfills';
-import './engine-quirks';
 import { initSecurePersistence } from './services/secure-persistence';
 import { uploadEncryptionKey } from './services/credential-vault';
 import { CONFIG } from './config';
@@ -40,7 +38,7 @@ import { Movies } from './components/movies';
 import { Series } from './components/series';
 import { Search } from './components/search';
 import {
-  HomeView, liveHomeSources, type HomeModel, type HomeRow, type HomeShortcut, type HomeTitle,
+  HomeView, liveHomeSources, type HomeModel, type HomeRow, type HomeTitle,
 } from './components/home';
 import { SearchHistoryDropdown } from './components/search-history-dropdown';
 import { showToast } from './components/toast';
@@ -70,6 +68,7 @@ import { setDisplayTz } from './utils/time';
 import { initTheme, applyTheme, applyOverlayStyle, applyTextSize } from './services/theme-service';
 import { applyAnimationMode } from './services/motion-service';
 import { startWeather } from './services/weather-service';
+import { setStatusWeather } from './components/status-clock';
 import { channelKey } from './utils/channel';
 import { isSourceEnabled } from './utils/playlist';
 import { truncate } from './utils/text';
@@ -87,7 +86,15 @@ import type {
   PlaylistEntry,
   ResumeEntry,
 } from './types';
-import { getLocale, initLocale, resolveLocale, setLocale, t, tp } from './i18n';
+import { getLocale, initLocale, loadLocale, resolveLocale, setLocale, t, tp } from './i18n';
+import {
+  installPerfTraceApi,
+  perfEnd,
+  perfEndNextFrame,
+  perfMark,
+  perfMarkNextFrame,
+  perfStart,
+} from './utils/perf-trace';
 
 const log = createLogger('App');
 
@@ -151,9 +158,16 @@ class App {
 
   async init(): Promise<void> {
     const done = log.time('init');
+    installPerfTraceApi();
+    perfMark('boot.appInit');
     log.info('Initializing app');
+    const persistence = perfStart();
     await initSecurePersistence();
+    perfEnd('boot.persistence', persistence);
+    const storage = perfStart();
     await StorageService.init();
+    perfEnd('boot.storage', storage);
+    const uiInit = perfStart();
     ParentalControlService.reload();
     StorageService.setPlaylistsReplacedHandler((previous, next) => {
       ParentalControlService.reviewChangedSources(previous, next);
@@ -164,7 +178,8 @@ class App {
       this.parentalPinPrompt.showChallenge(request));
     StorageService.setWriteFailureHandler(() => showToast(t('app.saveFailed')));
     this.searchPrewarm.watchSourceWrites();
-    initLocale(StorageService.getLocalePreference());
+    // Loads the language's catalog script first (English is bundled).
+    await initLocale(StorageService.getLocalePreference());
     applyAnimationMode(StorageService.getAnimationMode());
     const initialLoadingText = $('#loading-text');
     if (initialLoadingText) initialLoadingText.textContent = t('common.loading');
@@ -211,7 +226,7 @@ class App {
         return;
       }
       this.channelList.render();
-      this.showView('channels');
+      this.showView('channels', false, true);
     }, (idx, catchupStart) => {
       this.channelList.setPlaying(idx, catchupStart);
       if (this.livePreview?.isShowing) this.channelList.render(false);
@@ -242,7 +257,7 @@ class App {
     this.epgGrid = new EpgGrid(
       this.views.epg,
       (idx, catchup, scope) => this.playChannel(idx, catchup, scope),
-      () => this.leaveUp(),
+      (dir) => this.leaveEdge(dir),
       () => this.openReminderManager('epg'),
     );
     this.reminderManager = new ReminderManager(this.views.reminders, () => {
@@ -341,7 +356,7 @@ class App {
       () => this.recording.stopAndSave(),
     );
     this.recordings = new RecordingsView(this.views.recordings, {
-      onRevealTabBar: () => this.leaveUp(),
+      onRevealTabBar: (dir) => this.leaveEdge(dir),
       onBack: () => this.goLive(),
       onCountChanged: (count) => this.tabBar?.setRecordings(count > 0),
       onPlay: (entry, resumeSecs) => {
@@ -364,7 +379,7 @@ class App {
     this.menu.setOnHide(() => this.player.panelClosed());
 
     this.movies = new Movies(this.views.movies, {
-      onRevealTabBar: () => this.leaveUp(),
+      onRevealTabBar: (dir) => this.leaveEdge(dir),
       onBack: () => this.goLive(),
       onPlayVod: (req) => {
         this.player.playVod({
@@ -377,7 +392,7 @@ class App {
       },
     });
     this.series = new Series(this.views.series, {
-      onRevealTabBar: () => this.leaveUp(),
+      onRevealTabBar: (dir) => this.leaveEdge(dir),
       onBack: () => this.goLive(),
       onPlayVod: (req) => {
         this.player.playVod({
@@ -390,7 +405,7 @@ class App {
       },
     });
     this.search = new Search(this.views.search, {
-      onRevealTabBar: () => this.leaveUp(),
+      onRevealTabBar: (dir) => this.leaveEdge(dir),
       onReleaseTabBar: () => this.tabBar.blur(),
       // Step back out to the search box, which a second Back closes.
       onBack: () => {
@@ -398,6 +413,7 @@ class App {
         else this.goLive();
       },
       onPlayChannel: (idx, catchup) => { this.tabBar.blur(); this.playChannel(idx, catchup); },
+      playingIndex: () => this.channelList.livePlayingIndex,
       onOpenMovie: (account, vod) => {
         this.tabBar.blur();
         this.searchDetailViews.add('movies');
@@ -426,11 +442,10 @@ class App {
     this.home = new HomeView(this.views.home, {
       sources: liveHomeSources(
         () => this.activeXtreamAccount(),
-        () => this.recordings.count > 0,
+        () => this.channelList.livePlayingIndex,
       ),
-      onRevealTabBar: () => this.leaveUp(),
+      onRevealTabBar: (dir) => this.leaveEdge(dir),
       onBack: () => this.backToExit(),
-      onShortcut: (id) => this.openHomeShortcut(id),
       onPlayChannel: (index) => {
         this.playChannel(index);
         this.returnHome = true;
@@ -484,7 +499,7 @@ class App {
       onLockNow: () => ParentalControlService.lock('lock-now'),
     });
     this.tabBar.init();
-    startWeather((weather) => this.tabBar.setWeather(weather));
+    startWeather(setStatusWeather);
 
     KeyHandler.init();
     KeyHandler.setHandler((action, event) => {
@@ -518,12 +533,15 @@ class App {
     // Register a retail-safe callback immediately. If Developer Mode is
     // detected below, the same named activities are replaced with alerts.
     ReminderService.reschedulePending();
+    perfEnd('boot.ui', uiInit);
     await this.loadData();
     // Cold launch from a "Watch now" alert: channels are loaded now, so tune.
     this.handleLaunchParams(this.coldLaunchParams(), 'launch');
     // A cold start onto the channels opens on the menu's first item, Live.
     // A load sent to the background already put the user there.
     if (!this.loadPanelDismissed && this.isCurrentView('channels')) this.tabBar.focus();
+    // The first frame that shows the loaded channels with remote input released.
+    perfMarkNextFrame('app.interactive');
     // Spawning the service process can synchronously stall Luna on a cold TV.
     // Keep LAN setup off the critical path so cached channels render first.
     const bundledServiceReady = this.startBundledService();
@@ -1084,6 +1102,7 @@ class App {
     fromSettings = this.isCurrentView('settings'),
   ): Promise<void> {
     const done = log.time('loadData');
+    const loadStarted = perfStart();
     const revision = ++this.dataLoadRevision;
     this.loadingData = true;
     this.loadPanelDismissed = false;
@@ -1133,6 +1152,7 @@ class App {
       const loadingText = $('#loading-text');
       if (loadingText) loadingText.textContent = t('app.loadingChannels');
       let lastProgressAt = 0;
+      const playlistLoad = perfStart();
       await PlaylistService.load(update => {
         this.loadProgress.update(progress, 'channels', channelLoadFraction(update));
         if (!loadingText) return;
@@ -1144,8 +1164,11 @@ class App {
           kept: update.channelsKept,
         });
       });
+      perfEnd('app.playlistLoad', playlistLoad);
       this.player.syncCurrentIndex();
+      const health = perfStart();
       await ChannelHealthService.initialize();
+      perfEnd('app.channelHealth', health);
       log.info('Channels loaded:', PlaylistService.channels.length,
         '| groups:', PlaylistService.groups.length,
         '| epgSources:', PlaylistService.epgSources);
@@ -1160,9 +1183,12 @@ class App {
 
       // A load sent to the background left the user wherever they went.
       const released = !this.isCurrentView('loading');
+      const rendered = perfStart();
       if (!released) this.showHome();
       this.channelList.setLoading(false);
       this.channelList.render();
+      perfEnd('ui.channelRender', rendered);
+      perfEndNextFrame('ui.channelPaint', rendered);
 
       showToast(tp('app.channelsLoaded', PlaylistService.channels.length));
       // Let the load confirmation finish before a new-category notice replaces it.
@@ -1181,6 +1207,7 @@ class App {
         // A locked channel must not open a PIN prompt over a cold start.
         if (last && ParentalControlService.decision(liveParentalRequest(last)).allowed) {
           log.info('Auto-play resuming last channel index', lastCh);
+          this.markFirstPlaying();
           this.playChannel(lastCh);
           this.returnHome = true;
         }
@@ -1201,8 +1228,23 @@ class App {
       this.loadingData = false;
       this.channelList.setLoading(false);
       hide(this.views.loading);
+      perfEnd('app.loadData', loadStarted);
       done();
     }
+  }
+
+  // Tracing only: when the auto-played channel first renders video.
+  private markFirstPlaying(): void {
+    const marked = perfStart();
+    if (!marked) return;
+    const video = $('#video-player');
+    if (!video) return;
+    const onPlaying = (): void => {
+      video.removeEventListener('playing', onPlaying);
+      perfEnd('player.autoplayToPlaying', marked);
+      perfMark('player.firstPlaying');
+    };
+    video.addEventListener('playing', onPlaying);
   }
 
   // The panel waits a moment, so a load from cache never flashes it.
@@ -1317,7 +1359,9 @@ class App {
       if (this.isCurrentView('epg')) this.epgGrid.render();
     };
     try {
+      const restored = perfStart();
       await EpgService.restoreCached(sources, channels);
+      perfEnd('epg.restoreCached', restored);
       if (revision !== this.dataLoadRevision) return;
       publish();
       if (force || StorageService.getEpgRefreshIntervalMs() === null) {
@@ -1657,7 +1701,7 @@ class App {
       // The catalog resumes its tile even when a wheel-scrolled rail no
       // longer renders it; enter('resume') would fall back to the first.
       if (section === 'movies' || section === 'series') {
-        (section === 'movies' ? this.movies : this.series).resumeFocus();
+        (section === 'movies' ? this.movies : this.series).resumeFocus(this.tabBar.returnedFromTop);
         return;
       }
       // A view scope without keys of its own (a plain `view.*`) has nothing to resume.
@@ -1690,18 +1734,6 @@ class App {
       this.backPressTime = now;
       showToast(t('app.exitHint'));
     }
-  }
-
-  private openHomeShortcut(id: HomeShortcut): void {
-    if (id === 'reminders') {
-      this.openReminderManager('home');
-      return;
-    }
-    if (id === 'search') {
-      this.tabBar.openSearch();
-      return;
-    }
-    this.enterSection(id, 'key');
   }
 
   // A Continue watching tile opens its title's detail page; Back returns Home.
@@ -1966,13 +1998,17 @@ class App {
     if (this.voiceListening) this.voiceSession = session;
   }
 
-  // Nothing heard leaves the box as it was. No engine: the box's hint says to
-  // use the remote's mic, which fills the box once it has the caret.
+  // Nothing heard leaves the box as it was. No engine (a retail TV): the box
+  // takes the caret under a hint, so the remote's mic fills it.
   private finishVoiceSearch(outcome: VoiceOutcome): void {
     if (!this.voiceListening) return;
     this.voiceListening = false;
     this.voiceSession = null;
-    this.tabBar.setVoiceState(outcome.kind === 'unavailable' ? 'hint' : 'idle');
+    if (outcome.kind === 'unavailable') {
+      this.tabBar.listenWithRemote();
+      return;
+    }
+    this.tabBar.setVoiceState('idle');
     if (outcome.kind === 'text') {
       this.tabBar.showVoiceQuery(outcome.text);
       this.handleSearchQuery(outcome.text);
@@ -2085,15 +2121,30 @@ class App {
     };
     for (const name of Object.keys(this.views) as ViewName[]) {
       views.set(name, own[name]
-        ?? Focus.register({ id: `view.${name}`, root: this.views[name], leaveFor: { up: 'tabbar' } }));
+        ?? Focus.register({ id: `view.${name}`, root: this.views[name], leaveFor: { up: 'tabbar', left: 'tabbar' } }));
     }
     Focus.setBase(() => views.get(current()) ?? null);
     Focus.install();
   }
 
-  // Up off a view's top edge: the keys go wherever the owner hands them.
-  private leaveUp(): void {
-    Focus.owner()?.leave('up');
+  // Left or Up off a view's edge: the keys go wherever the owner hands them
+  // (the rail, for a section view).
+  private leaveEdge(dir: 'up' | 'left' = 'up'): void {
+    const owner = Focus.owner();
+    if (dir === 'left') {
+      // Left lands on the rail icon level with what had focus.
+      const root = owner?.root();
+      const key = owner?.focusKey;
+      const el = root?.querySelector<HTMLElement>('.focused')
+        ?? (key ? root?.querySelector<HTMLElement>(`[data-key="${CSS.escape(key)}"]`) : null);
+      const rect = el?.getBoundingClientRect();
+      if (rect && rect.height) this.tabBar.enterNear(rect.top + rect.height / 2);
+    }
+    this.tabBar.enterTop(dir === 'up');
+    owner?.leave(dir);
+    // Consumed if the rail took the keys; never left for a later entry.
+    this.tabBar.enterNear(null);
+    this.tabBar.enterTop(false);
   }
 
   private handleKey(action: Action, event?: NumberEvent): void {
@@ -2245,7 +2296,7 @@ class App {
       case 'channels': {
         if (this.livePreview.handleAction(action)) break;
         const moved = this.channelList.handleAction(action, event);
-        if (action === 'up' && !moved) this.leaveUp();
+        if ((action === 'up' || action === 'left') && !moved) this.leaveEdge(action);
         break;
       }
       case 'movies':
@@ -2297,8 +2348,8 @@ class App {
         if (action === 'back') {
           this.channelList.render();
           this.showView('channels');
-        } else if (!this.settings.handleAction(action) && action === 'up') {
-          this.leaveUp();
+        } else if (!this.settings.handleAction(action) && (action === 'up' || action === 'left')) {
+          this.leaveEdge(action);
         }
         break;
       case 'reminders':
@@ -2313,36 +2364,14 @@ class App {
     }
   }
 
+  // Moving the pointer across the player never opens or closes a panel; it
+  // only keeps an open one up while the pointer is over it.
   private initPlayerPointer(): void {
     document.addEventListener('pointermove', (e: PointerEvent) => {
-      const currentView = this.viewStack[this.viewStack.length - 1];
-      if (currentView !== 'player') return;
-
-      const overTabs = !!(e.target as HTMLElement).closest('.player-sidebar .sidebar-tabs');
-      if (this.sidebar.visible) {
-        const overSidebar = !!(e.target as HTMLElement).closest('.player-sidebar');
-        const delayingDismiss = this.sidebar.handlePointerMove(e.clientX, overSidebar, overTabs);
-        if (!delayingDismiss && !overSidebar
-            && e.clientX > this.sidebar.pointerDismissX && !this.sidebar.keyboardOn) {
-          // Never dismiss while the keyboard is on — the pointer naturally
-          // leaves the sidebar on its way to the on-screen keyboard.
-          this.sidebar.hide();
-        }
-      }
-
-      if (this.menu.visible) {
-        const overMenu = !!(e.target as HTMLElement).closest('.player-menu');
-        if (overMenu) {
-          this.menu.resetTimer();
-        } else if (e.clientX < this.menu.left()) {
-          this.menu.hide();
-        }
-      }
-
-      // Bottom OSD info bar
-      if (e.clientY > 900 && !this.sidebar.visible && !this.menu.visible) {
-        this.player.showOSD();
-      }
+      if (this.viewStack[this.viewStack.length - 1] !== 'player') return;
+      const target = e.target as HTMLElement;
+      if (this.sidebar.visible) this.sidebar.handlePointerMove(!!target.closest('.player-sidebar'));
+      if (this.menu.visible && target.closest('.player-menu')) this.menu.resetTimer();
     });
   }
 
@@ -2383,7 +2412,7 @@ class App {
       location.reload();
       return;
     }
-    const locale = resolveLocale(StorageService.getLocalePreference());
+    const locale = await loadLocale(resolveLocale(StorageService.getLocalePreference()));
     if (locale !== getLocale()) {
       setLocale(locale);
       this.tabBar.refresh();

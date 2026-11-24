@@ -790,6 +790,57 @@ describe('KeyHandler', () => {
     });
   });
 
+  describe('wheel with a menu open', () => {
+    let page: HTMLElement;
+    let menu: HTMLElement;
+
+    const scrollable = (el: HTMLElement): void => {
+      el.style.overflowY = 'auto';
+      Object.defineProperty(el, 'scrollHeight', { value: 1000, configurable: true });
+      Object.defineProperty(el, 'clientHeight', { value: 100, configurable: true });
+    };
+
+    beforeEach(() => {
+      page = document.createElement('div');
+      scrollable(page);
+      menu = document.createElement('div');
+      menu.innerHTML = '<div class="rows"><div data-key="a"></div><div data-key="b"></div></div>';
+      document.body.append(page, menu);
+      const view = Focus.register({ id: 'wheel.view', root: page });
+      Focus.setBase(() => view);
+    });
+
+    afterEach(() => Focus.uninstall());
+
+    it('scrolls the open menu, not the page under the pointer', () => {
+      const rows = menu.querySelector<HTMLElement>('.rows')!;
+      scrollable(rows);
+      const scope = Focus.register({ id: 'wheel.menu', root: menu, defaultKey: () => 'b' });
+      Focus.push(scope);
+      scope.track('b');
+      const e = new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true });
+      page.dispatchEvent(e);
+      expect(rows.scrollTop).toBe(120);
+      expect(e.defaultPrevented).toBe(true);
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('steps the focus of an open menu that has nothing to scroll', () => {
+      Focus.push(Focus.register({ id: 'wheel.menu', root: menu }));
+      wheel(120, page);
+      wheel(-120, page);
+      expect(handler.mock.calls.map(call => call[0])).toEqual(['down', 'up']);
+    });
+
+    it('leaves the wheel to the page under a scope that does not own it', () => {
+      Focus.push(Focus.register({ id: 'wheel.menu', root: menu, ownsWheel: false }));
+      const e = new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true });
+      page.dispatchEvent(e);
+      expect(e.defaultPrevented).toBe(false);
+      expect(handler).not.toHaveBeenCalled();
+    });
+  });
+
   describe('hover after edge scrolling', () => {
     let track: HTMLElement;
     let first: HTMLElement;
@@ -1070,6 +1121,41 @@ describe('KeyHandler', () => {
       settle();
       expect(row('a').classList.contains('focused')).toBe(true);
       expect(row('b').classList.contains('focused')).toBe(false);
+    });
+  });
+  describe('holding OK', () => {
+    const release = (): void => {
+      document.dispatchEvent(new KeyboardEvent('keyup', { keyCode: K.ENTER, bubbles: true } as KeyboardEventInit));
+    };
+    const ownTile = (longPress: boolean): void => {
+      const root = document.createElement('div');
+      root.innerHTML = `<div class="focused" data-focusable ${longPress ? 'data-long-press' : ''}></div>`;
+      document.body.appendChild(root);
+      vi.spyOn(Focus, 'owner').mockReturnValue({ root: () => root } as unknown as FocusScope);
+    };
+    afterEach(() => vi.restoreAllMocks());
+
+    it('selects a long-press item on a short press, on release', () => {
+      ownTile(true);
+      press(K.ENTER);
+      expect(handler).not.toHaveBeenCalled();
+      release();
+      expect(handler).toHaveBeenCalledWith('select');
+    });
+
+    it('opens its options when held, and the release then does nothing', () => {
+      ownTile(true);
+      press(K.ENTER);
+      press(K.ENTER); // the remote's auto-repeat
+      vi.advanceTimersByTime(CONFIG.NAVIGATION.LONG_PRESS_MS);
+      release();
+      expect(handler.mock.calls).toEqual([['long_select']]);
+    });
+
+    it('selects any other item at once', () => {
+      ownTile(false);
+      press(K.ENTER);
+      expect(handler).toHaveBeenCalledWith('select');
     });
   });
 });

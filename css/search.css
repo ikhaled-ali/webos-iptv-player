@@ -1,16 +1,16 @@
 /* Search results: a query box over Channels / Programs / Movies / Series.
-   The poster rails reuse the shared catalog tile/poster visuals; these are the
-   search-only bits (the query box and the M3U vertical channel list). */
+   Channel and title rails draw the shared cards (css/item-cards.css); these
+   are the search-only bits. */
 .search-view {
-  width: 1920px;
+  width: 100%;
   height: 100%;
   box-sizing: border-box;
   padding: 40px 80px 60px;
   overflow-y: auto;
 }
-/* Rails bleed to both screen edges, posters resting on the left keyline;
+/* Rails bleed to both screen edges, cards resting on the left keyline;
    other results keep the view's margins. */
-.search-view:not(.search-lists) .catalog-rail-track {
+.search-view .catalog-rail-track {
   margin-left: -80px;
   margin-right: -80px;
   padding-left: 80px;
@@ -42,10 +42,8 @@
   overflow-anchor: none;
 }
 
-/* M3U-only results are one or two vertical lists that own the whole view, so
-   they share its height and bottom padding instead of stopping at the cap
-   above: a lone Channels list fills the screen, and with Programs alongside
-   it the two shrink in proportion to their contents. */
+/* M3U-only results are the Channels rail over the Programs list, which owns
+   the rest of the view's height instead of stopping at the cap above. */
 .search-view.search-lists { padding-bottom: 0; }
 .search-lists .search-results {
   display: flex;
@@ -64,13 +62,7 @@
   min-height: 0;
   max-height: none;
 }
-.search-lists-mixed .search-channels {
-  flex-shrink: 0;
-  max-height: 462px;
-}
-.search-lists-mixed .search-channels .search-virtual-scroll {
-  max-height: 420px;
-}
+.search-lists .catalog-rail { flex: none; }
 .search-virtual-list-spacer,
 .search-virtual-rail-spacer {
   position: relative;
@@ -82,65 +74,19 @@
   box-sizing: border-box;
 }
 /* Rail cells are absolutely positioned, so the spacer carries the row height:
-   poster tile (330 + 10 margin + 31 name line) by default, and the shorter
-   landscape channel tile (124 logo) for the channel rail. */
+   a poster card (330 + 10 margin + 31 name line) by default, and a channel
+   card (156) for the channel rail. */
 .search-virtual-rail-spacer {
   flex: 0 0 auto;
   height: 371px;
 }
-.search-channel-rail .search-virtual-rail-spacer { height: 165px; }
+.search-channel-rail .search-virtual-rail-spacer { height: 156px; }
 .search-virtual-rail-cell {
   position: absolute;
   top: 0;
   width: 220px;
 }
-
-/* Channel results carry 16:9-ish logos, not portrait posters — use a landscape
-   box and contain the logo so it isn't cropped. */
-.search-channel-tile .catalog-poster-wrap { height: 124px; }
-.search-channel-tile.catalog-tile::before { height: 124px; }
-.search-channel-tile .catalog-poster { object-fit: contain; }
-
-/* M3U-only Search: a vertical list of channel rows (Xtream uses the poster
-   rails above). */
-.search-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.search-channels { margin-bottom: 28px; }
-.search-channel-row {
-  display: flex;
-  align-items: center;
-  gap: 24px;
-  padding: 12px 20px;
-  border: 2px solid transparent;
-  border-radius: 8px;
-  cursor: pointer;
-}
-.search-channel-row.focused {
-  background-image: var(--focus-layer);
-}
-.search-row-logo {
-  width: 84px;
-  height: 52px;
-  object-fit: contain;
-  flex: none;
-  background: rgba(255, 255, 255, 0.06);
-  border-radius: 4px;
-}
-.search-row-logo-empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 26px;
-  font-weight: 700;
-  color: var(--text-secondary);
-}
-.search-row-name {
-  font-size: 30px;
-  color: var(--text-primary);
-}
+.search-channel-rail .search-virtual-rail-cell { width: 256px; }
 
 .search-programs { margin: 0 0 28px; }
 .search-program-list {
@@ -201,17 +147,15 @@
   background: var(--accent);
 }
 
-/* Recent searches: a translucent panel hung from the tab bar's empty search
-   box over a dimmed view. The scrim stops below the bar, which stays live.
-   Margins instead of flex `gap` so wrapped rows keep their spacing on
-   gap-less engines; legacy-webos-overrides.css makes the panel opaque where
-   backdrop-filter is missing. */
+/* Recent searches: a translucent panel hung from the rail's empty search
+   box over a dimmed view. The scrim spares the rail and the box's strip
+   (tab-bar.css), which stay live. */
 .search-history-scrim {
   position: fixed;
-  top: 96px;
+  top: 128px;
   right: 0;
   bottom: 0;
-  left: 0;
+  left: 120px;
   z-index: 61;
   background: rgba(0, 0, 0, 0.45);
 }

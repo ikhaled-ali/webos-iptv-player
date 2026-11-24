@@ -23,7 +23,7 @@
     position: fixed;
     z-index: 10;
     top: 16px;
-    right: 16px;
+    inset-inline-end: 16px;
   }
   .language-trigger {
     display: flex;
@@ -55,7 +55,7 @@
   .language-menu {
     position: absolute;
     top: 48px;
-    right: 0;
+    inset-inline-end: 0;
     width: 190px;
     overflow: hidden;
     padding: 6px;
@@ -75,7 +75,7 @@
     cursor: pointer;
     font: inherit;
     font-size: 13px;
-    text-align: left;
+    text-align: start;
   }
   .language-option:hover,
   .language-option:focus-visible {
@@ -285,17 +285,17 @@
   .source-switch::after {
     position: absolute;
     top: 3px;
-    left: 3px;
+    inset-inline-start: 3px;
     width: 18px;
     height: 18px;
     background: #ffffff;
     border-radius: 50%;
     box-shadow: 0 1px 3px rgba(20, 28, 48, 0.24);
     content: "";
-    transition: left 0.16s ease;
+    transition: inset-inline-start 0.16s ease;
   }
   .source-switch.on { background: #4c7eff; }
-  .source-switch.on::after { left: 21px; }
+  .source-switch.on::after { inset-inline-start: 21px; }
   .source-switch:disabled { cursor: default; opacity: 0.6; }
   .configured-item.source-off,
   .item.source-off { opacity: 0.62; }
@@ -323,7 +323,7 @@
   }
   .config-group summary::-webkit-details-marker { display: none; }
   .config-group summary::after {
-    margin-left: auto;
+    margin-inline-start: auto;
     color: #8a93a8;
     content: "+";
     font-size: 19px;
@@ -506,7 +506,7 @@
   .epg-source-row .config-field { margin-top: 10px; }
   .epg-scope-label {
     flex: 0 0 auto;
-    margin-right: 2px;
+    margin-inline-end: 2px;
     color: #6c7488;
     font-size: 12px;
   }
@@ -548,7 +548,7 @@
     font-weight: 600;
   }
   .epg-add::before {
-    margin-right: 7px;
+    margin-inline-end: 7px;
     content: "+";
     font-size: 18px;
     font-weight: 400;
@@ -577,6 +577,9 @@
     font-size: 10px; font-weight: 700; letter-spacing: 0.4px;
     clip-path: polygon(0 0, 80% 0, 100% 20%, 100% 100%, 0 100%);
   }
+  [dir="rtl"] .item .icon {
+    clip-path: polygon(20% 0, 100% 0, 100% 100%, 0 100%, 0 20%);
+  }
   .item .content { flex: 1 1 auto; min-width: 0; }
   .item .row1 {
     display: flex;
@@ -592,7 +595,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .item .size { color: #8a93a8; font-weight: normal; font-size: 13px; margin-left: 4px; }
+  .item .size { color: #8a93a8; font-weight: normal; font-size: 13px; margin-inline-start: 4px; }
   /* Row 2 shows the progress bar while uploading, or the status message once
      done/failed. Exactly one is visible at a time. */
   .item .row2 { margin-top: 6px; }
@@ -655,7 +658,7 @@
     <h1 class="pair-title">Connect to your TV</h1>
     <p class="pair-instructions">Enter the 4-digit code shown on your TV.</p>
     <form class="pair-form" id="pair-form">
-      <div class="pair-input">
+      <div class="pair-input" dir="ltr">
         <input class="pair-native-input" id="pair-code" type="text" inputmode="numeric"
           pattern="[0-9]{4}" maxlength="4" autocomplete="one-time-code"
           aria-label="Pairing code" autofocus required>
@@ -687,12 +690,12 @@
         <form class="config-fields" data-action="playlist">
           <label class="config-field">
             <span data-message="name">Name</span>
-            <input class="config-input" name="name" type="text" placeholder="My Playlist"
+            <input class="config-input" name="name" type="text" dir="auto" placeholder="My Playlist"
               data-placeholder-message="playlistNamePlaceholder">
           </label>
           <label class="config-field">
             <span data-message="playlistUrl">Playlist URL</span>
-            <input class="config-input" name="url" type="url"
+            <input class="config-input" name="url" type="url" dir="ltr"
               placeholder="https://example.com/playlist.m3u" required>
           </label>
           <button class="config-save" type="submit" data-message="addPlaylist">Add playlist</button>
@@ -705,18 +708,18 @@
         <form class="config-fields" data-action="xtream">
           <label class="config-field">
             <span data-message="serverUrl">Server URL</span>
-            <input class="config-input" name="serverUrl" type="url"
+            <input class="config-input" name="serverUrl" type="url" dir="ltr"
               placeholder="https://example.com" required>
           </label>
           <div class="config-row">
             <label class="config-field">
               <span data-message="username">Username</span>
-              <input class="config-input" name="username" type="text"
+              <input class="config-input" name="username" type="text" dir="ltr"
                 autocomplete="username" required>
             </label>
             <label class="config-field">
               <span data-message="password">Password</span>
-              <input class="config-input" name="password" type="password"
+              <input class="config-input" name="password" type="password" dir="ltr"
                 autocomplete="current-password" required>
             </label>
           </div>
@@ -760,29 +763,29 @@
           <div class="config-provider-status" id="subtitle-state"></div>
           <label class="config-field">
             <span>SubDL.com <span data-message="apiKey">API key</span></span>
-            <input class="config-input" name="subdlApiKey" type="password"
+            <input class="config-input" name="subdlApiKey" type="password" dir="ltr"
               autocomplete="off">
           </label>
           <label class="config-field">
             <span>Assrt.net <span data-message="assrtToken">Token</span></span>
-            <input class="config-input" name="assrtApiKey" type="password"
+            <input class="config-input" name="assrtApiKey" type="password" dir="ltr"
               autocomplete="off">
           </label>
           <div class="config-row opensubtitles-row">
             <label class="config-field">
               <span>OpenSubtitles.com <span data-message="apiKey">API key</span></span>
-              <input class="config-input" name="opensubtitlesApiKey" type="password"
+              <input class="config-input" name="opensubtitlesApiKey" type="password" dir="ltr"
                 autocomplete="off">
             </label>
             <label class="config-field">
               <span data-message="username">Username</span>
-              <input class="config-input" name="opensubtitlesUsername" type="text"
+              <input class="config-input" name="opensubtitlesUsername" type="text" dir="ltr"
                 autocomplete="off">
             </label>
           </div>
           <label class="config-field">
             <span data-message="password">Password</span>
-            <input class="config-input" name="opensubtitlesPassword" type="password"
+            <input class="config-input" name="opensubtitlesPassword" type="password" dir="ltr"
               autocomplete="off">
           </label>
           <button class="config-save" type="submit"
@@ -907,6 +910,78 @@
         success: "Successfully uploaded",
         failed: "Failed: ",
         networkError: "Failed: network error",
+      },
+    },
+    ar: {
+      systemExact: [],
+      systemPrefixes: ["ar"],
+      text: {
+        title: "إعداد IPTV",
+        subtitle: "أعدّ IPTV باستخدام روابط URL لقوائم التشغيل أو حسابات Xtream أو ملفات M3U",
+        configuredSources: "المصادر المضبوطة",
+        noConfiguredSources: "لم تُضبط أي مصادر بعد",
+        remove: "إزالة",
+        removing: "جارٍ الإزالة…",
+        removeFailed: "إعادة المحاولة",
+        enabled: "مفعّل",
+        disabled: "معطّل",
+        pairTitle: "الاتصال بالتلفزيون",
+        pairInstructions: "أدخل الرمز المكوّن من 4 أرقام الظاهر على التلفزيون.",
+        pairCode: "رمز الاقتران",
+        pairFailed: "رمز الاقتران غير صحيح.",
+        pairLocked: "محاولات كثيرة جدًا. حاول مجددًا بعد دقيقة.",
+        setupSources: "إعداد المصادر",
+        playlistUrl: "رابط URL لقائمة التشغيل",
+        name: "الاسم",
+        playlistNamePlaceholder: "قائمة التشغيل الخاصة بي",
+        addPlaylist: "إضافة قائمة تشغيل",
+        xtreamAccount: "حساب Xtream",
+        serverUrl: "رابط URL للخادم",
+        username: "اسم المستخدم",
+        password: "كلمة المرور",
+        addAccount: "إضافة حساب",
+        programGuideUrl: "رابط URL لدليل البرامج",
+        programGuideSources: "مصادر XMLTV اليدوية",
+        xmltvUrl: "رابط XMLTV",
+        appliesTo: "يُطبَّق على",
+        allPlaylists: "كل قوائم التشغيل",
+        addProgramGuideSource: "إضافة مصدر EPG",
+        duplicateProgramGuideSource: "يجب أن يستخدم كل مصدر EPG رابط URL مختلفًا.",
+        noProgramGuideSources: "لم تُضف مصادر EPG بعد",
+        moveUp: "نقل لأعلى",
+        moveDown: "نقل لأسفل",
+        saveProgramGuide: "حفظ دليل البرامج",
+        onlineSubtitles: "ترجمات عبر الإنترنت",
+        preferredSubtitle: "لغة الترجمة المفضّلة",
+        anyLanguage: "أي لغة",
+        apiKey: "مفتاح API",
+        assrtToken: "رمز API",
+        saveSubtitleSettings: "حفظ إعدادات الترجمة",
+        configured: "مضبوط",
+        notConfigured: "غير مضبوط",
+        builtInAccess: "وصول مدمج",
+        uploadM3uFiles: "رفع ملفات M3U",
+        saving: "جارٍ الحفظ…",
+        applyingOnTv: "جارٍ التطبيق على التلفزيون…",
+        savedToTv: "تم الحفظ على التلفزيون",
+        setupFailed: "تعذّر الحفظ",
+        setupTimedOut: "لم يؤكد التلفزيون التغيير",
+        drop: "اسحب ملفات .m3u وأفلتها هنا",
+        or: "أو",
+        browse: "تصفّح الملفات",
+        playlists: "قوائم التشغيل",
+        empty: "لا توجد قوائم تشغيل بعد",
+        channelCount: {
+          zero: "{count} قناة",
+          one: "{count} قناة",
+          two: "{count} قناتان",
+          few: "{count} قنوات",
+          many: "{count} قناة",
+          other: "{count} قناة",
+        },
+        success: "تم الرفع بنجاح",
+        failed: "فشل: ",
+        networkError: "فشل: خطأ في الشبكة",
       },
     },
     de: {
@@ -1461,6 +1536,7 @@
   var LOCALE_COOKIE = "iptv_setup_locale";
   var LOCALE_NAMES = {
     en: "English",
+    ar: "العربية",
     de: "Deutsch",
     es: "Español",
     fr: "Français",
@@ -1472,6 +1548,7 @@
   };
   var LOCALE_CODES = {
     en: "EN",
+    ar: "AR",
     de: "DE",
     es: "ES",
     fr: "FR",
@@ -1563,6 +1640,7 @@
 
   function setStaticMessages() {
     document.documentElement.lang = locale;
+    document.documentElement.dir = locale === "ar" ? "rtl" : "ltr";
     renderLanguageMenu();
     document.title = tr("title");
     document.querySelector('meta[name="description"]').setAttribute("content", tr("subtitle"));
@@ -1795,6 +1873,7 @@
       var input = document.createElement("input");
       input.className = "config-input epg-url-input";
       input.type = "url";
+      input.dir = "ltr";
       input.required = true;
       input.placeholder = "https://example.com/epg.xml";
       input.value = source.url;

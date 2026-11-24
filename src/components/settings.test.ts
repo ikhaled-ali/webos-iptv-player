@@ -106,6 +106,7 @@ const {
       getEpgTzOffset: vi.fn(() => state.tzOffset),
       getEpgOffsets: vi.fn(() => ({ ...state.epgOffsets })),
       getLocalePreference: vi.fn(() => state.locale),
+      getVoiceLanguage: vi.fn(() => 'app'),
       getOnlineSubtitleConfig: vi.fn(() => state.onlineSubtitles),
       getSelectedXtreamAccountId: vi.fn(() => null),
       getLiveCategorySnapshot: vi.fn(() => null),
@@ -155,6 +156,7 @@ const {
       }),
       migrateCatchupEpgOffsets: vi.fn(),
       setLocalePreference: vi.fn(),
+      setVoiceLanguage: vi.fn(),
       setOnlineSubtitleConfig: vi.fn((cfg: any) => { state.onlineSubtitles = cfg; }),
       remove: vi.fn(),
       clearRecentlyWatched: vi.fn(),
@@ -1679,6 +1681,16 @@ describe('Settings.save', () => {
     click('#app-language [data-dropdown-trigger]');
     click('#app-language [data-dropdown-value="zh-CN"]');
     expect(storageMock.setLocalePreference).toHaveBeenCalledWith('zh-CN');
+    expect(onSave).toHaveBeenCalledWith('autosave');
+  });
+
+  it('persists the voice search language as a display-only change', () => {
+    state.playlists = [{ id: 'p1', name: 'P', url: 'http://p' }];
+    settings.render();
+    expect(container.querySelector('#voice-language .dropdown-current')?.textContent).toBe('App language');
+    click('#voice-language [data-dropdown-trigger]');
+    click('#voice-language [data-dropdown-value="ar-EG"]');
+    expect(storageMock.setVoiceLanguage).toHaveBeenCalledWith('ar-EG');
     expect(onSave).toHaveBeenCalledWith('autosave');
   });
 

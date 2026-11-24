@@ -25,9 +25,11 @@ import {
 } from '../utils/channel';
 import { createXtreamLiveStreamIdResolver } from '../utils/xtream-live-match';
 import {
-  prepareSearchItem,
+  emptySearchIndex,
+  foldSearchText,
   rankPreparedTopK,
-  type PreparedSearchItem,
+  SearchIndexBuilder,
+  type PreparedSearchIndex,
   type RankedSearchResult,
 } from '../utils/channel-search';
 import { createLogger } from '../utils/logger';
@@ -55,6 +57,7 @@ import {
   type XtreamGroupNameFilter,
 } from '../utils/xtream-category-filter';
 import { liveParentalRequest, ParentalControlService } from './parental-control';
+import { perfEnd, perfStart } from '../utils/perf-trace';
 
 const log = createLogger('Playlist');
 
@@ -161,8 +164,9 @@ class PlaylistServiceImpl {
   private groupKeyByDisplay = new Map<string, string>();
   private channelByKey = new Map<string, Channel>();
   private channelByLegacyKey = new Map<string, Channel | null>();
-  private channelSearchIndex: PreparedSearchItem<Channel>[] = [];
-  private channelSearchByPlaylist = new Map<string, PreparedSearchItem<Channel>[]>();
+  private channelSearchIndex: PreparedSearchIndex<Channel> = emptySearchIndex();
+  // Positions in `channelSearchIndex` of each playlist's channels, ascending.
+  private channelSearchByPlaylist = new Map<string, Int32Array>();
   private indexedChannels: Channel[] | null = null;
   private indexedChannelCount = -1;
   private searchIndexedChannels: Channel[] | null = null;
@@ -331,7 +335,7 @@ class PlaylistServiceImpl {
     this.groupKeyByDisplay = new Map();
     this.channelByKey = new Map();
     this.channelByLegacyKey = new Map();
-    this.channelSearchIndex = [];
+    this.channelSearchIndex = emptySearchIndex();
     this.channelSearchByPlaylist = new Map();
     this.indexedChannels = null;
     this.indexedChannelCount = -1;
@@ -349,8 +353,11 @@ class PlaylistServiceImpl {
     }
     // Boot from an expired cache too; App schedules the overdue refresh in the
     // background instead of blocking startup on a full download.
+    const cacheRead = perfStart();
     const cached = await getCachedPlaylist(null);
+    perfEnd('playlist.cacheRead', cacheRead);
     if (cached) {
+      const cacheApplied = perfStart();
       const loadedIds = new Set(cached.loadedSourceIds ?? enabledSources.map(source => source.id));
       this.loadedSources = new Map(enabledSources
         .filter(source => loadedIds.has(source.id))
@@ -381,6 +388,7 @@ class PlaylistServiceImpl {
       this.applyCustomization();
       this.buildPlaylistTabs();
       StorageService.migrateFavoriteKeys(this.channels);
+      perfEnd('playlist.cacheApply', cacheApplied);
       this.logLoadCompleted('cache', enabledIds.size, 0);
       return this.channels;
     }
@@ -457,8 +465,10 @@ class PlaylistServiceImpl {
         const client = createXtreamClient(credentials);
         let allowedOutputFormats: string[] = [];
         if (pl.xtream.liveOutput === 'auto') {
+          const accountInfo = perfStart();
           allowedOutputFormats =
             (await client.getAccountInfo())?.allowedOutputFormats ?? [];
+          perfEnd('xtream.accountInfo', accountInfo);
         }
         xtreamOutput = resolveXtreamLiveOutput(pl.xtream.liveOutput, allowedOutputFormats);
         const catalogStarted = Date.now();
@@ -468,7 +478,9 @@ class PlaylistServiceImpl {
           `load=${String(load)}`,
           'endpoint=get_live_streams',
         );
+        const liveCatalogStarted = perfStart();
         const liveCatalog = await client.getLiveStreamsResult();
+        perfEnd('xtream.liveCatalog', liveCatalogStarted);
         xtreamCatalogAvailable = liveCatalog.available;
         xtreamStreams = liveCatalog.streams;
         log[liveCatalog.available ? 'info' : 'warn'](
@@ -479,7 +491,9 @@ class PlaylistServiceImpl {
           `items=${String(liveCatalog.streams.length)}`,
           `elapsedMs=${String(Date.now() - catalogStarted)}`,
         );
+        const categoryFiltered = perfStart();
         xtreamReferences = filterLiveStreams(categoryFilter, xtreamStreams);
+        perfEnd('xtream.categoryFilter', categoryFiltered);
         if (categoryFilter && liveCatalog.available) {
           log.info(
             'Xtream Live category filter applied',
@@ -591,6 +605,7 @@ class PlaylistServiceImpl {
         }
         if (!parsed) throw new Error('Xtream source returned no playlist or live catalog');
 
+        const catchup = perfStart();
         if (xtreamCredentials) {
           await this.applyXtreamCatchup(
             parsed.channels,
@@ -600,6 +615,7 @@ class PlaylistServiceImpl {
             fallbackStreams ?? xtreamStreams,
           );
         }
+        perfEnd('xtream.catchup', catchup);
         if (parsed.issues.length) {
           log.warn('Playlist diagnostics:',
             parsed.issues.slice(0, 5).map(issue => `${issue.code}@${issue.line}`).join(', '));
@@ -607,6 +623,7 @@ class PlaylistServiceImpl {
         log.info('Parsed', parsed.channels.length, 'channels,', parsed.groups.length, 'groups',
           parsed.epgUrl ? `| epg: ${parsed.epgUrl}` : '');
         let added = 0, dupes = 0;
+        const merged = perfStart();
         for (const ch of parsed.channels) {
           const existing = byUrl.get(ch.url);
           if (existing) {
@@ -622,6 +639,7 @@ class PlaylistServiceImpl {
             added++;
           }
         }
+        perfEnd('playlist.merge', merged);
         log.debug(`Added ${added} channels (${dupes} duplicates skipped)`);
         if (pl.source === 'xtream' && pl.xtream) {
           // The panel's own XMLTV endpoint; the get.php url-tvg (if any) is added below too.
@@ -771,9 +789,11 @@ class PlaylistServiceImpl {
       this.refreshTimestamp = null;
       log.warn('Skipping cache write because one or more playlists failed');
     }
+    const finalized = perfStart();
     this.applyCustomization();
     this.buildPlaylistTabs();
     StorageService.migrateFavoriteKeys(this.channels);
+    perfEnd('playlist.finalize', finalized);
     log.info('Refresh complete:', allChannels.length, 'total channels,', epgSources.length, 'epg sources');
     this.logLoadCompleted('network', playlists.length, failedPlaylists);
     done();
@@ -872,10 +892,12 @@ class PlaylistServiceImpl {
   applyCustomization(): void {
     const includeHidden = this.includeHidden || StorageService.getShowHiddenChannels();
     const sourceIndices = new Uint32Array(this.allChannels.length);
+    const keys: string[] = new Array(this.allChannels.length);
     this.unconcealedChannels = ChannelCustomizationService.applyTo(
       this.allChannels,
       includeHidden,
       sourceIndices,
+      keys,
     );
     if (ParentalControlService.concealing) {
       const visible: Channel[] = [];
@@ -891,7 +913,7 @@ class PlaylistServiceImpl {
       this.channels = this.unconcealedChannels;
     }
     this.channelSourceIndices = sourceIndices.subarray(0, this.channels.length);
-    this.buildDerivedIndexes();
+    this.buildDerivedIndexes(keys);
   }
 
   /**
@@ -934,7 +956,10 @@ class PlaylistServiceImpl {
     this.applyCustomization();
   }
 
-  private buildDerivedIndexes(): void {
+  // `sourceKeys`, when given, holds channelKey of each `allChannels` entry,
+  // computed by applyTo just before (urls cannot change in between).
+  private buildDerivedIndexes(sourceKeys?: string[]): void {
+    const built = perfStart();
     const groupSet = new Set<string>();
     const groupSetsByPlaylist = new Map<string, Set<string>>();
     this.indexMap = new Map();
@@ -944,7 +969,7 @@ class PlaylistServiceImpl {
     this.groupKeyByDisplay = new Map();
     this.channelByKey = new Map();
     this.channelByLegacyKey = new Map();
-    this.channelSearchIndex = [];
+    this.channelSearchIndex = emptySearchIndex();
     this.channelSearchByPlaylist = new Map();
     this.searchIndexedChannels = null;
     this.searchIndexedChannelCount = -1;
@@ -956,7 +981,7 @@ class PlaylistServiceImpl {
     for (let i = 0; i < this.channels.length; i++) {
       const ch = this.channels[i];
       this.indexMap.set(ch, i);
-      this.channelByKey.set(channelKey(ch), ch);
+      this.channelByKey.set(sourceKeys ? sourceKeys[this.channelSourceIndices[i]] : channelKey(ch), ch);
       const legacyKey = legacyChannelKey(ch);
       this.channelByLegacyKey.set(
         legacyKey,
@@ -999,6 +1024,7 @@ class PlaylistServiceImpl {
     this.indexedChannels = this.channels;
     this.indexedChannelCount = this.channels.length;
     this.groupsRevision++;
+    perfEnd('playlist.derivedIndexes', built);
   }
 
   private appendIndexed<T>(map: Map<string, T[]>, key: string, channel: T): void {
@@ -1017,18 +1043,27 @@ class PlaylistServiceImpl {
     this.ensureDerivedIndexes();
     if (this.searchIndexedChannels === this.channels
         && this.searchIndexedChannelCount === this.channels.length) return;
-    this.channelSearchIndex = [];
+    const built = perfStart();
+    this.channelSearchIndex = emptySearchIndex();
     this.channelSearchByPlaylist = new Map();
-    for (const channel of this.channels) {
-      const searchItem = prepareSearchItem(
-        channel,
-        item => [item.name, item.group, item.sourceName ?? ''],
-      );
-      this.channelSearchIndex.push(searchItem);
+    const builder = new SearchIndexBuilder<Channel>(this.channels.length);
+    const positions = new Map<string, number[]>();
+    for (let position = 0; position < this.channels.length; position++) {
+      const channel = this.channels[position];
+      builder.add(channel, [
+        foldSearchText(channel.name),
+        foldSearchText(channel.group),
+        foldSearchText(channel.sourceName ?? ''),
+      ]);
       for (const playlistId of channel.playlistIds) {
-        this.appendIndexed(this.channelSearchByPlaylist, playlistId, searchItem);
+        this.appendIndexed(positions, playlistId, position);
       }
     }
+    this.channelSearchIndex = builder.build();
+    for (const [playlistId, list] of positions) {
+      this.channelSearchByPlaylist.set(playlistId, new Int32Array(list));
+    }
+    perfEnd('playlist.searchIndex', built);
     this.searchIndexedChannels = this.channels;
     this.searchIndexedChannelCount = this.channels.length;
   }
@@ -1094,10 +1129,10 @@ class PlaylistServiceImpl {
   ): RankedSearchResult<Channel> {
     if (!query.trim()) return { items: [], hasMore: false };
     this.ensureLocalSearchIndexes();
-    const index = playlist
-      ? this.channelSearchByPlaylist.get(playlist) ?? []
-      : this.channelSearchIndex;
-    return rankPreparedTopK(index, query, limit);
+    const subset = playlist
+      ? this.channelSearchByPlaylist.get(playlist) ?? new Int32Array(0)
+      : undefined;
+    return rankPreparedTopK(this.channelSearchIndex, query, limit, true, subset);
   }
 
   getPlaylistIdsForGroup(group: ChannelGroupId): string[] {

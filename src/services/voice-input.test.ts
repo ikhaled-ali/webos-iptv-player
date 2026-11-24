@@ -18,6 +18,7 @@ vi.mock('./luna', () => ({
   },
 }));
 import {
+  speechLanguage,
   resetVoiceEngines,
   startVoiceSearch,
   voiceConductorText,
@@ -207,6 +208,22 @@ describe('speech engine', () => {
     expect(rec.abort).toHaveBeenCalled();
     rec.onend!();
     expect(done).not.toHaveBeenCalled();
+  });
+});
+
+describe('speechLanguage', () => {
+  it('uses the TV region for Arabic and falls back to ar-SA', () => {
+    expect(speechLanguage('ar', 'ar-EG')).toBe('ar-EG');
+    expect(speechLanguage('ar', 'en-US')).toBe('ar-SA');
+    expect(speechLanguage('ar', 'ar')).toBe('ar-SA');
+    expect(speechLanguage('de', 'en-US')).toBe('de');
+    expect(speechLanguage('', 'en-US')).toBe('en-US');
+  });
+
+  it('uses the language chosen in Settings over the app and TV languages', () => {
+    expect(speechLanguage('ar', 'ar-EG', 'ar-MA')).toBe('ar-MA');
+    expect(speechLanguage('en', 'en-US', 'es-MX')).toBe('es-MX');
+    expect(speechLanguage('ar', 'ar-EG', 'app')).toBe('ar-EG');
   });
 });
 

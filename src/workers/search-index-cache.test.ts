@@ -5,6 +5,7 @@ import type { Channel } from '../types';
 import type { CachedRecord, SearchCacheKey, SearchCacheReader } from './search-cache-reader';
 import { SearchCacheError } from './search-cache-reader';
 import { SearchWorkerIndex } from './search-index';
+import { SEARCH_INDEX_FORMAT } from './search-source-index';
 import type {
   SearchCacheRecord,
   SearchCachedNames,
@@ -586,7 +587,7 @@ describe('SearchWorkerIndex with persisted source indexes', () => {
       ],
     })).toEqual({ written: [candidate.key] });
     expect(memory.records.get(`search-index-cache|${candidate.key}`))
-      .toMatchObject({ key: candidate.key, expiresAt: 5, bytes: 9, format: 1 });
+      .toMatchObject({ key: candidate.key, expiresAt: 5, bytes: 9, format: SEARCH_INDEX_FORMAT });
   });
 
   it('prewarms with the timestamp the cache metadata records', async () => {

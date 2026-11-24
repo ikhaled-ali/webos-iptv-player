@@ -97,7 +97,7 @@ test('M3U channel results retain visible space above matching programmes', async
   await enterSearch(page);
   await page.locator('.tab-bar-search-input').fill('one');
 
-  const channel = page.locator('#view-search .search-channel-row').first();
+  const channel = page.locator('#view-search .channel-tile').first();
   const programme = page.locator('#view-search .search-program-row').first();
   await expect(channel).toContainText('Channel One');
   await expect(programme).toContainText('Programme One');

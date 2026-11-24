@@ -768,8 +768,8 @@ describe('ChannelList grid layout', () => {
 
   it('keeps its columns while the view is hidden', () => {
     list.render();
-    // 3 tiles of 210px plus two 24px gaps fit; a 4th does not.
-    setMainWidth(3 * 210 + 2 * 24);
+    // 3 tiles of 240px plus two 24px gaps fit; a 4th does not.
+    setMainWidth(3 * 240 + 2 * 24);
     list.render(false);
     const tile = () => container.querySelector<HTMLElement>('[data-list-position="2"]')!;
     const placed = tile().getAttribute('style');
@@ -783,7 +783,7 @@ describe('ChannelList grid layout', () => {
 
   it('leaves the grid only upward, from its top row', () => {
     list.render();
-    setMainWidth(3 * 210 + 2 * 24);
+    setMainWidth(3 * 240 + 2 * 24);
     list.render();
     const tile = (position: number) =>
       container.querySelector<HTMLElement>(`[data-list-position="${position}"]`)!;
@@ -1147,16 +1147,24 @@ describe('ChannelList interaction', () => {
     expect(channelItems()[2].classList.contains('playing')).toBe(true);
   });
 
-  it('highlightEntryPoint focuses the first channel without taking the caret', () => {
+  it('highlightEntryPoint focuses the selected category, not a channel', () => {
     list.highlightEntryPoint();
-    expect(ringed(channelItems()[0])).toBe(true);
+    expect(ringed(container.querySelector('[data-group="builtin:all"]'))).toBe(true);
+    expect(channelItems().some(ringed)).toBe(false);
+  });
+
+  it('highlightEntryPoint focuses the category even while a channel plays', () => {
+    list.setPlaying(2);
+    list.highlightEntryPoint();
+    expect(ringed(container.querySelector('[data-group="builtin:all"]'))).toBe(true);
+    expect(ringed(channelItems()[2])).toBe(false);
   });
 
   // However the channel was tuned — a number typed in the player, ch+/-, the
   // sidebar — coming back to the list has to land on what is playing.
-  it('highlightEntryPoint focuses the playing channel, not the first one', () => {
+  it('highlightEntryPoint resumes on the playing channel, not the first one', () => {
     list.setPlaying(2); // tuned elsewhere: the list never rendered a selection
-    list.highlightEntryPoint();
+    list.highlightEntryPoint(true);
     expect(ringed(channelItems()[2])).toBe(true);
     expect(ringed(channelItems()[0])).toBe(false);
   });
@@ -1177,13 +1185,13 @@ describe('ChannelList interaction', () => {
     expect(ringed(channelItems()[2])).toBe(false);
   });
 
-  it('highlightEntryPoint widens a filtered group to reach the playing channel', () => {
+  it('highlightEntryPoint resuming widens a filtered group to reach the playing channel', () => {
     hover(container.querySelector<HTMLElement>('[data-group="source:Sports"]')!);
     list.handleAction('select');
     expect(channelItems()).toHaveLength(1); // Bravo only
 
     list.setPlaying(0); // Alpha: playing, but outside the Sports filter
-    list.highlightEntryPoint();
+    list.highlightEntryPoint(true);
 
     expect(channelItems()).toHaveLength(3);
     expect(ringed(channelItems()[0])).toBe(true);

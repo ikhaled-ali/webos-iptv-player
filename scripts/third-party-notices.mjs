@@ -24,6 +24,7 @@ const VENDORED_FILES = [
   ['licenses/ass-compiler.txt', 'licenses/ass-compiler.txt'],
   ['licenses/qrcode-generator.txt', 'licenses/qrcode-generator.txt'],
   ['licenses/twemoji.txt', 'licenses/twemoji.txt'],
+  ['licenses/noto-kufi-arabic.txt', 'licenses/noto-kufi-arabic.txt'],
   ['licenses/hls-embedded.txt', 'licenses/hls-embedded.txt'],
   ['licenses/mpegts-embedded.txt', 'node_modules/mpegts.js/dist/mpegts.js.LICENSE.txt'],
   ['licenses/shaka-cml-cmcd.txt', 'node_modules/shaka-player/third_party/cml-cmcd/LICENSE'],

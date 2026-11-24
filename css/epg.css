@@ -1,15 +1,10 @@
 .epg-view {
-  --past: #5fc99a;
-  --live: #5fc99a;
-  --future: #8c9cf0;
   --epg-time-col-width: 73px;
 
   display: flex;
   flex-direction: column;
   height: 1080px;
-  background:
-    radial-gradient(1200px 600px at 78% -10%, rgb(var(--accent-rgb) / 0.06), transparent 60%),
-    var(--bg-primary);
+  background: var(--bg-primary);
 }
 
 :lang(de) .epg-view { --epg-time-col-width: 111px; }
@@ -26,8 +21,7 @@
   min-width: 0;
   margin-left: auto;
   color: var(--text-muted);
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 18px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -42,38 +36,26 @@
   padding: 0 24px 0 16px;
 }
 
-.epg-legend-item {
+.epg-reminder-entry {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: 0.4px;
+  height: 48px;
+  padding: 0 16px;
+  font: inherit;
+  font-size: 20px;
   color: var(--text-secondary);
-}
-
-.epg-reminder-entry {
-  padding: 8px 10px;
-  font-family: inherit;
   background: transparent;
-  border: 1px solid transparent;
-  border-radius: 6px;
+  border: 2px solid transparent;
+  border-radius: var(--radius);
 }
 
 .epg-reminder-entry:hover,
 .epg-reminder-entry.focused {
-  color: var(--text-primary);
-  background-image: var(--focus-layer);
+  color: #000;
+  background-color: #fff;
+  background-image: none;
 }
-
-.epg-legend-dot {
-  width: 11px;
-  height: 11px;
-  border-radius: 3px;
-}
-
-.epg-legend-item.state-past .epg-legend-dot { background: var(--past); }
-.epg-legend-item.state-future .epg-legend-dot { background: var(--future); }
 
 .epg-main {
   flex: 1;
@@ -91,89 +73,54 @@
   border-right: 1px solid var(--border);
 }
 
-/* Compound so it outranks .playlist-tabs regardless of stylesheet order. */
-.playlist-tabs.epg-playlist-tabs {
-  gap: 2px;
-  padding: 8px 12px 0;
-  background: var(--bg-secondary);
-}
-
-.epg-playlist-tabs .playlist-tab {
-  padding: 9px 14px;
-  font-size: 17px;
-  font-weight: 600;
-  border: 0;
-  border-bottom: 3px solid transparent;
-  border-radius: 6px 6px 0 0;
-  background: transparent;
-  color: var(--text-secondary);
-}
-
-.epg-playlist-tabs .playlist-tab.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-  background: rgb(var(--accent-rgb) / 0.08);
-}
-
-.epg-playlist-tabs .playlist-tab.focused {
-  color: var(--text-primary);
-  background-image: var(--focus-layer);
-}
-
+/* The pane header under the filters, sized like Live's sidebar text. */
 .epg-channel-pane-header {
-  height: 38px;
+  height: 48px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 0 18px;
+  padding: 0 24px;
   border-bottom: 1px solid var(--border);
 }
 
 .epg-channel-pane-count {
   color: var(--text-muted);
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: 0.3px;
+  font-size: 18px;
 }
 
 .epg-filter-bar {
   position: relative;
   z-index: 2;
-  height: 56px;
+  height: 64px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
+  padding: 8px;
   background: var(--bg-secondary);
 }
 
 .epg-group-control {
   position: relative;
-  width: 190px;
+  width: 200px;
   flex-shrink: 0;
 }
 
 .epg-filter-control {
   width: 100%;
-  height: 42px;
+  height: 48px;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 10px;
+  gap: 8px;
+  padding: 0 12px;
   color: var(--text-secondary);
   background: var(--bg-tertiary);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: 2px solid transparent;
+  border-radius: var(--radius);
   font: inherit;
-  font-size: 16px;
+  font-size: 18px;
   cursor: pointer;
-}
-
-.epg-filter-control:hover {
-  color: var(--text-primary);
-  background: var(--bg-card);
 }
 
 .epg-filter-control.active {
@@ -181,8 +128,13 @@
 }
 
 .epg-filter-control.focused {
-  color: var(--text-primary);
-  background-image: var(--focus-layer);
+  color: #000;
+  background-color: #fff;
+  background-image: none;
+}
+
+.epg-filter-control.focused .epg-group-button-prefix {
+  color: inherit;
 }
 
 .epg-group-button-label {
@@ -200,8 +152,8 @@
 }
 
 .epg-group-button-arrow {
-  width: 17px;
-  height: 17px;
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
   transform: rotate(-90deg);
   transform-origin: center;
@@ -223,7 +175,7 @@
 .epg-group-menu {
   position: absolute;
   z-index: 20;
-  top: 48px;
+  top: 56px;
   left: 0;
   width: 300px;
   max-height: 470px;
@@ -232,16 +184,15 @@
   overflow: hidden;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   box-shadow: 0 14px 30px rgba(0, 0, 0, 0.38);
 }
 
 .epg-group-menu-title {
   flex-shrink: 0;
-  padding: 12px 14px 8px;
+  padding: 12px 16px 8px;
   color: var(--text-muted);
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 18px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -261,22 +212,27 @@
   height: 44px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 10px;
-  color: var(--text-secondary);
-  border: 1px solid transparent;
-  border-radius: 5px;
+  gap: 12px;
+  padding: 0 12px;
+  border: 2px solid transparent;
+  border-radius: var(--radius);
   cursor: pointer;
 }
 
+/* Like Live's groups: the chosen one keeps a tinted fill; focus turns it
+   white with black text. */
 .epg-group-option.active {
-  color: var(--accent);
-  background: rgb(var(--accent-rgb) / 0.08);
+  background-color: var(--focus-tint);
 }
 
 .epg-group-option.focused {
-  color: var(--text-primary);
-  background-image: var(--focus-layer);
+  color: #000;
+  background-color: #fff;
+  background-image: none;
+}
+
+.epg-group-option.focused .epg-group-option-count {
+  color: inherit;
 }
 
 .epg-group-option-label {
@@ -285,27 +241,27 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 17px;
+  font-size: 20px;
 }
 
 .epg-group-option-count {
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: 18px;
   font-variant-numeric: tabular-nums;
 }
 
 .epg-search-wrap {
-  height: 42px;
+  height: 48px;
   min-width: 0;
   flex: 1;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 9px;
+  gap: 8px;
+  padding: 0 12px;
   color: var(--text-muted);
   background: var(--bg-tertiary);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: 2px solid transparent;
+  border-radius: var(--radius);
 }
 
 .epg-search-wrap.focused {
@@ -323,8 +279,8 @@
 }
 
 .epg-search-icon {
-  width: 17px;
-  height: 17px;
+  width: 20px;
+  height: 20px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -345,7 +301,7 @@
   border: 0;
   outline: 0;
   font: inherit;
-  font-size: 16px;
+  font-size: 18px;
 }
 
 .epg-search-input::placeholder {
@@ -355,6 +311,7 @@
 .epg-channel-list {
   flex: 1;
   min-height: 0;
+  padding: 0 8px;
   overflow-y: auto;
   overflow-anchor: none;
 }
@@ -371,59 +328,56 @@
   text-align: center;
 }
 
+/* Fixed height: the list is virtualized, so CHANNEL_ROW_SIZE in
+   epg-grid.ts must stay this height plus the 8px vertical margin. Like
+   Live's channels, the selected one keeps a tinted fill and focus turns the
+   row white with black text. */
 .epg-channel-item {
   position: absolute;
   left: 0;
   right: 0;
   box-sizing: border-box;
-  height: 72px;
+  height: 64px;
+  margin: 4px 0;
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 0 18px;
+  padding: 0 16px;
+  border: 2px solid transparent;
+  border-radius: var(--radius);
   cursor: pointer;
-  border-bottom: 1px solid rgb(var(--accent-rgb) / 0.08);
-  transition: background 0.12s;
-}
-
-.epg-channel-item:hover {
-  background: rgb(var(--accent-rgb) / 0.06);
+  transition: background-color 120ms ease-out, color 120ms ease-out;
 }
 
 .epg-channel-item.selected {
-  background: rgb(var(--accent-rgb) / 0.12);
-  box-shadow: inset 4px 0 0 var(--accent);
+  background-color: var(--focus-tint);
 }
 
 .epg-channel-item.focused {
-  background-image: var(--focus-layer);
+  color: #000;
+  background-color: #fff;
+  background-image: none;
 }
 
 .epg-ch-num {
   min-width: 44px;
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 18px;
   color: var(--text-muted);
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
-.epg-channel-item.selected .epg-ch-num {
-  color: var(--accent);
+.epg-channel-item.focused .epg-ch-num {
+  color: inherit;
 }
 
 .epg-ch-name {
-  font-size: 20px;
-  font-weight: 400;
+  font-size: 22px;
+  font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
-}
-
-.epg-channel-item.selected .epg-ch-name {
-  color: var(--text-primary);
-  font-weight: 600;
 }
 
 .epg-right-pane {
@@ -457,73 +411,75 @@
   overflow-y: hidden;
 }
 
+/* The chosen day is a selected chip (the primary-button state); focus is
+   white with black text, as everywhere in the lists. */
 .epg-date-item {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-width: 64px;
-  padding: 6px 14px;
-  border-radius: 6px;
-  border-top: 2px solid transparent;
+  min-width: 72px;
+  height: 60px;
+  box-sizing: border-box;
+  padding: 0 16px;
+  border: 2px solid transparent;
+  border-radius: var(--radius);
   background: var(--bg-tertiary);
   color: var(--text-secondary);
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.12s, color 0.12s;
-}
-
-.epg-date-item:hover {
-  background: var(--bg-card);
-  color: var(--text-primary);
+  transition: background-color 120ms ease-out, color 120ms ease-out;
 }
 
 .epg-date-weekday {
-  font-size: 14px;
+  font-size: 18px;
   color: var(--text-muted);
   line-height: 1.2;
 }
 
 .epg-date-date {
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 20px;
+  font-weight: 500;
   line-height: 1.2;
   font-variant-numeric: tabular-nums;
 }
 
-.epg-date-item.day-past { border-top-color: rgba(95, 201, 154, 0.45); }
-.epg-date-item.day-past .epg-date-weekday { color: rgba(95, 201, 154, 0.8); }
-.epg-date-item.day-future { border-top-color: rgba(140, 156, 240, 0.45); }
-.epg-date-item.day-future .epg-date-weekday { color: rgba(140, 156, 240, 0.8); }
-
-.epg-date-item.today {
-  border: 1px solid var(--accent-dim);
-  border-top-width: 2px;
+.epg-date-item.today .epg-date-weekday {
+  color: var(--accent);
 }
 
 .epg-date-item.selected {
-  background: var(--accent);
   color: #fff;
-  border-top-color: transparent;
+  background: var(--accent-dim);
+  border-color: var(--accent);
 }
 
 .epg-date-item.selected .epg-date-weekday {
-  color: #fff;
-  opacity: 0.85;
+  color: inherit;
 }
 
 .epg-date-item.focused {
-  background-image: var(--focus-layer);
+  color: #000;
+  background-color: #fff;
+  background-image: none;
+}
+
+.epg-date-item.focused .epg-date-weekday {
+  color: inherit;
 }
 
 .epg-programmes-pane {
   flex: 1;
+  padding: 0 8px;
   overflow-y: auto;
   overflow-anchor: none;
   background: var(--bg-primary);
 }
 
+/* Rows are content-sized and measured. Aired programmes step back to the
+   muted text; the one on air carries the live badge. Focus turns the row
+   white with black text, as in Live. */
 .epg-programme-item {
   position: absolute;
   left: 0;
@@ -532,48 +488,40 @@
   display: flex;
   align-items: flex-start;
   gap: 20px;
-  padding: 15px 20px 15px 16px;
+  padding: 16px 20px 16px 16px;
+  border: 2px solid transparent;
+  border-radius: var(--radius);
   cursor: pointer;
-  border-bottom: 1px solid rgba(42, 42, 62, 0.5);
-  transition: background 0.12s;
+  transition: background-color 120ms ease-out, color 120ms ease-out;
 }
 
-.epg-programme-item::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 4px;
-  background: var(--row-color, var(--border));
+/* A divider that leaves the measured height alone. */
+.epg-programme-item {
+  box-shadow: inset 0 -1px 0 var(--border);
 }
 
-.epg-programme-item.state-past { --row-color: var(--past); }
-.epg-programme-item.state-live { --row-color: var(--live); }
-.epg-programme-item.state-future { --row-color: var(--future); }
-
-.epg-programme-item:hover {
-  background: rgb(var(--accent-rgb) / 0.06);
+.epg-programme-item.state-past,
+.epg-programme-item.state-past .epg-prog-time {
+  color: var(--text-muted);
 }
 
-.epg-programme-item.state-past .epg-prog-time { color: var(--past); }
-
-.epg-programme-item.state-future .epg-prog-time { color: var(--future); }
-
-.epg-programme-item.state-live {
-  background: linear-gradient(90deg, rgba(95, 201, 154, 0.12), rgba(95, 201, 154, 0.04) 55%, transparent);
+/* On air now, like Live's playing channel. */
+.epg-programme-item.current {
+  background-color: var(--focus-tint);
+  box-shadow: none;
 }
-.epg-programme-item.state-live::before {
-  box-shadow: 0 0 14px 1px rgba(95, 201, 154, 0.32);
-  animation: epgRailPulse 2.4s ease-in-out infinite;
-}
-.epg-programme-item.state-live .epg-prog-time { color: var(--live); }
 
 .epg-programme-item.focused {
-  background-image: var(--focus-layer);
+  color: #000;
+  background-color: #fff;
+  background-image: none;
 }
-.epg-programme-item.focused .epg-prog-title { color: var(--text-primary); }
-.epg-programme-item.focused .epg-prog-desc { opacity: 1; }
+
+.epg-programme-item.focused .epg-prog-time,
+.epg-programme-item.focused .epg-prog-dur,
+.epg-programme-item.focused .epg-prog-desc {
+  color: inherit;
+}
 
 .epg-prog-time-col {
   flex-shrink: 0;
@@ -586,14 +534,14 @@
 
 .epg-prog-time {
   font-size: 22px;
-  font-weight: 600;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
 }
 
 .epg-prog-dur {
-  margin-top: 3px;
-  font-size: 13px;
+  margin-top: 4px;
+  font-size: 18px;
   color: var(--text-muted);
   display: inline-flex;
   align-items: center;
@@ -602,10 +550,9 @@
 }
 
 .epg-replay-glyph {
-  width: 14px;
-  height: 14px;
-  color: var(--past);
-  vertical-align: -2px;
+  width: 18px;
+  height: 18px;
+  vertical-align: -3px;
 }
 
 .epg-prog-body {
@@ -614,7 +561,7 @@
 }
 
 .epg-prog-title {
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 500;
   margin-bottom: 4px;
   display: flex;
@@ -623,7 +570,7 @@
 }
 
 .epg-prog-desc {
-  font-size: 16px;
+  font-size: 18px;
   color: var(--text-secondary);
   line-height: 1.35;
   overflow: hidden;
@@ -639,44 +586,36 @@
   font-size: 20px;
 }
 
-@keyframes epgRailPulse {
-  0%, 100% { opacity: 0.65; }
-  50% { opacity: 1; }
-}
-
-/* Catch-up resume/watched badges and progress bar */
+/* Catch-up badges and progress, as on Live's recently watched rows. */
 .epg-catchup-badge {
   display: inline-block;
-  font-size: 12px;
-  font-weight: 600;
-  padding: 2px 8px;
-  border-radius: 4px;
-  letter-spacing: 0.5px;
-  vertical-align: middle;
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
 }
 .epg-catchup-badge.resume {
-  background: rgb(var(--accent-rgb) / 0.18);
   color: var(--accent);
 }
 .epg-catchup-badge.watched {
-  background: rgba(95, 201, 154, 0.15);
-  color: var(--live);
+  color: var(--text-secondary);
+}
+.epg-programme-item.focused .epg-catchup-badge {
+  color: inherit;
+  border-color: currentColor;
 }
 .epg-catchup-progress {
-  height: 3px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 2px;
-  margin-top: 4px;
+  height: 4px;
+  margin-top: 8px;
   overflow: hidden;
+  border-radius: 2px;
+  background: var(--bg-tertiary);
 }
 .epg-catchup-progress-fill {
   height: 100%;
+  border-radius: inherit;
   background: var(--accent);
-  border-radius: 2px;
-}
-.epg-programme-item.focused .epg-catchup-badge.resume {
-  background: rgb(var(--accent-rgb) / 0.28);
-}
-.epg-programme-item.focused .epg-catchup-badge.watched {
-  background: rgba(95, 201, 154, 0.25);
 }

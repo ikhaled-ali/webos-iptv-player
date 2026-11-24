@@ -1,12 +1,14 @@
 import {
+  emptySearchIndex,
   foldSearchText,
-  prepareFoldedSearchItem,
+  prepareFoldedSearchItems,
   rankPreparedNamesTopK,
   rankPreparedTopK,
   type PreparedNameSearchIndex,
-  type PreparedSearchItem,
+  type PreparedSearchIndex,
 } from '../utils/channel-search';
 import { CONFIG } from '../config';
+import { perfEnd, perfStart } from '../utils/perf-trace';
 import {
   cacheEntryMetaId,
   CACHE_META_STORE,
@@ -59,10 +61,10 @@ type ReadSource = (ref: SearchCacheKey) => Promise<CachedRecord | null>;
 
 export class SearchWorkerIndex {
   private sessionId: number | null = null;
-  private channels: PreparedSearchItem<number>[] = [];
+  private channels: PreparedSearchIndex<number> = emptySearchIndex();
   // Folded channel documents, which cached programme documents are joined with.
   private channelDocuments: string[][] = [];
-  private programmes: PreparedSearchItem<number>[] = [];
+  private programmes: PreparedSearchIndex<number> = emptySearchIndex();
   private movies = emptyNames();
   private series = emptyNames();
   private pending: Promise<void> | null = null;
@@ -132,9 +134,9 @@ export class SearchWorkerIndex {
     if (request.reset) {
       this.sessionId = request.sessionId;
       this.staging = {};
-      this.channels = [];
+      this.channels = emptySearchIndex();
       this.channelDocuments = [];
-      this.programmes = [];
+      this.programmes = emptySearchIndex();
       this.movies = emptyNames();
       this.series = emptyNames();
     } else if (request.sessionId !== this.sessionId) {
@@ -328,16 +330,18 @@ export class SearchWorkerIndex {
     if (chunk.names) for (const name of chunk.names) staged.names.push(name);
     if (count + incoming.length < chunk.total) return true;
     delete this.staging[source];
+    const built = perfStart();
     if (source === 'channels') this.setChannels(staged.documents);
     else if (source === 'programmes') this.programmes = prepareFolded(foldDocuments(staged.documents));
     else if (source === 'movies') this.movies = foldedNames(staged.names.map(foldSearchText));
     else this.series = foldedNames(staged.names.map(foldSearchText));
+    perfEnd(`search.w.build.${source}`, built, { items: incoming.length + count });
     return true;
   }
 
   private clear(source: SearchIndexSource): void {
     if (source === 'channels') this.setChannels([]);
-    else if (source === 'programmes') this.programmes = [];
+    else if (source === 'programmes') this.programmes = emptySearchIndex();
     else if (source === 'movies') this.movies = emptyNames();
     else this.series = emptyNames();
   }
@@ -349,7 +353,8 @@ export class SearchWorkerIndex {
 
   private runQuery(request: SearchQueryRequest): SearchQueryResponse | null {
     if (request.sessionId !== this.sessionId) return null;
-    return {
+    const ranked = perfStart();
+    const response: SearchQueryResponse = {
       channels: rankedFields(this.channels, request.query, request.limit),
       programmes: rankedFields(this.programmes, request.query, request.limit),
       movies: request.includeCatalog
@@ -359,6 +364,8 @@ export class SearchWorkerIndex {
         ? rankedNames(this.series, request.query, request.limit)
         : emptyResult(),
     };
+    perfEnd('search.w.rank', ranked);
+    return response;
   }
 }
 
@@ -375,18 +382,22 @@ async function readOptional(read: ReadSource, key: string): Promise<CachedRecord
   }
 }
 
-function prepareFolded(documents: string[][]): PreparedSearchItem<number>[] {
-  return documents.map((fields, index) => prepareFoldedSearchItem(index, fields));
+function prepareFolded(documents: string[][]): PreparedSearchIndex<number> {
+  return prepareFoldedSearchItems(indexItems(documents.length), documents);
+}
+
+function indexItems(count: number): number[] {
+  const items: number[] = new Array(count);
+  for (let i = 0; i < count; i++) items[i] = i;
+  return items;
 }
 
 function foldedNames(values: string[]): PreparedNameSearchIndex<number> {
-  const items: number[] = new Array(values.length);
-  for (let i = 0; i < values.length; i++) items[i] = i;
-  return { items, values };
+  return { items: indexItems(values.length), values };
 }
 
 function rankedFields(
-  index: PreparedSearchItem<number>[],
+  index: PreparedSearchIndex<number>,
   query: string,
   limit: number,
 ): SearchRankedIndices {

@@ -32,8 +32,11 @@ html:not(.keyboard-nav) .account-avatar:hover {
   filter: brightness(1.12);
 }
 
+/* Focus as on the rest of the rail: white fill, black letter. */
 .account-avatar.focused {
-  background-image: var(--focus-layer-strong);
+  color: #000;
+  background-color: #fff;
+  background-image: none;
 }
 
 .account-menu {

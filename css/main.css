@@ -35,6 +35,48 @@
   src: url('../assets/fonts/SF-Pro-Display-Bold.woff') format('woff');
 }
 
+/* Arabic letters only: unicode-range keeps every other character in SF Pro,
+   which has no Arabic. Subset to the Arabic blocks. */
+@font-face {
+  font-family: 'Noto Kufi App';
+  font-style: normal;
+  font-weight: 300;
+  src: url('../assets/fonts/NotoKufiArabic-Light.woff') format('woff');
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-08FF, U+FB50-FDFF, U+FE70-FEFF, U+200C-200F, U+25CC;
+}
+
+@font-face {
+  font-family: 'Noto Kufi App';
+  font-style: normal;
+  font-weight: 400;
+  src: url('../assets/fonts/NotoKufiArabic-Regular.woff') format('woff');
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-08FF, U+FB50-FDFF, U+FE70-FEFF, U+200C-200F, U+25CC;
+}
+
+@font-face {
+  font-family: 'Noto Kufi App';
+  font-style: normal;
+  font-weight: 500;
+  src: url('../assets/fonts/NotoKufiArabic-Medium.woff') format('woff');
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-08FF, U+FB50-FDFF, U+FE70-FEFF, U+200C-200F, U+25CC;
+}
+
+@font-face {
+  font-family: 'Noto Kufi App';
+  font-style: normal;
+  font-weight: 600;
+  src: url('../assets/fonts/NotoKufiArabic-SemiBold.woff') format('woff');
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-08FF, U+FB50-FDFF, U+FE70-FEFF, U+200C-200F, U+25CC;
+}
+
+@font-face {
+  font-family: 'Noto Kufi App';
+  font-style: normal;
+  font-weight: 700;
+  src: url('../assets/fonts/NotoKufiArabic-Bold.woff') format('woff');
+  unicode-range: U+0600-06FF, U+0750-077F, U+0870-08FF, U+FB50-FDFF, U+FE70-FEFF, U+200C-200F, U+25CC;
+}
+
 :root {
   --bg-primary: #121012;
   --bg-secondary: #1b1819;
@@ -208,7 +250,7 @@ html, body {
   width: 1920px;
   height: 1080px;
   overflow: hidden;
-  font-family: 'SF Pro App', -apple-system, 'LG Smart UI', 'Helvetica Neue', Arial, sans-serif;
+  font-family: 'Noto Kufi App', 'SF Pro App', -apple-system, 'LG Smart UI', 'Helvetica Neue', Arial, sans-serif;
   font-size: 24px;
   line-height: 1.4;
   color: var(--text-primary);
@@ -348,8 +390,8 @@ button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggl
     color var(--transition);
 }
 
-button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggle):not(.epg-reminder-entry):not(.parental-row):not(.live-category-row):not(.tab-bar-item):not(.catalog-remove-mark):hover,
-button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggle):not(.epg-reminder-entry):not(.parental-row):not(.live-category-row):not(.tab-bar-item):not(.catalog-remove-mark).focused {
+button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggle):not(.epg-reminder-entry):not(.parental-row):not(.live-category-row):not(.tab-bar-item):not(.settings-nav-item):not(.catalog-remove-mark):not(.remove-tip-btn):hover,
+button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggle):not(.epg-reminder-entry):not(.parental-row):not(.live-category-row):not(.tab-bar-item):not(.settings-nav-item):not(.catalog-remove-mark):not(.remove-tip-btn).focused {
   transform: scale(1.03);
 }
 
@@ -716,4 +758,51 @@ button:not(:disabled):not(.account-avatar):not(.toggle-option):not(.source-toggl
 .epg-bell-glyph.set {
   color: var(--warning);
   filter: drop-shadow(0 0 4px rgb(var(--warning-rgb) / 0.5));
+}
+
+/* The hold-to-remove tooltip over a Home tile, styled like the account
+   menu: one row, centered on the tile (left/top are set in px). */
+.remove-tip {
+  position: fixed;
+  z-index: 10000;
+  transform: translateX(-50%);
+  padding: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+.remove-tip.hidden {
+  display: none;
+}
+.remove-tip-btn {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px 12px 14px;
+  border: none;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 26px;
+  white-space: nowrap;
+  color: var(--text-primary);
+  background-color: transparent;
+  cursor: pointer;
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+.remove-tip-btn svg {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  color: var(--danger);
+}
+/* Focus as on the tab bar and Home's See all card: white fill, black
+   content. */
+.remove-tip-btn.focused {
+  color: #000;
+  background-color: #fff;
+  background-image: none;
+}
+.remove-tip-btn.focused svg {
+  color: #000;
 }

@@ -22,6 +22,7 @@ import {
   type CacheStore,
 } from './idb-database';
 import { cacheEntryMetaId, cacheRecordTimestamp, PLAYLIST_CACHE_KEY } from './idb-schema';
+import { perfEnd, perfStart } from '../utils/perf-trace';
 
 const log = createLogger('CacheStorage');
 const CACHE_CATEGORIES = ['playlist', 'epg', 'catalog', 'subtitle', 'health', 'search'] as const;
@@ -558,12 +559,19 @@ async function readRaw(store: CacheStore, key: IDBValidKey): Promise<StoredRecor
   }
   try {
     const lookup = await diskKey(store, key);
+    const read = perfStart();
     const tx = db.transaction(store, 'readonly');
     let raw = await requestResult(tx.objectStore(store).get(lookup)) as
       Record<string, unknown> | undefined;
+    // The read, its wait, and the structured-clone deserialization.
+    perfEnd(`idb.get.${store}`, read);
     if (!raw) return null;
+    const decoded = perfStart();
     raw = await decodeRecord(store, raw);
+    perfEnd(`idb.decode.${store}`, decoded);
+    const normalizing = perfStart();
     const normalized = isNormalizedRecord(store, raw) ? raw : normalizeRecord(store, raw);
+    perfEnd(`idb.normalize.${store}`, normalizing);
     if (!isNormalizedRecord(store, raw)) {
       void persistNormalizedRecord(store, normalized);
     } else {
@@ -777,11 +785,10 @@ async function readEntryMeta(
 
 async function storageEstimate(): Promise<{ usage: number | null; quota: number | null }> {
   try {
-    // StorageManager is absent on webOS 4; guard before accessing it.
+    // Absent outside a secure context; guard before accessing it.
     if (typeof navigator === 'undefined' || !navigator.storage?.estimate) {
       return { usage: null, quota: null };
     }
-    // eslint-disable-next-line compat/compat
     const estimate = await navigator.storage.estimate();
     return {
       usage: typeof estimate.usage === 'number' ? estimate.usage : null,
@@ -982,9 +989,15 @@ async function commitRecord(
   const deltaEntries = previous ? 0 : 1;
   const categoryUsage = metadata.categories[category];
   const now = Date.now();
+  const encoding = perfStart();
   const encoded = await encodeRecord(store, record);
+  perfEnd(`idb.encode.${store}`, encoding);
+  const committing = perfStart();
   const tx = db.transaction([store, META_STORE], 'readwrite');
+  const cloning = perfStart();
   tx.objectStore(store).put(encoded);
+  // put() serializes the record synchronously on this thread.
+  perfEnd(`idb.put.${store}`, cloning);
   const key = encoded[cacheKeyPath(store)] as IDBValidKey;
   tx.objectStore(META_STORE).put(entryMeta(store, key, record));
   tx.objectStore(META_STORE).put({
@@ -1010,6 +1023,7 @@ async function commitRecord(
       );
     }
   });
+  perfEnd(`idb.commit.${store}`, committing);
 }
 
 async function putRawNow(
@@ -1032,7 +1046,9 @@ async function putRawNow(
   }
   await ensureMetadata();
   const previous = await readEntryMeta(store, key);
+  const sized = perfStart();
   const record = normalizeRecord(store, raw);
+  perfEnd(`idb.size.${store}`, sized);
   await ensureCapacity(Math.max(0, record.byteSize - (previous?.byteSize ?? 0)));
   try {
     const latest = await readEntryMeta(store, key);

@@ -1,5 +1,6 @@
 import { createLogger } from './logger';
 import { Focus } from '../navigation/focus-scope';
+import { isRtl } from '../navigation/reading-direction';
 
 const log = createLogger('Dom');
 
@@ -85,7 +86,6 @@ export function visibleHeight(el: HTMLElement): number {
 
 export function focusWithoutScroll(el: HTMLElement): void {
   if (supportsPreventScroll()) {
-    // eslint-disable-next-line webos-compat/unsupported-patterns -- feature-detected above
     el.focus({ preventScroll: true });
     return;
   }
@@ -149,10 +149,31 @@ function esc(value: unknown): string {
  * concatenated. Returns a `Safe` — call `String(...)` when assigning to innerHTML.
  */
 export function html(strings: TemplateStringsArray, ...values: unknown[]): Safe {
+  const rtl = isRtl();
+  let inTag = false;
   let out = '';
   for (let i = 0; i < strings.length; i++) {
     out += strings[i];
-    if (i < values.length) out += esc(values[i]);
+    if (rtl) {
+      const open = strings[i].lastIndexOf('<');
+      const close = strings[i].lastIndexOf('>');
+      if (open !== close) inTag = open > close;
+    }
+    if (i < values.length) {
+      const value = values[i];
+      out += rtl && !inTag && typeof value === 'string' ? isolateLtr(esc(value)) : esc(value);
+    }
   }
   return new Safe(out);
+}
+
+// In a right-to-left UI a Latin name such as "Alpha (HD)" would render as
+// "(Alpha (HD" — its trailing punctuation takes the paragraph's direction.
+// First-strong isolates (FSI…PDI) give interpolated text its own direction
+// while the row keeps its right-to-left alignment. Attribute values are left
+// alone.
+const LTR_LETTER_RE = /[A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF]/;
+
+function isolateLtr(text: string): string {
+  return LTR_LETTER_RE.test(text) ? `\u2068${text}\u2069` : text;
 }

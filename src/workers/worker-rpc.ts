@@ -1,3 +1,14 @@
+import {
+  drainPerfSpans,
+  enablePerfTrace,
+  importPerfSpans,
+  perfEnabled,
+  perfEnd,
+  perfSpan,
+  perfStart,
+  type PerfSpan,
+} from '../utils/perf-trace';
+
 export interface WorkerTask {
   request: unknown;
   response: unknown;
@@ -13,12 +24,21 @@ interface WorkerRequest {
   id: number;
   task: string;
   payload: unknown;
+  /** Set while perf tracing is on: the page's send time, in wall-clock ms. */
+  trace?: number;
+}
+
+interface WorkerTrace {
+  spans: PerfSpan[];
+  /** When the handler settled, in wall-clock ms. */
+  handlerEnd: number;
 }
 
 interface WorkerSuccess {
   kind: 'success';
   id: number;
   result: unknown;
+  trace?: WorkerTrace;
 }
 
 interface WorkerProgress {
@@ -54,6 +74,7 @@ interface WorkerEndpoint {
 }
 
 type PendingRequest = {
+  task: string;
   resolve(value: unknown): void;
   reject(reason: Error): void;
   onChunk?: (chunk: unknown) => void;
@@ -86,7 +107,12 @@ export class WorkerRpcClient<Tasks extends WorkerTaskMap<Tasks>> {
     private readonly worker: WorkerLike,
     private readonly options: WorkerRpcClientOptions = {},
   ) {
-    worker.addEventListener('message', event => this.handleMessage(event.data));
+    worker.addEventListener('message', event => {
+      // Blink deserializes a message on first `data` access, so this times it.
+      const received = perfStart();
+      const data = event.data;
+      this.handleMessage(data, received);
+    });
     worker.addEventListener('error', event => {
       this.failFatal(
         new Error(event.message || 'Worker execution failed'),
@@ -108,15 +134,28 @@ export class WorkerRpcClient<Tasks extends WorkerTaskMap<Tasks>> {
   ): Promise<Tasks[TaskName]['response']> {
     if (this.closed) return Promise.reject(new Error('Worker RPC client is terminated'));
     const id = this.nextId++;
+    const started = perfStart();
+    const settle = (): void => perfEnd(`rpc.${task}`, started);
     return new Promise<Tasks[TaskName]['response']>((resolve, reject) => {
       this.pending.set(id, {
-        resolve: value => resolve(value as Tasks[TaskName]['response']),
-        reject,
+        task,
+        resolve: value => {
+          settle();
+          resolve(value as Tasks[TaskName]['response']);
+        },
+        reject: error => {
+          settle();
+          reject(error);
+        },
         onChunk: onChunk as ((chunk: unknown) => void) | undefined,
       });
-      const message: WorkerRequest = { kind: 'request', id, task, payload };
+      const message: WorkerRequest = perfEnabled()
+        ? { kind: 'request', id, task, payload, trace: Date.now() }
+        : { kind: 'request', id, task, payload };
       try {
+        const posted = perfStart();
         this.worker.postMessage(message);
+        perfEnd(`rpc.post.${task}`, posted);
       } catch (error) {
         this.pending.delete(id);
         reject(asError(error));
@@ -131,7 +170,7 @@ export class WorkerRpcClient<Tasks extends WorkerTaskMap<Tasks>> {
     this.failAll(new Error(reason));
   }
 
-  private handleMessage(value: unknown): void {
+  private handleMessage(value: unknown, received = 0): void {
     if (!isWorkerResponse(value)) {
       this.failFatal(
         new Error('Worker returned an invalid RPC response'),
@@ -142,11 +181,20 @@ export class WorkerRpcClient<Tasks extends WorkerTaskMap<Tasks>> {
     const pending = this.pending.get(value.id);
     if (!pending) return;
     if (value.kind === 'progress') {
+      perfEnd(`rpc.receive.${pending.task}`, received);
+      const handled = perfStart();
       pending.onChunk?.(value.chunk);
+      perfEnd(`rpc.chunk.${pending.task}`, handled);
       return;
     }
     this.pending.delete(value.id);
     if (value.kind === 'success') {
+      if (received && value.trace) {
+        importPerfSpans(value.trace.spans);
+        // Serializing, queueing, and delivering the result, up to the page's receipt.
+        perfSpan(`rpc.transfer.${pending.task}`, value.trace.handlerEnd - (Date.now() - performance.now()), received);
+      }
+      perfEnd(`rpc.receive.${pending.task}`, received);
       pending.resolve(value.result);
       return;
     }
@@ -188,6 +236,14 @@ export function exposeWorkerTasks<Tasks extends WorkerTaskMap<Tasks>>(
       postFailure(endpoint, request.id, new Error(`Unknown worker task: ${request.task}`));
       return;
     }
+    const traced = typeof request.trace === 'number';
+    let handlerStart = 0;
+    if (traced) {
+      enablePerfTrace();
+      handlerStart = performance.now();
+      // The request's queueing and deserialization, from the page's send.
+      perfSpan(`rpc.w.dispatch.${request.task}`, request.trace! - (Date.now() - handlerStart), handlerStart);
+    }
     let result: unknown;
     try {
       result = handler(request.payload, chunk => {
@@ -196,7 +252,9 @@ export function exposeWorkerTasks<Tasks extends WorkerTaskMap<Tasks>>(
           id: request.id,
           chunk,
         };
+        const posted = perfStart();
         endpoint.postMessage(response);
+        perfEnd(`rpc.w.postChunk.${request.task}`, posted);
       });
     } catch (error) {
       postFailure(endpoint, request.id, asError(error));
@@ -209,6 +267,10 @@ export function exposeWorkerTasks<Tasks extends WorkerTaskMap<Tasks>>(
           id: request.id,
           result,
         };
+        if (traced) {
+          perfSpan(`rpc.w.handler.${request.task}`, handlerStart, performance.now());
+          response.trace = { spans: drainPerfSpans(), handlerEnd: Date.now() };
+        }
         try {
           endpoint.postMessage(response);
         } catch (error) {

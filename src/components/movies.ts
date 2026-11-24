@@ -7,6 +7,7 @@ import { xtreamVodUrl } from '../utils/xtream-url';
 import { CatalogView, type CollectionKind, type CollectionEntry } from './catalog-view';
 import { PLAY_ICON, REMOVE_ICON, watchlistIcon } from './icons';
 import { showToast } from './toast';
+import { posterCard } from './item-cards';
 import { t, tp } from '../i18n';
 
 // The Movies section: browse (Continue rail + per-category rails + an "all
@@ -87,15 +88,17 @@ export class Movies extends CatalogView<VodCategory, VodItem> {
 
   private watchlistTile(entry: WatchlistEntry, managing = false): Safe {
     const vod = this.watchlistEntryToVod(entry);
-    return html`
-      <div class="catalog-tile" ${raw(managing ? '' : 'data-focusable')} data-key="w:${vod.streamId}"
-           data-item-id="${vod.streamId}" data-category-id="${vod.categoryId}"
-           data-watchlist-item="${vod.streamId}">
-        <div class="catalog-poster-wrap">${this.posterCell(vod.name, vod.poster)}${
-          this.itemLockBadge(vod.categoryId, vod.streamId)}${this.removeMark(managing, `w:${vod.streamId}`)}</div>
-        <div class="catalog-tile-name">${vod.name}</div>
-      </div>
-    `;
+    return posterCard({
+      key: `w:${vod.streamId}`,
+      name: vod.name,
+      poster: vod.poster,
+      art: 'movie',
+      lock: this.itemLockBadge(vod.categoryId, vod.streamId),
+      overlay: this.removeMark(managing, `w:${vod.streamId}`),
+      focusable: !managing,
+      attrs: html`data-item-id="${vod.streamId}" data-category-id="${vod.categoryId}"
+        data-watchlist-item="${vod.streamId}"`,
+    });
   }
 
   private watchlistToVod(streamId: string): VodItem | null {
@@ -258,27 +261,27 @@ export class Movies extends CatalogView<VodCategory, VodItem> {
 
     morph(this.layer('detail'), html`
       <div class="catalog-view movies-detail" data-nav-container>
-        <div class="detail-poster-wrap">${this.posterCell(vod.name, poster)}</div>
+        ${this.posterCell(poster)}
         <div class="detail-body">
-          <h1 class="detail-title">${vod.name}</h1>
+          <h1 class="detail-title" dir="auto">${vod.name}</h1>
           <div class="detail-meta">${meta.join('  ·  ')}</div>
-          ${info?.plot ? html`<p class="detail-plot">${info.plot}</p>` : ''}
+          ${info?.plot ? html`<p class="detail-plot" dir="auto">${info.plot}</p>` : ''}
           ${info?.cast ? html`<div class="detail-cast"><span class="detail-label">${t('catalog.cast')}</span> ${info.cast}</div>` : ''}
           ${info?.director ? html`<div class="detail-cast"><span class="detail-label">${t('catalog.director')}</span> ${info.director}</div>` : ''}
           <div class="detail-actions">
             ${saved ? html`
-              <button class="detail-btn detail-btn-primary" data-focusable data-key="resume" data-action="resume">
+              <button class="btn btn-primary detail-btn" data-focusable data-key="resume" data-action="resume">
                 <span class="detail-btn-icon">${raw(PLAY_ICON)}</span><span>${t('common.resume')}</span>
               </button>` : ''}
-            <button class="detail-btn ${saved ? '' : 'detail-btn-primary'}" data-focusable data-key="play" data-action="play">
+            <button class="btn ${saved ? 'btn-secondary' : 'btn-primary'} detail-btn" data-focusable data-key="play" data-action="play">
               <span class="detail-btn-icon">${raw(PLAY_ICON)}</span><span>${t(saved ? 'catalog.playFromStart' : 'catalog.play')}</span>
             </button>
-            <button class="detail-btn" data-focusable data-key="watchlist" data-action="watchlist">
+            <button class="btn btn-secondary detail-btn" data-focusable data-key="watchlist" data-action="watchlist">
               <span class="detail-btn-icon">${raw(watchlistIcon(watchlisted))}</span>
               <span>${t(watchlisted ? 'catalog.removeWatchlist' : 'catalog.addWatchlist')}</span>
             </button>
             ${saved ? html`
-              <button class="detail-btn detail-btn-danger" data-focusable data-key="remove-resume" data-action="remove-resume">
+              <button class="btn btn-danger detail-btn" data-focusable data-key="remove-resume" data-action="remove-resume">
                 <span class="detail-btn-icon">${raw(REMOVE_ICON)}</span>
                 <span>${t('catalog.removeContinueWatching')}</span>
               </button>

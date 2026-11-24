@@ -13,7 +13,7 @@ import {
 } from '../utils/time';
 import { showToast } from './toast';
 import { ConfirmationPrompt } from './confirmation-prompt';
-import { BACK_ICON, CLOCK_ICON, REMOVE_ICON, TRASH_ICON } from './icons';
+import { backIcon, CLOCK_ICON, REMOVE_ICON, TRASH_ICON } from './icons';
 
 interface ReminderDayGroup {
   key: string;
@@ -35,7 +35,7 @@ export class ReminderManager {
     this.focusScope = Focus.register({
       id: 'view.reminders',
       root: container,
-      leaveFor: { up: 'tabbar' },
+      leaveFor: { up: 'tabbar', left: 'tabbar' },
       defaultKey: () => {
         const el = this.nav.focused;
         return el && this.container.contains(el) ? el.dataset.key ?? null : null;
@@ -88,7 +88,7 @@ export class ReminderManager {
           <div class="reminder-manager-actions">
             <button class="reminder-manager-back" data-focusable data-key="back"
                     data-reminder-action="back">
-              <span class="reminder-manager-button-icon">${raw(BACK_ICON)}</span>
+              <span class="reminder-manager-button-icon">${raw(backIcon())}</span>
               <span>${t('common.back')}</span>
             </button>
             ${reminders.length
@@ -175,7 +175,7 @@ export class ReminderManager {
           <span>${formatTime(start)}</span>
         </time>
         <div class="reminder-manager-details">
-          <div class="reminder-manager-program">${reminder.title}</div>
+          <div class="reminder-manager-program" dir="auto">${reminder.title}</div>
           <div class="reminder-manager-channel">${reminder.channelName}</div>
         </div>
         <button class="reminder-manager-remove" data-focusable

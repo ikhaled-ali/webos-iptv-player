@@ -160,13 +160,16 @@ class EpgServiceImpl {
     this.playlistChannels = channels ?? null;
     this.setSources(sources);
     this.mappedChannelIds = this.collectMappedChannelIds();
-    this.appliedFilters = new Map(this.sources.map((source) =>
-      [source.url, this.filterFor(source)] as const));
+    // Each filter walks every channel; build it once per source for the
+    // applied-filter record and the restore below.
+    const filters = this.sources.map((source) => this.filterFor(source));
+    this.appliedFilters = new Map(this.sources.map((source, index) =>
+      [source.url, filters[index]] as const));
     const revision = ++this.revision;
-    const restored = await Promise.all(this.sources.map(async (source) => {
+    const restored = await Promise.all(this.sources.map(async (source, index) => {
       try {
         const state = preserveCurrent ? this.states.get(source.url) : undefined;
-        const filter = this.filterFor(source);
+        const filter = filters[index];
         if (state && (!filter || !isEmptyFilter(filter))) {
           this.setState(source.url, {
             ...state,
@@ -177,7 +180,7 @@ class EpgServiceImpl {
         }
         return {
           source,
-          result: await this.restoreCachedSource(source, revision),
+          result: await this.restoreCachedSource(source, revision, filter),
         };
       } catch (err) {
         log.warn('Cache read failed:', source.url, err);
@@ -575,9 +578,10 @@ class EpgServiceImpl {
   private async restoreCachedSource(
     source: EpgSource,
     revision: number,
+    sourceFilter?: SourceFilter | null,
   ): Promise<CacheRestoreResult> {
     if (revision !== this.revision) return 'missing';
-    const filter = this.filterFor(source);
+    const filter = sourceFilter === undefined ? this.filterFor(source) : sourceFilter;
     if (filter && isEmptyFilter(filter)) {
       this.states.delete(source.url);
       this.channelIdsByName.delete(source.url);

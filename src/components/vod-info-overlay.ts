@@ -74,19 +74,16 @@ export class VodInfoOverlay {
     const length = d.durationSecs > 0 ? formatDuration(d.durationSecs * 1000) : '';
     const meta = [d.year, length, d.genre, d.rating].filter(part => !!part);
     morph(this.el, html`
-      <div class="menu-header">
-        <h2>${t('player.titleInfo')}</h2>
-      </div>
       <div class="vod-info-card" data-self-activate data-focusable data-key="info-panel">
         <div class="vod-info-head">
           ${poster ? html`<img class="vod-info-poster" src="${poster}" alt="">` : ''}
           <div class="vod-info-heading">
-            ${d.context ? html`<div class="vod-info-context">${d.context}</div>` : ''}
-            <h2 class="vod-info-title">${d.title}</h2>
+            ${d.context ? html`<div class="vod-info-context" dir="auto">${d.context}</div>` : ''}
+            <h2 class="vod-info-title" dir="auto">${d.title}</h2>
             ${meta.length ? html`<div class="vod-info-meta">${meta.join('  ·  ')}</div>` : ''}
           </div>
         </div>
-        ${d.plot ? html`<p class="vod-info-plot">${d.plot}</p>` : ''}
+        ${d.plot ? html`<p class="vod-info-plot" dir="auto">${d.plot}</p>` : ''}
         ${d.cast ? html`<div class="vod-info-credit"><span class="vod-info-label">${t('catalog.cast')}</span> ${d.cast}</div>` : ''}
         ${d.director ? html`<div class="vod-info-credit"><span class="vod-info-label">${t('catalog.director')}</span> ${d.director}</div>` : ''}
       </div>

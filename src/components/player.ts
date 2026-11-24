@@ -214,7 +214,6 @@ export class Player {
     });
     this.osd = new PlayerOsd(container, {
       getSnapshot: () => this.osdSnapshot(),
-      canAutoReveal: () => this.osdMayReveal(),
       isCovered: () => this.panelOpen(),
       canSeek: () => this.canSeek(),
       onSeekFraction: fraction => this.seekToFraction(fraction),
@@ -1206,14 +1205,15 @@ export class Player {
     this.seekTo(marker.end);
   }
 
-  // Skips to the following episode, from its own resume point when it has one.
+  // Skips to the following episode, from its own resume point when it has
+  // one. Moving on counts this one as watched to the end.
   private playNextEpisode(): void {
     const v = this.vod;
     const queue = v && v.kind === 'episode' && !this.upNextTimer ? v.episodeQueue ?? [] : [];
     const next = queue[0];
     if (!v || !next) return;
     this.osd.releaseFocus();
-    this.saveVodResume();
+    this.completeVod(v);
     const saved = StorageService.getResume(next.accountId, next.kind, next.itemId);
     const item: VodPlayback = {
       ...next,

@@ -74,7 +74,7 @@ test('the account avatar shows the active account initial, to the right of Searc
 
   // It sits to the right of the Search magnifier.
   const avatarBox = await avatar.boundingBox();
-  const searchBox = await page.locator('.tab-bar-search .search-icon').boundingBox();
+  const searchBox = await page.locator('.tab-bar-search').boundingBox();
   if (!avatarBox || !searchBox) throw new Error('missing bounding box');
   expect(avatarBox.x).toBeGreaterThan(searchBox.x);
 });

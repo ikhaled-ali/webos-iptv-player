@@ -1,5 +1,6 @@
 import { withInstantScroll } from './dom';
 import { createLogger } from './logger';
+import { inlineScrollStart, setInlineScrollStart } from './scroll-axis';
 
 const log = createLogger('VirtualScroll');
 
@@ -67,12 +68,12 @@ export class VirtualScrollGuard {
   }
 
   private readOffset(element: HTMLElement, axis: VirtualScrollAxis): number {
-    return axis === 'horizontal' ? element.scrollLeft : element.scrollTop;
+    return axis === 'horizontal' ? inlineScrollStart(element) : element.scrollTop;
   }
 
   private writeOffset(element: HTMLElement, { axis, offset, instant }: ExpectedScroll): void {
     const write = (): void => {
-      if (axis === 'horizontal') element.scrollLeft = offset;
+      if (axis === 'horizontal') setInlineScrollStart(element, offset);
       else element.scrollTop = offset;
     };
     if (instant) withInstantScroll([element], write);

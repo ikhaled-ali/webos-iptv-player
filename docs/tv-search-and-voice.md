@@ -26,7 +26,20 @@ search results.
 
 - **Voice in Search.** The Search box is a plain `<input>`. With it focused,
   the remote's mic fills it with the spoken text and the results update as if
-  it were typed.
+  it were typed. The mic button beside the box can't listen on a TV: webOS's
+  `webkitSpeechRecognition` is a stub that never starts, and voiceconductor's
+  `recognizeVoice*` methods sit in its `private` ACG group, which a
+  non-system app is denied. So on a TV the mic button puts the caret in the
+  box under a hint to use the remote's mic.
+- **Recognition language.** The mic button's recognizer listens in the app's
+  language. Arabic uses the TV's own Arabic region when it has one (its
+  dialect, e.g. `ar-EG`), else `ar-SA` (`speechLanguage` in
+  `src/services/voice-input.ts`).
+- **Arabic matching.** Search folds Arabic spelling variants before matching:
+  hamza and madda forms of alef, waw, and yeh, `ة`/`ه`, `ى`/`ي`, tashkeel,
+  tatweel, and Arabic-Indic digits, so a spoken or typed query finds a name
+  however the playlist spells it. Topic words and filler (`ابحث عن`,
+  `قنوات`) work as they do in English (`src/utils/channel-search.ts`).
 - **Search launch param.** A launch or relaunch with a `query` param opens the
   Search box with the query filled in and focuses the first result. A
   reminder's `reminderChannelKey` wins when both are present.

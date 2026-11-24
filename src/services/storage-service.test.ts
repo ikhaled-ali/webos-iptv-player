@@ -400,6 +400,14 @@ describe('StorageService', () => {
     expect(StorageService.getLocalePreference()).toBe('system');
   });
 
+  it('defaults the voice language to the app language and round-trips a choice', () => {
+    expect(StorageService.getVoiceLanguage()).toBe('app');
+    StorageService.setVoiceLanguage('ar-EG');
+    expect(StorageService.getVoiceLanguage()).toBe('ar-EG');
+    StorageService.set('voice_language', 'l1');
+    expect(StorageService.getVoiceLanguage()).toBe('app');
+  });
+
   it('defaults reminders to an empty array and round-trips them', () => {
     expect(StorageService.getReminders()).toEqual([]);
     const list = [{ channelKey: 'k1', channelName: 'Chan A', title: 'Alpha', startMs: 100, stopMs: 200 }];

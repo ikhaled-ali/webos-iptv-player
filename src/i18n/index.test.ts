@@ -4,6 +4,7 @@ import {
   DEFAULT_LOCALE,
   formatNumber,
   isLocalePreference,
+  isRtlLocale,
   localeOptions,
   resolveLocale,
   setLocale,
@@ -45,12 +46,15 @@ describe('i18n', () => {
     expect(resolveLocale('system', 'tr-TR')).toBe('tr');
     expect(resolveLocale('system', 'tr-CY')).toBe('tr');
     expect(resolveLocale('system', 'uk-UA')).toBe('uk');
+    expect(resolveLocale('system', 'ar')).toBe('ar');
+    expect(resolveLocale('system', 'ar-EG')).toBe('ar');
     expect(resolveLocale('zh-CN', 'en-US')).toBe('zh-CN');
   });
 
   it('recognizes locale preferences from the registered message catalogs', () => {
     expect(isLocalePreference('system')).toBe(true);
     expect(isLocalePreference('en')).toBe(true);
+    expect(isLocalePreference('ar')).toBe(true);
     expect(isLocalePreference('de')).toBe(true);
     expect(isLocalePreference('es')).toBe(true);
     expect(isLocalePreference('fr')).toBe(true);
@@ -68,6 +72,7 @@ describe('i18n', () => {
     expect(DEFAULT_LOCALE).toBe('en');
     expect(localeOptions()).toEqual([
       { value: 'en', label: 'English' },
+      { value: 'ar', label: 'العربية' },
       { value: 'de', label: 'Deutsch' },
       { value: 'es', label: 'Español' },
       { value: 'fr', label: 'Français' },
@@ -79,6 +84,17 @@ describe('i18n', () => {
       { value: 'uk', label: 'Українська' },
       { value: 'zh-CN', label: '简体中文' },
     ]);
+  });
+
+  it('sets the document direction and keeps Western digits for Arabic', () => {
+    setLocale('ar');
+    expect(document.documentElement.lang).toBe('ar');
+    expect(document.documentElement.dir).toBe('rtl');
+    expect(isRtlLocale()).toBe(true);
+    expect(formatNumber(1234)).toMatch(/^1.?234$/);
+    setLocale('en');
+    expect(document.documentElement.dir).toBe('ltr');
+    expect(isRtlLocale()).toBe(false);
   });
 
   it('pluralizes refresh-hour options in every locale', () => {

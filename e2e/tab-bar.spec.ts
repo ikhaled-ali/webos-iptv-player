@@ -230,7 +230,7 @@ test('M3U-only shows a docked bar with Live/Guide/Settings/Search only (no Movie
   // search magnifier stays flush against the bar's right edge (no dangling gap).
   await expect(page.locator('.account-avatar')).toHaveCount(0);
   const inner = (await page.locator('.tab-bar-inner').boundingBox())!;
-  const icon = (await page.locator('.tab-bar-search .search-icon').boundingBox())!;
+  const icon = (await page.locator('.tab-bar-search').boundingBox())!;
   expect((inner.x + inner.width) - (icon.x + icon.width)).toBeLessThan(4);
 });
 
@@ -281,7 +281,7 @@ test('the Search magnifier rests bare and draws the focus circle on hover and D-
   await page.goto('/');
   await expect(page.locator('#view-channels')).toBeVisible();
 
-  const icon = page.locator('.tab-bar-search .search-icon');
+  const icon = page.locator('.tab-bar-search');
   const look = () => icon.evaluate((el) => {
     const s = getComputedStyle(el);
     return { border: s.borderTopColor, shadow: s.boxShadow, transform: s.transform };
@@ -335,7 +335,7 @@ test('the open Search shows the text tabs\' accent underline under the magnifier
   await page.goto('/');
   await expect(page.locator('#view-channels')).toBeVisible();
 
-  const icon = page.locator('.tab-bar-search .search-icon');
+  const icon = page.locator('.tab-bar-search');
   const underline = () => icon.evaluate((el) => getComputedStyle(el, '::after').content);
   expect(await underline()).toBe('none');
 
@@ -359,7 +359,7 @@ test('switching to the D-pad drops a resting pointer\'s hover circle on the magn
   await page.goto('/');
   await expect(page.locator('#view-channels')).toBeVisible();
 
-  const icon = page.locator('.tab-bar-search .search-icon');
+  const icon = page.locator('.tab-bar-search');
   const look = () => icon.evaluate((el) => {
     const s = getComputedStyle(el);
     return { border: s.borderTopColor, shadow: s.boxShadow };
@@ -402,7 +402,7 @@ function pressGreen(page: import('@playwright/test').Page): Promise<void> {
 }
 
 test.describe('a pointer click on a section tab', () => {
-  test('shows no ring in Live until a key, which only reveals the entry point', async ({ page }) => {
+  test('shows no ring in Live until a key, which only reveals the selected category', async ({ page }) => {
     const events: string[] = [];
     page.on('console', (msg) => events.push(msg.text()));
     await seedXtream(page);
@@ -423,14 +423,15 @@ test.describe('a pointer click on a section tab', () => {
     await expect(page.locator('#view-channels')).toBeVisible();
     await expect(page.locator('#view-channels')).toHaveAttribute('data-ring-owner', 'deferred');
     await expect(page.locator('#view-channels .focused')).toHaveCount(0);
-    await expect(rows.first()).toHaveClass(/\bfocused-parked\b/);
+    const category = page.locator('#view-channels .group-item.active');
+    await expect(category).toHaveClass(/\bfocused-parked\b/);
 
     await page.keyboard.press('ArrowDown');
-    await expect(rows.first()).toHaveClass(/\bfocused\b/);
+    await expect(category).toHaveClass(/\bfocused\b/);
     await expect(page.locator('#view-channels .focused')).toHaveCount(1);
     await expect(page.locator('#view-channels')).toHaveAttribute('data-ring-owner', '');
     await page.keyboard.press('ArrowDown');
-    await expect(rows.nth(1)).toHaveClass(/\bfocused\b/);
+    await expect(page.locator('#view-channels .group-item.focused:not(.active)')).toHaveCount(1);
     await expect(page.locator('.tab-bar-item.focused')).toHaveCount(0);
 
     expect(events.some((text) => /event=nav\.focus\.deferred view=settings\b/.test(text))).toBe(true);
@@ -726,7 +727,7 @@ test('a channel number that lands while the bar owns the keys still clears its r
 });
 
 test.describe('switching sections from the bar with the D-pad', () => {
-  test('Down onto Live rings its entry point, not the bar, and never two rings', async ({ page }) => {
+  test('Down onto Live rings the selected category, not the bar, and never two rings', async ({ page }) => {
     await seedXtream(page);
     await routeLiveManifest(page);
     await page.goto('/');
@@ -748,10 +749,10 @@ test.describe('switching sections from the bar with the D-pad', () => {
     await expect(page.locator('#view-channels')).toBeVisible();
 
     await page.keyboard.press('ArrowDown');
-    await expect(rows.first()).toHaveClass(/\bfocused\b/);
+    await expect(page.locator('#view-channels .group-item.active')).toHaveClass(/\bfocused\b/);
     await expect(page.locator('.focused:visible')).toHaveCount(1);
     await page.keyboard.press('ArrowDown');
-    await expect(rows.nth(1)).toHaveClass(/\bfocused\b/);
+    await expect(page.locator('#view-channels .group-item.focused:not(.active)')).toHaveCount(1);
   });
 
   test('a tab click between keys leaves the content dark until the next key', async ({ page }) => {

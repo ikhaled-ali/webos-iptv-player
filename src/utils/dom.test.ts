@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { html, raw, Safe } from './dom';
 
 describe('html escaping helper', () => {
@@ -38,5 +38,21 @@ describe('html escaping helper', () => {
 
   it('returns a Safe instance', () => {
     expect(html`<p>x</p>`).toBeInstanceOf(Safe);
+  });
+});
+
+describe('html in a right-to-left UI', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('isolates interpolated Latin text but not attributes, Arabic, or numbers', () => {
+    vi.stubGlobal('document', { documentElement: { dir: 'rtl' } });
+    const name = 'Alpha (HD)';
+    expect(String(html`<div title="${name}" data-key="ch:${name}">${name} · ${'قناة'} ${12}</div>`))
+      .toBe('<div title="Alpha (HD)" data-key="ch:Alpha (HD)">\u2068Alpha (HD)\u2069 · قناة 12</div>');
+  });
+
+  it('leaves text as is left-to-right', () => {
+    vi.stubGlobal('document', { documentElement: { dir: 'ltr' } });
+    expect(String(html`<b>${'Alpha (HD)'}</b>`)).toBe('<b>Alpha (HD)</b>');
   });
 });

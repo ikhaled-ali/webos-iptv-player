@@ -1,22 +1,31 @@
 import {
+  foldArabicLetters,
   isLetterOrNumber,
+  LETTER_NUMBER_SEPARATOR_GLOBAL_RE,
   splitLetterNumberTokens,
   stripCombiningDiacritics,
 } from './unicode-text';
 
+// Arabic entries are written already folded (ه for ة, ي for ى, bare alef).
 const SYNONYM_GROUPS = [
-  ['sports', 'sport', 'footy', 'football', 'soccer', 'athletics'],
-  ['kids', 'kid', 'children', 'child', 'cartoons', 'cartoon', 'animation', 'animated'],
-  ['news', 'headlines', 'current affairs'],
-  ['movies', 'movie', 'films', 'film', 'cinema'],
-  ['music', 'songs', 'song', 'concerts', 'concert'],
-  ['documentaries', 'documentary', 'docs', 'history', 'nature'],
+  ['sports', 'sport', 'footy', 'football', 'soccer', 'athletics',
+    'رياضه', 'الرياضه', 'رياضيه', 'رياضي', 'كره', 'القدم'],
+  ['kids', 'kid', 'children', 'child', 'cartoons', 'cartoon', 'animation', 'animated',
+    'اطفال', 'الاطفال', 'كرتون', 'الكرتون'],
+  ['news', 'headlines', 'current affairs', 'اخبار', 'الاخبار', 'اخباريه'],
+  ['movies', 'movie', 'films', 'film', 'cinema', 'افلام', 'الافلام', 'فيلم', 'سينما'],
+  ['music', 'songs', 'song', 'concerts', 'concert', 'موسيقي', 'الموسيقي', 'اغاني', 'الاغاني'],
+  ['documentaries', 'documentary', 'docs', 'history', 'nature', 'وثائقي', 'وثائقيه', 'الوثائقيه'],
 ] as const;
 
-const STOP_WORDS = new Set(['find', 'me', 'show', 'watch', 'for', 'please', 'channel', 'channels', 'program', 'programs']);
+const STOP_WORDS = new Set([
+  'find', 'me', 'show', 'watch', 'for', 'please', 'channel', 'channels', 'program', 'programs',
+  'ابحث', 'عن', 'اعرض', 'شغل', 'شاهد', 'من', 'فضلك', 'لو', 'سمحت',
+  'قناه', 'قنوات', 'برنامج', 'برامج',
+]);
 
 function fold(value: string): string {
-  return stripCombiningDiacritics(value.normalize('NFD')).toLowerCase();
+  return foldArabicLetters(stripCombiningDiacritics(value.normalize('NFD'))).toLowerCase();
 }
 
 function splitFolded(value: string): string[] {
@@ -40,30 +49,38 @@ function variants(token: string): string[] {
   return [token];
 }
 
-function withinOneEdit(a: string, b: string): boolean {
-  if (Math.abs(a.length - b.length) > 1) return false;
-  if (a.length === b.length) {
+// Whether `a` and the token `value[start, end)` are at most one edit (or one
+// adjacent swap) apart, compared by UTF-16 code unit.
+function withinOneEdit(a: string, value: string, start: number, end: number): boolean {
+  const bLength = end - start;
+  if (Math.abs(a.length - bLength) > 1) return false;
+  if (a.length === bLength) {
     let edits = 0;
     for (let i = 0; i < a.length;) {
-      if (a[i] === b[i]) {
+      if (a.charCodeAt(i) === value.charCodeAt(start + i)) {
         i++;
         continue;
       }
       if (edits > 0) return false;
       edits++;
-      if (i + 1 < a.length && a[i] === b[i + 1] && a[i + 1] === b[i]) i += 2;
+      if (i + 1 < a.length
+          && a.charCodeAt(i) === value.charCodeAt(start + i + 1)
+          && a.charCodeAt(i + 1) === value.charCodeAt(start + i)) i += 2;
       else i++;
     }
     return true;
   }
 
-  const shorter = a.length < b.length ? a : b;
-  const longer = a.length < b.length ? b : a;
+  const aShorter = a.length < bLength;
+  const shorterLength = aShorter ? a.length : bLength;
+  const longerLength = aShorter ? bLength : a.length;
   let shortIndex = 0;
   let longIndex = 0;
   let edits = 0;
-  while (shortIndex < shorter.length && longIndex < longer.length) {
-    if (shorter[shortIndex] === longer[longIndex]) {
+  while (shortIndex < shorterLength && longIndex < longerLength) {
+    const shortCode = aShorter ? a.charCodeAt(shortIndex) : value.charCodeAt(start + shortIndex);
+    const longCode = aShorter ? value.charCodeAt(start + longIndex) : a.charCodeAt(longIndex);
+    if (shortCode === longCode) {
       shortIndex++;
       longIndex++;
     } else {
@@ -75,34 +92,55 @@ function withinOneEdit(a: string, b: string): boolean {
   return true;
 }
 
+// Best score of a query token's variants against the tokens of one field
+// value, given as [start, end) pairs `bounds[from..to)` into `value`.
 function tokenScore(
-  queryToken: string,
-  fieldTokens: string[],
-  start: number,
-  end: number,
+  expanded: readonly string[],
+  value: string,
+  bounds: Int32Array,
+  from: number,
+  to: number,
 ): number | null {
   let best: number | null = null;
-  const expanded = variants(queryToken);
   for (let variantIndex = 0; variantIndex < expanded.length; variantIndex++) {
     const variant = expanded[variantIndex];
-    for (let tokenIndex = start; tokenIndex < end; tokenIndex++) {
-      const fieldToken = fieldTokens[tokenIndex];
+    const length = variant.length;
+    // First occurrence of `variant` at or after the current token's start;
+    // -1 once none is left, so a field is scanned once per variant.
+    let hit = -2;
+    for (let pair = from; pair < to; pair += 2) {
+      const start = bounds[pair];
+      const end = bounds[pair + 1];
+      const tokenLength = end - start;
       let score: number | null = null;
-      if (fieldToken === variant) score = variantIndex === 0 ? 0 : 4;
-      else if (fieldToken.startsWith(variant)) score = variantIndex === 0 ? 1 : 5;
-      else if (fieldToken.includes(variant)) score = variantIndex === 0 ? 2 : 6;
-      else if (variantIndex === 0 && variant.length >= 4 && withinOneEdit(variant, fieldToken)) score = 3;
+      if (length <= tokenLength && value.startsWith(variant, start)) {
+        score = length === tokenLength
+          ? (variantIndex === 0 ? 0 : 4)
+          : (variantIndex === 0 ? 1 : 5);
+      } else {
+        if (hit !== -1 && hit < start) hit = value.indexOf(variant, start);
+        if (hit !== -1 && hit + length <= end) score = variantIndex === 0 ? 2 : 6;
+        else if (variantIndex === 0 && length >= 4 && withinOneEdit(variant, value, start, end)) score = 3;
+      }
       if (score !== null && (best === null || score < best)) best = score;
     }
   }
   return best;
 }
 
-export interface PreparedSearchItem<T> {
-  item: T;
-  values: string[];
-  fieldTokens: string[];
-  fieldTokenOffsets: number[];
+/**
+ * A columnar search index. Item `i` owns the non-empty folded field values
+ * `values[valueStart[i] .. valueStart[i + 1])`; value `v` owns the token
+ * bounds `tokenBounds[tokenStart[v] .. tokenStart[v + 1])`, as [start, end)
+ * pairs into that value, so no per-item objects or token strings are kept.
+ */
+export interface PreparedSearchIndex<T> {
+  readonly length: number;
+  readonly items: T[];
+  readonly values: string[];
+  readonly valueStart: Int32Array;
+  readonly tokenStart: Int32Array;
+  readonly tokenBounds: Int32Array;
 }
 
 export interface PreparedNameSearchIndex<T> {
@@ -129,30 +167,111 @@ interface ScoredNameItem<T> {
   idx: number;
 }
 
+class IntList {
+  private data: Int32Array;
+  length = 0;
+
+  constructor(capacity: number) {
+    this.data = new Int32Array(Math.max(16, capacity));
+  }
+
+  push(value: number): void {
+    if (this.length === this.data.length) {
+      const next = new Int32Array(this.data.length * 2);
+      next.set(this.data);
+      this.data = next;
+    }
+    this.data[this.length++] = value;
+  }
+
+  finish(): Int32Array {
+    return this.length === this.data.length ? this.data : this.data.slice(0, this.length);
+  }
+}
+
+export class SearchIndexBuilder<T> {
+  private readonly items: T[] = [];
+  private readonly values: string[] = [];
+  private readonly valueStart: IntList;
+  private readonly tokenStart: IntList;
+  private readonly tokenBounds: IntList;
+
+  constructor(expectedItems = 0) {
+    this.valueStart = new IntList(expectedItems + 1);
+    this.tokenStart = new IntList(expectedItems * 2 + 1);
+    this.tokenBounds = new IntList(expectedItems * 8);
+    this.valueStart.push(0);
+    this.tokenStart.push(0);
+  }
+
+  /** Adds an item whose field values are already passed through `foldSearchText`. */
+  add(item: T, folded: readonly string[]): void {
+    this.items.push(item);
+    for (let field = 0; field < folded.length; field++) {
+      const value = folded[field];
+      if (!value) continue;
+      this.values.push(value);
+      pushTokenBounds(value, this.tokenBounds);
+      this.tokenStart.push(this.tokenBounds.length);
+    }
+    this.valueStart.push(this.values.length);
+  }
+
+  build(): PreparedSearchIndex<T> {
+    return {
+      length: this.items.length,
+      items: this.items,
+      values: this.values,
+      valueStart: this.valueStart.finish(),
+      tokenStart: this.tokenStart.finish(),
+      tokenBounds: this.tokenBounds.finish(),
+    };
+  }
+}
+
+// The bounds of `splitFolded(value)`'s tokens: the non-empty runs between
+// separator matches, exactly as `split(...).filter(Boolean)` yields them.
+function pushTokenBounds(value: string, out: IntList): void {
+  const separator = LETTER_NUMBER_SEPARATOR_GLOBAL_RE;
+  separator.lastIndex = 0;
+  let start = 0;
+  let match: RegExpExecArray | null;
+  while ((match = separator.exec(value)) !== null) {
+    if (match.index > start) {
+      out.push(start);
+      out.push(match.index);
+    }
+    start = separator.lastIndex;
+  }
+  if (value.length > start) {
+    out.push(start);
+    out.push(value.length);
+  }
+}
+
 export { fold as foldSearchText };
 
-export function prepareSearchItem<T>(
-  item: T,
+export function emptySearchIndex<T>(): PreparedSearchIndex<T> {
+  return new SearchIndexBuilder<T>().build();
+}
+
+/** Indexes items whose field values are already passed through `foldSearchText`. */
+export function prepareFoldedSearchItems<T>(
+  items: readonly T[],
+  folded: readonly (readonly string[])[],
+): PreparedSearchIndex<T> {
+  const builder = new SearchIndexBuilder<T>(items.length);
+  for (let i = 0; i < items.length; i++) builder.add(items[i], folded[i]);
+  return builder.build();
+}
+
+export function prepareSearchItems<T>(
+  items: readonly T[],
   fields: (item: T) => string[],
-): PreparedSearchItem<T> {
-  return prepareFoldedSearchItem(item, fields(item).map(fold));
-}
-
-/** Like `prepareSearchItem`, for field values already passed through `foldSearchText`. */
-export function prepareFoldedSearchItem<T>(item: T, folded: string[]): PreparedSearchItem<T> {
-  const values = folded.filter(Boolean);
-  const fieldTokens: string[] = [];
-  const fieldTokenOffsets = [0];
-  for (const value of values) {
-    const tokens = splitFolded(value);
-    for (const token of tokens) fieldTokens.push(token);
-    fieldTokenOffsets.push(fieldTokens.length);
-  }
-  return { item, values, fieldTokens, fieldTokenOffsets };
-}
-
-export function prepareSearchItems<T>(items: T[], fields: (item: T) => string[]): PreparedSearchItem<T>[] {
-  return items.map(item => prepareSearchItem(item, fields));
+): PreparedSearchIndex<T> {
+  const builder = new SearchIndexBuilder<T>(items.length);
+  for (let i = 0; i < items.length; i++) builder.add(items[i], fields(items[i]).map(fold));
+  return builder.build();
 }
 
 export function prepareNameSearchItems<T extends { name: string }>(
@@ -176,12 +295,15 @@ function compareNameScored<T>(a: ScoredNameItem<T>, b: ScoredNameItem<T>): numbe
 }
 
 function directScore<T>(
-  prepared: PreparedSearchItem<T>,
+  index: PreparedSearchIndex<T>,
+  item: number,
   query: string,
 ): number | null {
   let best: number | null = null;
-  for (let fieldIndex = 0; fieldIndex < prepared.values.length; fieldIndex++) {
-    const value = prepared.values[fieldIndex];
+  const first = index.valueStart[item];
+  const last = index.valueStart[item + 1];
+  for (let valueIndex = first; valueIndex < last; valueIndex++) {
+    const value = index.values[valueIndex];
     const pos = value.indexOf(query);
     if (pos === -1) continue;
     const tier = value === query
@@ -189,28 +311,32 @@ function directScore<T>(
       : pos === 0
         ? 1
         : !isLetterOrNumber(value[pos - 1]) ? 2 : 3;
-    const score = tier * 1000 + fieldIndex * 100 + pos * 10 + value.length;
+    const score = tier * 1000 + (valueIndex - first) * 100 + pos * 10 + value.length;
     if (best === null || score < best) best = score;
   }
   return best;
 }
 
 function fuzzyScore<T>(
-  prepared: PreparedSearchItem<T>,
-  terms: string[],
+  index: PreparedSearchIndex<T>,
+  item: number,
+  expandedTerms: readonly (readonly string[])[],
 ): number | null {
   let total = 10000;
-  for (const term of terms) {
+  const first = index.valueStart[item];
+  const last = index.valueStart[item + 1];
+  for (let term = 0; term < expandedTerms.length; term++) {
     let best: number | null = null;
-    for (let fieldIndex = 0; fieldIndex < prepared.values.length; fieldIndex++) {
+    for (let valueIndex = first; valueIndex < last; valueIndex++) {
       const score = tokenScore(
-        term,
-        prepared.fieldTokens,
-        prepared.fieldTokenOffsets[fieldIndex],
-        prepared.fieldTokenOffsets[fieldIndex + 1],
+        expandedTerms[term],
+        index.values[valueIndex],
+        index.tokenBounds,
+        index.tokenStart[valueIndex],
+        index.tokenStart[valueIndex + 1],
       );
       if (score !== null) {
-        const weighted = score + fieldIndex * 10;
+        const weighted = score + (valueIndex - first) * 10;
         if (best === null || weighted < best) best = weighted;
       }
     }
@@ -270,40 +396,47 @@ class BoundedHeap<T> {
   }
 }
 
+/**
+ * Ranks the index, or only the items at the positions in `subset` (ascending),
+ * where ties break by position in `subset`.
+ */
 export function rankPreparedTopK<T>(
-  items: PreparedSearchItem<T>[],
+  index: PreparedSearchIndex<T>,
   query: string,
   limit: number,
   includeFuzzy = true,
+  subset?: Int32Array,
 ): RankedSearchResult<T> {
   const q = fold(query.trim());
   const terms = queryTokens(query);
   if (!q || !terms.length || limit <= 0) return { items: [], hasMore: false };
+  const count = subset ? subset.length : index.length;
   const heap = new BoundedHeap<ScoredSearchItem<T>>(limit, compareScored);
-  const directMatches = includeFuzzy ? new Uint8Array(items.length) : null;
+  const directMatches = includeFuzzy ? new Uint8Array(count) : null;
   let matches = 0;
-  for (let i = 0; i < items.length; i++) {
-    const prepared = items[i];
-    const score = directScore(prepared, q);
+  for (let i = 0; i < count; i++) {
+    const item = subset ? subset[i] : i;
+    const score = directScore(index, item, q);
     if (score === null) continue;
     if (directMatches) directMatches[i] = 1;
     matches++;
-    heap.add({ item: prepared.item, score, idx: i });
+    heap.add({ item: index.items[item], score, idx: i });
   }
   if (includeFuzzy && matches < limit) {
-    for (let i = 0; i < items.length; i++) {
-      const prepared = items[i];
+    const expandedTerms = terms.map(variants);
+    for (let i = 0; i < count; i++) {
       if (directMatches?.[i]) continue;
-      const score = fuzzyScore(prepared, terms);
+      const item = subset ? subset[i] : i;
+      const score = fuzzyScore(index, item, expandedTerms);
       if (score === null) continue;
       matches++;
-      heap.add({ item: prepared.item, score, idx: i });
+      heap.add({ item: index.items[item], score, idx: i });
     }
   }
   return {
     items: heap.sorted().map(value => value.item),
     hasMore: matches > limit
-      || (includeFuzzy && matches >= limit && items.length > matches),
+      || (includeFuzzy && matches >= limit && count > matches),
   };
 }
 
@@ -349,8 +482,8 @@ export function rankPreparedNamesTopK<T>(
   };
 }
 
-export function rankPrepared<T>(items: PreparedSearchItem<T>[], query: string): T[] {
-  return rankPreparedTopK(items, query, items.length).items;
+export function rankPrepared<T>(index: PreparedSearchIndex<T>, query: string): T[] {
+  return rankPreparedTopK(index, query, index.length).items;
 }
 
 export function rankByFields<T>(items: T[], query: string, fields: (item: T) => string[]): T[] {

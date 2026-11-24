@@ -5,6 +5,7 @@ import { Focus, type FocusScope } from './focus-scope';
 import { InputMode, setInputMode } from './input-mode';
 import { edgeScrollTrackAt, installEdgeScroll } from './edge-scroll';
 import type { Action, NumberEvent } from '../types';
+import { readingOrderAction } from './reading-direction';
 
 type ActionHandler = (action: Action, event?: NumberEvent) => void;
 
@@ -56,12 +57,42 @@ let dispatchingWheel = false;
 
 function hasScrollableAncestor(el: Element | null): boolean {
   for (let node: Element | null = el; node && node !== document.body; node = node.parentElement) {
-    if (node.scrollHeight <= node.clientHeight) continue;
-    const overflow = getComputedStyle(node).overflowY;
-    if (overflow === 'auto' || overflow === 'scroll') return true;
+    if (canScroll(node)) return true;
   }
   return false;
 }
+
+// A menu or panel that owns the keys owns the wheel too: turned anywhere
+// outside it, the wheel works it rather than what lies under the pointer.
+function wheelOwner(target: EventTarget | null): FocusScope | null {
+  const owner = Focus.owner();
+  if (!owner || owner === Focus.base() || !owner.ownsWheel) return null;
+  const root = owner.root();
+  if (!root || (target instanceof Node && root.contains(target))) return null;
+  return owner;
+}
+
+function canScroll(el: Element): boolean {
+  if (el.scrollHeight <= el.clientHeight) return false;
+  const overflow = getComputedStyle(el).overflowY;
+  return overflow === 'auto' || overflow === 'scroll';
+}
+
+// The owner's list that holds its focus, else its first scrollable one.
+function scrollerOf(owner: FocusScope): HTMLElement | null {
+  const root = owner.root();
+  if (!root) return null;
+  const key = owner.focusKey;
+  const focused = key !== null ? root.querySelector<HTMLElement>(`[data-key="${CSS.escape(key)}"]`) : null;
+  for (let node: HTMLElement | null = focused; node && node !== root; node = node.parentElement) {
+    if (canScroll(node)) return node;
+  }
+  const all = root.querySelectorAll<HTMLElement>('*');
+  for (let i = 0; i < all.length; i++) if (canScroll(all[i])) return all[i];
+  return null;
+}
+
+const WHEEL_LINE_PX = 40;
 
 // A number can never exceed the highest channel there is, so 350 channels cap
 // entry at three digits — and the buffer can no longer grow without bound.
@@ -112,6 +143,40 @@ function handleNumber(digit: number): void {
   numberTimer = setTimeout(flushNumber, StorageService.getNumberEntryOsdTimeoutMs());
 }
 
+// OK on an item marked `data-long-press` selects it on release, so holding
+// it can open the item's options (`long_select`) instead.
+let okHold: { timer: ReturnType<typeof setTimeout> | null } | null = null;
+
+function okHoldTarget(): HTMLElement | null {
+  return Focus.owner()?.root()?.querySelector<HTMLElement>('[data-long-press].focused') ?? null;
+}
+
+// True when OK is taken by a hold: a fresh press on a long-press item, or the
+// remote's auto-repeat while one is held.
+function holdOk(e: KeyboardEvent): boolean {
+  if (okHold) {
+    e.preventDefault();
+    return true;
+  }
+  if (e.repeat || !okHoldTarget()) return false;
+  e.preventDefault();
+  const hold: { timer: ReturnType<typeof setTimeout> | null } = { timer: null };
+  hold.timer = setTimeout(() => {
+    hold.timer = null;
+    if (activeHandler) activeHandler('long_select');
+  }, CONFIG.NAVIGATION.LONG_PRESS_MS);
+  okHold = hold;
+  return true;
+}
+
+function releaseOk(): void {
+  const hold = okHold;
+  okHold = null;
+  if (!hold || hold.timer === null) return;
+  clearTimeout(hold.timer);
+  if (activeHandler) activeHandler('select');
+}
+
 export const KeyHandler = {
   init(): void {
     // Capture phase, and logging only: components with their own keydown
@@ -151,12 +216,25 @@ export const KeyHandler = {
         return;
       }
 
-      const action = ACTION_MAP[keyCode];
+      if (keyCode === K.ENTER && holdOk(e)) {
+        cancelNumber();
+        return;
+      }
+      const action = ACTION_MAP[keyCode] && readingOrderAction(ACTION_MAP[keyCode]);
       cancelNumber();
       if (action) {
         e.preventDefault();
         if (activeHandler) activeHandler(action);
       }
+    });
+
+    document.addEventListener('keyup', (e: KeyboardEvent) => {
+      if (e.keyCode === K.ENTER) releaseOk();
+    });
+    // A hold the page never saw end (the app lost focus) is no press at all.
+    window.addEventListener('blur', () => {
+      if (okHold?.timer) clearTimeout(okHold.timer);
+      okHold = null;
     });
 
     // `:hover` outlives a switch to the D-pad while the pointer sits still, so
@@ -301,7 +379,7 @@ export const KeyHandler = {
     let scrollVia: 'wheel' | 'edge' = 'wheel';
     document.addEventListener('wheel', (e: WheelEvent) => {
       // An SVG icon under the pointer still sits in the scrolled list.
-      if (e.target instanceof Element && hasScrollableAncestor(e.target)) {
+      if (e.target instanceof Element && !wheelOwner(e.target) && hasScrollableAncestor(e.target)) {
         pointerClientX = e.clientX;
         pointerClientY = e.clientY;
         Focus.pointer(e.clientX, e.clientY);
@@ -417,16 +495,7 @@ export const KeyHandler = {
     // Let any scrollable ancestor scroll natively — otherwise mouseover-driven
     // focus would snap back to the cursor as content scrolls underneath it.
     // First scroll after pointer was hidden just reactivates the cursor.
-    document.addEventListener('wheel', (e: WheelEvent) => {
-      const scrolls = hasScrollableAncestor(e.target as Element);
-      // A surface that handles the wheel itself cancels nav:wheel.
-      const at = e.target instanceof Element ? e.target : document;
-      const claimed = !at.dispatchEvent(new CustomEvent('nav:wheel', {
-        bubbles: true, cancelable: true, detail: { step: !scrolls },
-      }));
-      if (claimed || scrolls) return;
-      e.preventDefault();
-
+    const stepWheel = (e: WheelEvent, up: Action, down: Action): void => {
       // Reset idle timer — if no scroll for 5s, next scroll is swallowed
       if (wheelIdleTimer) clearTimeout(wheelIdleTimer);
       wheelIdleTimer = setTimeout(() => { wheelWarmedUp = false; }, 5000);
@@ -440,10 +509,37 @@ export const KeyHandler = {
       dispatchingWheel = true;
       hoverStale = true;
       try {
-        activeHandler(e.deltaY < 0 ? 'channel_up' : 'channel_down');
+        activeHandler(e.deltaY < 0 ? up : down);
       } finally {
         dispatchingWheel = false;
       }
+    };
+    document.addEventListener('wheel', (e: WheelEvent) => {
+      const owner = wheelOwner(e.target);
+      if (owner) {
+        e.preventDefault();
+        const scroller = scrollerOf(owner);
+        const at = scroller ?? owner.root();
+        const claimed = !!at && !at.dispatchEvent(new CustomEvent('nav:wheel', {
+          bubbles: true, cancelable: true, detail: { step: !scroller },
+        }));
+        if (scroller) {
+          scroller.scrollTop += e.deltaMode === 1 ? e.deltaY * WHEEL_LINE_PX : e.deltaY;
+        } else if (!claimed) {
+          // A plain step, which every menu and panel takes as the D-pad's.
+          stepWheel(e, 'up', 'down');
+        }
+        return;
+      }
+      const scrolls = hasScrollableAncestor(e.target as Element);
+      // A surface that handles the wheel itself cancels nav:wheel.
+      const at = e.target instanceof Element ? e.target : document;
+      const claimed = !at.dispatchEvent(new CustomEvent('nav:wheel', {
+        bubbles: true, cancelable: true, detail: { step: !scrolls },
+      }));
+      if (claimed || scrolls) return;
+      e.preventDefault();
+      stepWheel(e, 'channel_up', 'channel_down');
     }, { passive: false });
 
     document.addEventListener('click', (e: MouseEvent) => {

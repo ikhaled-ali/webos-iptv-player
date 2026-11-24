@@ -2,22 +2,19 @@ import * as esbuild from 'esbuild';
 import { createHash } from 'crypto';
 import { cpSync, readFileSync, writeFileSync, readdirSync, rmSync, mkdirSync } from 'fs';
 import {
-  LEGACY_JS_BANNER,
+  MIN_CHROME,
   scanBundle,
   formatViolations,
 } from './scripts/compat-gate.mjs';
 import { validateShakaBundle } from './scripts/shaka-compat-gate.mjs';
 import { writeThirdPartyNotices } from './scripts/third-party-notices.mjs';
 import {
-  convertLegacyColorSyntax,
-  generateFlexGapFallback,
-  linkedStylesheets,
+  mirrorStylesheetForRtl,
+  rebaseRelativeUrls,
   scaleFontSizes,
 } from './scripts/css-transforms.mjs';
 
 const isPreview = process.argv.includes('--preview');
-// Checked-in but regenerated on every build; never a source input.
-const GENERATED_STYLESHEET = 'legacy-webos-base.css';
 // Read version from package.json (single source of truth)
 const version = JSON.parse(readFileSync('package.json', 'utf8')).version;
 
@@ -32,8 +29,14 @@ function transformStylesheets(outDir) {
   for (const file of readdirSync(outDir)) {
     if (!file.endsWith('.css')) continue;
     const path = `${outDir}/${file}`;
-    const css = convertLegacyColorSyntax(readFileSync(path, 'utf8'));
-    writeFileSync(path, scaleFontSizes(css));
+    writeFileSync(path, scaleFontSizes(readFileSync(path, 'utf8')));
+  }
+  // Mirrored copies for right-to-left languages, built from the final CSS.
+  mkdirSync(`${outDir}/rtl`, { recursive: true });
+  for (const file of readdirSync(outDir)) {
+    if (!file.endsWith('.css')) continue;
+    const mirrored = mirrorStylesheetForRtl(readFileSync(`${outDir}/${file}`, 'utf8'));
+    writeFileSync(`${outDir}/rtl/${file}`, rebaseRelativeUrls(mirrored, '../'));
   }
 }
 
@@ -52,10 +55,6 @@ if (outputIndexHtml === indexHtml) {
 writeFileSync('dist/index.html', outputIndexHtml);
 rmSync('dist/resources', { recursive: true, force: true });
 cpSync('resources', 'dist/resources', { recursive: true });
-// Refresh the flex-`gap` fallback; see its header for the cascade rationale.
-const sourceStylesheets = linkedStylesheets(indexHtml, readdirSync('css'), GENERATED_STYLESHEET)
-  .map((file) => readFileSync(`css/${file}`, 'utf8'));
-writeFileSync(`css/${GENERATED_STYLESHEET}`, generateFlexGapFallback(sourceStylesheets));
 cpSync('css', 'dist/css', { recursive: true });
 transformStylesheets('dist/css');
 // The TV launcher caches an app's icon by path, so a new icon only shows
@@ -89,10 +88,32 @@ const define = {
   '__SERVICE_ID__': JSON.stringify(serviceId),
   '__ENABLE_PSEUDO_LOCALE__': JSON.stringify(isPreview),
 };
-// Target Chromium 53 — the engine on webOS 4. This down-levels newer
-// syntax (`?.`, `??`, etc.) which would otherwise fail to parse on
-// older TVs and leave the app stuck on the loading screen.
-const TARGET = ['chrome53'];
+// Target the oldest supported engine, Chromium 94 on webOS 23: newer syntax
+// is down-leveled for it, everything it parses natively ships as written.
+const TARGET = [`chrome${MIN_CHROME}`];
+
+// Translations ship one script per language instead of inside app.js, so
+// startup parses only the active catalog (src/i18n/index.ts loadLocale).
+// Unit tests keep importing every catalog through src/i18n/catalogs.ts.
+const lazyCatalogs = {
+  name: 'lazy-locale-catalogs',
+  setup(build) {
+    build.onResolve({ filter: /^\.\/catalogs$/ }, (args) =>
+      args.importer.endsWith('src/i18n/index.ts')
+        ? { path: new URL('./src/i18n/catalogs-lazy.ts', import.meta.url).pathname }
+        : undefined);
+  },
+};
+const LOCALE_CATALOGS = readdirSync('src/i18n')
+  .map((file) => /^(?!en\.)([a-z]{2}(?:-[A-Z]{2})?)\.ts$/.exec(file)?.[1])
+  .filter(Boolean)
+  .map((locale) => ({
+    locale,
+    exportName: /export const ([A-Z_]+_MESSAGES)\b/.exec(
+      readFileSync(`src/i18n/${locale}.ts`, 'utf8'))?.[1],
+  }))
+  .filter(({ exportName }) => exportName);
+rmSync('dist/js/locales', { recursive: true, force: true });
 
 // Shared config for the main app bundle (src/app.ts). The shipped build and
 // compat-gate scan use the same tree-shaken graph.
@@ -102,9 +123,9 @@ const appBuild = {
   outfile: 'dist/js/app.js',
   format: 'iife',
   target: TARGET,
-  banner: { js: LEGACY_JS_BANNER },
   external: ['hls.js', 'mpegts.js', 'shaka-player'],
   define,
+  plugins: [lazyCatalogs],
 };
 const workerBuild = {
   entryPoints: ['src/workers/app-worker.ts'],
@@ -112,10 +133,26 @@ const workerBuild = {
   outfile: 'dist/js/app-worker.js',
   format: 'iife',
   target: TARGET,
-  banner: { js: LEGACY_JS_BANNER },
   define,
 };
+const localeBuilds = LOCALE_CATALOGS.map(({ locale, exportName }) => ({
+  name: `${locale} locale`,
+  config: {
+    stdin: {
+      contents: `import { ${exportName} } from './${locale}';\n`
+        + `((self.__IPTV_LOCALES__ = self.__IPTV_LOCALES__ || {}))[${JSON.stringify(locale)}] = ${exportName};\n`,
+      resolveDir: 'src/i18n',
+      loader: 'ts',
+    },
+    bundle: true,
+    outfile: `dist/js/locales/${locale}.js`,
+    format: 'iife',
+    target: TARGET,
+    define,
+  },
+}));
 const shippedBuilds = [
+  ...localeBuilds,
   { name: 'app', config: appBuild },
   { name: 'worker', config: workerBuild },
   { name: 'optional players', config: {
@@ -124,7 +161,6 @@ const shippedBuilds = [
     outfile: isPreview ? 'dist/js/preview-libs.js' : 'dist/js/player-libs.js',
     format: 'iife',
     target: TARGET,
-    banner: { js: LEGACY_JS_BANNER },
   } },
 ];
 
@@ -136,7 +172,7 @@ const shakaBundle = readFileSync('node_modules/shaka-player/dist/shaka-player.da
 validateShakaBundle(shakaBundle);
 writeFileSync('dist/js/shaka-player.dash.js', shakaBundle);
 
-// webOS 4 (Chromium 53) bundle compat gate. Down-leveling handles post-53
+// webOS 23 (Chromium 94) bundle compat gate. Down-leveling handles newer
 // *syntax*, but not *APIs* — and dependencies get bundled in without passing
 // through the eslint source gate. Scan a NON-minified build of the same entry
 // (same tree-shaken graph, readable identifiers) for banned APIs.
@@ -147,7 +183,7 @@ for (const { name, config } of shippedBuilds) {
     throw new Error(`${name} bundle:\n${formatViolations(violations)}`);
   }
 }
-console.log('Compat gate: app, worker, optional players and Shaka bundles are Chromium-53 clean.');
+console.log(`Compat gate: app, worker, optional players and Shaka bundles are Chromium-${MIN_CHROME} clean.`);
 
 // Preview loads its player libraries eagerly; production loads them on demand.
 if (!isPreview) {

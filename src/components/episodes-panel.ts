@@ -145,9 +145,6 @@ export class EpisodesPanel {
       rows.push(this.row(item, index));
     });
     morph(this.el, html`
-      <div class="menu-header">
-        <h2>${t('player.episodes')}</h2>
-      </div>
       <div class="vod-episodes-list">${rows}</div>
     `);
   }

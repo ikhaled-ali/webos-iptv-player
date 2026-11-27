@@ -10,6 +10,9 @@ import {
   DISEQC_PORTS,
   LNB_PRESETS,
   SatelliteScan,
+  sameTransponder,
+  TONES,
+  toneLocked,
   type SatelliteConfig,
   type SignalReading,
   type TuneRequest,
@@ -29,6 +32,8 @@ import { qrDataUrl } from '../utils/qr';
 import { BroadcastVideo } from './broadcast-video';
 import { ConfirmationPrompt } from './confirmation-prompt';
 import { toggleGroup, sourceToggle } from './toggle-controls';
+import { dropdown } from './dropdown';
+import { CONFIG } from '../config';
 import { chevronLeftIcon, chevronRightIcon, TAB_SATELLITE_ICON } from './icons';
 import { showToast } from './toast';
 import { createLogger } from '../utils/logger';
@@ -87,9 +92,9 @@ function diseqcLabel(port: string): string {
   return port === 'OFF_DISEQC' ? t('common.off') : port.charAt(0);
 }
 
-function formMatches(transponder: Transponder, form: TuneRequest): boolean {
-  return Math.abs(transponder.frequency - form.frequency) <= 3 && transponder.polarization === form.polarization;
-}
+// The finder names a listed transponder only when the TV would tune that
+// record, so what the form shows is what gets tuned.
+const formMatches = sameTransponder;
 
 interface SatelliteToolsOptions {
   onRevealTabBar: (dir: 'up' | 'left') => void;
@@ -122,6 +127,11 @@ export class SatelliteTools {
   private readonly transponders = new Map<number, Transponder[]>();
   private form: TuneRequest = { frequency: 11000, polarization: 'H', symbolRate: 27500, system: 'DVB-S2' };
   private editing: { field: NumberField; text: string } | null = null;
+  // The transponder menu's open state lives here: a render would drop a class.
+  private menuOpen = false;
+  // "New transponder" picked: the form stays a new one even where it matches.
+  private newTp = false;
+  private lnbTimer: ReturnType<typeof setTimeout> | null = null;
   private broadcastId: string | null = null;
   private tuned = false;
   private tuning = false;
@@ -153,6 +163,8 @@ export class SatelliteTools {
       root: container,
       leaveFor: { up: 'tabbar', left: 'tabbar' },
       reveal: key => (key === 'sat-tools-share' ? this.revealShareCard() : false),
+      // A caret left in a field keeps the arrow keys from whatever owns them.
+      onRelease: () => this.caretInput()?.blur(),
       defaultKey: () => {
         const el = this.nav.focused;
         return el && this.container.contains(el) ? el.dataset.key ?? null : null;
@@ -165,6 +177,13 @@ export class SatelliteTools {
       if (!control || !this.container.contains(control)) return;
       this.nav.focus(control, 'pointer');
       this.activate(control);
+    });
+    // The global key handler leaves a text field its keys, so the field owns
+    // its ways out; leaving commits what was typed.
+    container.addEventListener('keydown', (event: KeyboardEvent) => this.onFieldKey(event));
+    container.addEventListener('focusout', (event: FocusEvent) => {
+      const input = event.target as HTMLInputElement;
+      if (input.tagName === 'INPUT' && input.dataset.number) this.commitField(input);
     });
   }
 
@@ -247,6 +266,8 @@ export class SatelliteTools {
     this.token++;
     this.clearTimers();
     this.commitDigits(false);
+    this.caretInput()?.blur();
+    this.menuOpen = false;
     KeyHandler.setDigitSink(null);
     this.prompt.hide();
     // A scan goes on in the background; only this screen's picture stops.
@@ -274,7 +295,8 @@ export class SatelliteTools {
   }
 
   private clearTimers(): void {
-    for (const timer of [this.digitTimer, this.retuneTimer, this.readingTimer]) if (timer) clearTimeout(timer);
+    for (const timer of [this.digitTimer, this.retuneTimer, this.readingTimer, this.lnbTimer]) if (timer) clearTimeout(timer);
+    this.lnbTimer = null;
     this.digitTimer = null;
     this.retuneTimer = null;
     this.readingTimer = null;
@@ -286,6 +308,7 @@ export class SatelliteTools {
 
   // The finder starts on the transponder the TV last used for the satellite.
   private adoptSelectedTp(config: SatelliteConfig): void {
+    this.newTp = false;
     const selected = config.scanInfo.selectedTp as Record<string, unknown> | undefined;
     if (!selected || typeof selected.frequency !== 'number') return;
     this.form = {
@@ -544,6 +567,10 @@ export class SatelliteTools {
       return;
     }
     const focused = this.nav.focused;
+    if (this.menuOpen) {
+      this.menuAction(action, focused);
+      return;
+    }
     if (action === 'back') {
       if (this.editing) {
         this.editing = null;
@@ -582,26 +609,12 @@ export class SatelliteTools {
       this.formChanged();
       return true;
     }
-    if (el.dataset.stepper === 'tp') {
-      const list = this.knownTransponders;
-      if (!list.length) return true;
-      const at = list.findIndex(transponder => formMatches(transponder, this.form));
-      const next = list[at < 0 ? (step > 0 ? 0 : list.length - 1) : (at + step + list.length) % list.length];
-      this.form = {
-        frequency: next.frequency,
-        polarization: next.polarization === 'V' ? 'V' : 'H',
-        symbolRate: next.symbolRate || this.form.symbolRate,
-        system: next.system === 'DVB-S' ? 'DVB-S' : 'DVB-S2',
-      };
-      this.formChanged();
-      return true;
-    }
     if (el.dataset.stepper === 'lnb') {
       const config = this.configs?.find(item => String(item.id) === el.dataset.config);
       if (!config) return true;
       const preset = LNB_PRESETS[(lnbIndex(config) + step + LNB_PRESETS.length) % LNB_PRESETS.length];
       config.lnb = { type: preset.type, min: preset.min, max: preset.max };
-      this.render();
+      this.lnbChanged(config);
       return true;
     }
     return false;
@@ -615,6 +628,19 @@ export class SatelliteTools {
 
   private activate(el: HTMLElement): void {
     if (el.getAttribute('aria-disabled') === 'true') return;
+    if (el.tagName === 'INPUT') {
+      this.commitDigits(false);
+      (el as HTMLInputElement).focus();
+      return;
+    }
+    if (el.hasAttribute('data-dropdown-trigger')) {
+      this.setMenu(!this.menuOpen);
+      return;
+    }
+    if (el.classList.contains('dropdown-option')) {
+      this.pickTransponder(el.dataset.dropdownValue ?? 'new');
+      return;
+    }
     const tool = el.dataset.tool as SatelliteTool | undefined;
     if (tool) {
       this.switchTool(tool);
@@ -630,6 +656,14 @@ export class SatelliteTools {
     switch (target.dataset.action) {
       case 'tp-scan': void this.scanTransponder(); break;
       case 'share': this.toggleShare(); break;
+      case 'lnb-power': {
+        const config = this.config;
+        if (config) {
+          config.lnbPower = !config.lnbPower;
+          this.lnbChanged(config);
+        }
+        break;
+      }
       case 'cfg-toggle': this.toggleConfig(target.dataset.config); break;
       case 'option': this.toggleOption(target.dataset.option as keyof ScanOptions); break;
       case 'order':
@@ -645,6 +679,7 @@ export class SatelliteTools {
 
   private switchTool(tool: SatelliteTool): void {
     if (tool === this.tool) return;
+    this.menuOpen = false;
     // The phone share belongs to the signal finder.
     if (tool !== 'finder') FinderShare.stop();
     this.tool = tool;
@@ -672,10 +707,18 @@ export class SatelliteTools {
     } else if (groupId === 'sat-tools-system') {
       this.form = { ...this.form, system: value === 'DVB-S' ? 'DVB-S' : 'DVB-S2' };
       this.formChanged();
+    } else if (groupId === 'sat-tools-tone') {
+      const config = this.config;
+      if (config) {
+        config.tone = value;
+        this.lnbChanged(config);
+      }
     } else if (groupId.indexOf('sat-tools-diseqc-') === 0) {
       const config = this.configs?.find(item => String(item.id) === groupId.slice('sat-tools-diseqc-'.length));
-      if (config) config.diseqc = value;
-      this.render();
+      if (config) {
+        config.diseqc = value;
+        this.lnbChanged(config);
+      }
     }
   }
 
@@ -696,6 +739,109 @@ export class SatelliteTools {
     SatelliteScanSession.dismiss();
     this.render();
     this.refocus('scan-start');
+  }
+
+  // --- LNB settings ----------------------------------------------------------
+
+  // The Satellite scan saves its LNB choices when it starts; the finders save
+  // at once, as LG's satellite settings do, and retune on the new setup.
+  private lnbChanged(config: SatelliteConfig): void {
+    this.render();
+    if (this.tool === 'scan') return;
+    if (this.lnbTimer) clearTimeout(this.lnbTimer);
+    const token = this.token;
+    this.lnbTimer = setTimeout(() => {
+      this.lnbTimer = null;
+      void SatelliteScan.saveLnb(config).then((ok) => {
+        if (token !== this.token || !this.active) return;
+        if (!ok) showToast(t('satelliteTools.lnbSaveFailed'));
+        this.scheduleRetune(0);
+      });
+    }, RETUNE_DELAY_MS);
+  }
+
+  // --- Transponder menu ------------------------------------------------------
+
+  private selectedTp(): string {
+    const match = this.newTp ? undefined : this.knownTransponders.find(item => formMatches(item, this.form));
+    return match ? String(match.id) : 'new';
+  }
+
+  private setMenu(open: boolean): void {
+    this.menuOpen = open;
+    this.render();
+    this.refocus(open ? `sat-tools-tp:${this.selectedTp()}` : 'sat-tools-tp:trigger');
+  }
+
+  // An open menu keeps the keys: Up and Down move inside it, Back and Left
+  // close it, as Settings' menus do.
+  private menuAction(action: Action, focused: HTMLElement | null): void {
+    if (action === 'back' || action === 'left') {
+      this.setMenu(false);
+    } else if (action === 'up' || action === 'down') {
+      this.nav.setRestrict(this.ui.querySelector<HTMLElement>('.dropdown.open .dropdown-menu'));
+      this.nav.move(action);
+      this.nav.setRestrict(null);
+    } else if (action === 'select' && focused) {
+      this.activate(focused);
+    }
+  }
+
+  private pickTransponder(value: string): void {
+    this.menuOpen = false;
+    const picked = this.knownTransponders.find(item => String(item.id) === value);
+    if (!picked) {
+      // A new transponder starts from the form, its frequency ready to type.
+      this.newTp = true;
+      this.render();
+      this.refocus('sat-tools-frequency');
+      return;
+    }
+    this.newTp = false;
+    this.form = {
+      frequency: picked.frequency,
+      polarization: picked.polarization === 'V' ? 'V' : 'H',
+      symbolRate: picked.symbolRate || this.form.symbolRate,
+      system: picked.system === 'DVB-S' ? 'DVB-S' : 'DVB-S2',
+    };
+    this.formChanged();
+    this.refocus('sat-tools-tp:trigger');
+  }
+
+  // --- Text fields -----------------------------------------------------------
+
+  private caretInput(): HTMLInputElement | null {
+    const active = document.activeElement;
+    return active instanceof HTMLInputElement && this.ui.contains(active) ? active : null;
+  }
+
+  private onFieldKey(event: KeyboardEvent): void {
+    const input = event.target as HTMLInputElement;
+    if (input.tagName !== 'INPUT' || !input.dataset.number) return;
+    const back = event.key === 'Escape' || event.keyCode === CONFIG.KEYS.BACK;
+    const up = event.key === 'ArrowUp' || event.keyCode === CONFIG.KEYS.UP;
+    const down = event.key === 'ArrowDown' || event.keyCode === CONFIG.KEYS.DOWN;
+    if (event.key !== 'Enter' && !up && !down && !back) return;
+    event.preventDefault();
+    event.stopPropagation();
+    // Back leaves the value as it was.
+    if (back) input.value = String(this.form[input.dataset.number as NumberField]);
+    input.blur();
+    this.nav.focus(input);
+    if (up || down) this.nav.move(up ? 'up' : 'down');
+  }
+
+  // A typed value in range replaces the form's; anything else puts it back.
+  private commitField(input: HTMLInputElement): void {
+    const field = input.dataset.number as NumberField;
+    const spec = NUMBER_FIELDS[field];
+    const value = parseInt(input.value.replace(/\D/g, ''), 10);
+    if (isFinite(value) && value >= spec.min && value <= spec.max && value !== this.form[field]) {
+      this.form = { ...this.form, [field]: value };
+      this.formChanged();
+      return;
+    }
+    input.value = String(this.form[field]);
   }
 
   // --- Digits --------------------------------------------------------------
@@ -781,6 +927,12 @@ export class SatelliteTools {
         </div>
       </div>
     `);
+    // A field's typed value outlives its attribute, so a field not being
+    // typed in is set to what the form holds.
+    this.ui.querySelectorAll<HTMLInputElement>('input[data-number]').forEach((input) => {
+      const value = input.getAttribute('value') ?? '';
+      if (input !== document.activeElement && input.value !== value) input.value = value;
+    });
     this.video.showPreview();
   }
 
@@ -807,25 +959,67 @@ export class SatelliteTools {
     return html`${head}${this.tool === 'scan' ? this.renderScan() : this.renderTuneForm()}`;
   }
 
-  private numberField(field: NumberField, label: TextMessageKey, key: string): Safe {
+  // OK opens the TV keyboard; the remote's digits type in it directly.
+  private inputField(field: NumberField, label: TextMessageKey, key: string): Safe {
     const editing = this.editing && this.editing.field === field ? this.editing.text : null;
     return html`
       <div class="settings-item">
         <div class="settings-item-title">${t(label)}</div>
-        <button class="sat-tools-number ${editing !== null ? 'editing' : ''}" data-focusable
-                data-key="${key}" data-number="${field}">
-          <span class="sat-tools-chevron">${raw(chevronLeftIcon())}</span>
-          <span class="sat-tools-number-value">${editing !== null ? html`${editing}<span class="sat-tools-caret"></span>` : String(this.form[field])}</span>
-          <span class="sat-tools-chevron">${raw(chevronRightIcon())}</span>
-        </button>
+        <input type="text" inputmode="numeric" maxlength="5" autocomplete="off"
+               class="settings-input sat-tools-input ${editing !== null ? 'editing' : ''}" data-focusable
+               data-key="${key}" data-number="${field}" value="${editing ?? String(this.form[field])}">
       </div>`;
+  }
+
+  private lnbStepper(config: SatelliteConfig, key: string, extra: string): Safe {
+    return html`
+      <button class="sat-tools-number sat-tools-stepper sat-tools-lnb ${extra}" data-focusable
+              data-key="${key}" data-stepper="lnb" data-config="${config.id}">
+        <span class="sat-tools-chevron">${raw(chevronLeftIcon())}</span>
+        <span class="sat-tools-number-value">${lnbLabel(config)}</span>
+        <span class="sat-tools-chevron">${raw(chevronRightIcon())}</span>
+      </button>`;
+  }
+
+  // The satellite's LNB setup, as LG's satellite settings lay it out.
+  private renderLnb(config: SatelliteConfig): Safe {
+    const locked = toneLocked(config);
+    return html`
+      <div class="sat-tools-grid">
+        <div class="settings-item">
+          <div class="settings-item-title">${t('satelliteTools.lnb')}</div>
+          ${this.lnbStepper(config, 'sat-tools-lnb', '')}
+        </div>
+        <div class="settings-item sat-tools-port">
+          <div class="settings-item-title">${t('satelliteTools.diseqc')}</div>
+          ${toggleGroup(`sat-tools-diseqc-${String(config.id)}`,
+            DISEQC_PORTS.map(port => ({ value: port, label: diseqcLabel(port) })), config.diseqc)}
+        </div>
+      </div>
+      <div class="sat-tools-grid">
+        <div class="settings-item">
+          <div class="settings-item-title">${t('satelliteTools.tone')}</div>
+          ${toggleGroup('sat-tools-tone', TONES.map(tone => ({ value: tone.value, label: tone.label || t('common.off') })),
+            locked ? 'OFF_22KHZTONE' : config.tone, locked ? TONES.map(tone => tone.value) : [])}
+        </div>
+        <div class="settings-item">
+          <div class="settings-item-title">${t('satelliteTools.lnbPower')}</div>
+          <span class="sat-tools-switch" data-action="lnb-power">${
+            sourceToggle(config.lnbPower, 'sat-tools-lnb-power')}</span>
+        </div>
+      </div>
+      <div class="settings-item-hint sat-tools-lnb-hint">${t('satelliteTools.lnbSaved')}</div>`;
   }
 
   private renderTuneForm(): Safe {
     const configs = this.configs ?? [];
     const config = this.config;
     const known = this.knownTransponders;
-    const match = known.find(transponder => formMatches(transponder, this.form));
+    const selected = this.selectedTp();
+    const options = [
+      { value: 'new', label: t('satelliteTools.newTransponder') },
+      ...known.map(item => ({ value: String(item.id), label: transponderLabel(item) })),
+    ];
     return html`
       <div class="settings-item">
         <div class="settings-item-title">${t('satelliteTools.satellite')}</div>
@@ -833,20 +1027,19 @@ export class SatelliteTools {
           configs.map(item => ({ value: String(item.id), label: item.satelliteName })),
           config ? String(config.id) : '')}
       </div>
-      <div class="settings-item">
-        <div class="settings-item-title">${t('satelliteTools.transponder')}</div>
-        <button class="sat-tools-number sat-tools-stepper" data-focusable data-key="sat-tools-tp" data-stepper="tp"
-                ${known.length ? '' : raw('aria-disabled="true"')}>
-          <span class="sat-tools-chevron">${raw(chevronLeftIcon())}</span>
-          <span class="sat-tools-number-value">${match ? transponderLabel(match) : t('satelliteTools.custom')}</span>
-          <span class="sat-tools-chevron">${raw(chevronRightIcon())}</span>
-        </button>
-        <div class="settings-item-hint">${tp('satelliteTools.transponderCount', known.length)}</div>
+      ${config ? this.renderLnb(config) : ''}
+      <div class="sat-tools-grid sat-tools-tp-row">
+        <div class="settings-item sat-tools-tp">
+          <div class="settings-item-title">${t('satelliteTools.transponder')}</div>
+          ${dropdown('sat-tools-tp', options, selected, this.menuOpen)}
+          <div class="settings-item-hint">${tp('satelliteTools.transponderCount', known.length)}</div>
+        </div>
+        ${this.inputField('symbolRate', 'satelliteTools.symbolRate', 'sat-tools-symbol-rate')}
       </div>
-      <div class="sat-tools-grid">
-        ${this.numberField('frequency', 'satelliteTools.frequency', 'sat-tools-frequency')}
-        ${this.numberField('symbolRate', 'satelliteTools.symbolRate', 'sat-tools-symbol-rate')}
-      </div>
+      ${selected === 'new' ? html`
+        <div class="sat-tools-grid">
+          ${this.inputField('frequency', 'satelliteTools.frequency', 'sat-tools-frequency')}
+        </div>` : ''}
       <div class="settings-item-hint sat-tools-digits-hint">${t('satelliteTools.digitsHint')}</div>
       <div class="sat-tools-grid">
         <div class="settings-item">
@@ -937,12 +1130,7 @@ export class SatelliteTools {
               <div class="sat-tools-sat-controls">
               <span class="sat-tools-sat-control">
                 <span class="sat-tools-sat-label">${t('satelliteTools.lnb')}</span>
-                <button class="sat-tools-number sat-tools-stepper sat-tools-lnb" data-focusable
-                        data-key="sat-tools-lnb:${config.id}" data-stepper="lnb" data-config="${config.id}">
-                  <span class="sat-tools-chevron">${raw(chevronLeftIcon())}</span>
-                  <span class="sat-tools-number-value">${lnbLabel(config)}</span>
-                  <span class="sat-tools-chevron">${raw(chevronRightIcon())}</span>
-                </button>
+                ${this.lnbStepper(config, `sat-tools-lnb:${String(config.id)}`, '')}
               </span>
               <span class="sat-tools-sat-control">
                 <span class="sat-tools-sat-label">${t('satelliteTools.diseqc')}</span>

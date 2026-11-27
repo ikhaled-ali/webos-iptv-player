@@ -31,6 +31,8 @@ const BROADCAST = 'luna://com.webos.service.utp.broadcast';
 const USER_TRANSPONDER_ID = 24575;
 // A typed frequency within this of a listed transponder is that transponder.
 const SAME_TRANSPONDER_MHZ = 3;
+// Listed symbol rates round differently; another transponder differs by far more.
+const SAME_SYMBOL_RATE = 50;
 // The picture frees the tuner a moment after it stops; until then a scan
 // is refused with "No resource".
 const START_ATTEMPTS = 8;
@@ -67,12 +69,27 @@ export const LNB_PRESETS: ReadonlyArray<LnbFrequency & { label: string }> = [
 export const DISEQC_PORTS = ['OFF_DISEQC', 'A_DISEQC', 'B_DISEQC', 'C_DISEQC', 'D_DISEQC'] as const;
 export type DiseqcPort = typeof DISEQC_PORTS[number];
 
+// LG's 22kHz tone choices, in its order, as its satellite settings label them.
+export const TONES: ReadonlyArray<{ value: string; label: string }> = [
+  { value: 'OFF_22KHZTONE', label: '' },
+  { value: 'A_22KHZTONE', label: '22kHz' },
+  { value: 'B_22KHZTONE', label: '0Hz' },
+];
+
+// A universal LNB picks its band with the tone itself, so LG's settings
+// leave the tone alone for one.
+export function toneLocked(config: SatelliteConfig): boolean {
+  return config.lnb.min !== config.lnb.max;
+}
+
 export interface SatelliteConfig {
   id: number;
   satelliteId: number;
   satelliteName: string;
   lnb: LnbFrequency;
   diseqc: string;
+  tone: string;
+  lnbPower: boolean;
   selected: boolean;
   networkSearch: boolean;
   blindSearch: boolean;
@@ -191,6 +208,8 @@ function normalizeConfig(value: unknown): SatelliteConfig | null {
     satelliteName: typeof info.satelliteName === 'string' ? info.satelliteName : '',
     lnb: { type: typeof lnb.type === 'string' ? lnb.type : 'KU_BAND', min: num(lnb.min), max: num(lnb.max) },
     diseqc: typeof scanInfo.diseqc === 'string' ? scanInfo.diseqc : 'OFF_DISEQC',
+    tone: typeof scanInfo.twentytwoKhzTone === 'string' ? scanInfo.twentytwoKhzTone : 'OFF_22KHZTONE',
+    lnbPower: scanInfo.lnbPower !== false,
     selected: bool(scanOption.isSelected),
     networkSearch: bool(scanOption.networkSearch),
     blindSearch: bool(scanOption.blindSearch),
@@ -200,6 +219,16 @@ function normalizeConfig(value: unknown): SatelliteConfig | null {
     supportsSkipScrambled: bool(scanOption.supportSkipScrambleProgram),
     scanInfo,
     scanOption,
+  };
+}
+
+function lnbScanInfo(config: SatelliteConfig): Raw {
+  return {
+    ...config.scanInfo,
+    lnbFrequency: config.lnb,
+    diseqc: config.diseqc,
+    twentytwoKhzTone: toneLocked(config) ? 'OFF_22KHZTONE' : config.tone,
+    lnbPower: config.lnbPower,
   };
 }
 
@@ -215,12 +244,22 @@ function transponderRecord(request: TuneRequest, id: number): Raw {
   };
 }
 
+// Whether a listed transponder is the one the request describes. The TV
+// tunes a listed record by its id with its own symbol rate and system, so a
+// record that differs in either is another transponder, however close.
+export function sameTransponder(transponder: Transponder, request: TuneRequest): boolean {
+  return Math.abs(transponder.frequency - request.frequency) <= SAME_TRANSPONDER_MHZ
+    && transponder.polarization === request.polarization
+    && (!transponder.symbolRate || Math.abs(transponder.symbolRate - request.symbolRate) <= SAME_SYMBOL_RATE)
+    && (!transponder.system || transponder.system === request.system);
+}
+
 // A listed transponder the request names, so the TV tunes its own record.
 export function matchTransponder(list: readonly Transponder[], request: TuneRequest): Transponder | null {
   let best: Transponder | null = null;
   for (const transponder of list) {
+    if (!sameTransponder(transponder, request)) continue;
     const distance = Math.abs(transponder.frequency - request.frequency);
-    if (distance > SAME_TRANSPONDER_MHZ || transponder.polarization !== request.polarization) continue;
     if (!best || distance < Math.abs(best.frequency - request.frequency)) best = transponder;
   }
   return best;
@@ -329,9 +368,18 @@ export const SatelliteScan = {
     return 'failed';
   },
 
-  // Writes a configuration's LNB, DiSEqC port, and scan options back.
+  // Writes a configuration's LNB settings back, as LG's satellite settings do.
+  async saveLnb(config: SatelliteConfig): Promise<boolean> {
+    const reply = await BroadcastService.request(SCAN, 'setDvbSatelliteScanInfo',
+      { configurationId: config.id, scanInfo: lnbScanInfo(config) });
+    if (reply) config.scanInfo = lnbScanInfo(config);
+    else log.warn('LNB settings not saved', 'event=satellite.scan.lnb_failed');
+    return reply !== null;
+  },
+
+  // Writes a configuration's LNB settings and scan options back.
   async updateConfig(config: SatelliteConfig): Promise<boolean> {
-    const scanInfo = { ...config.scanInfo, lnbFrequency: config.lnb, diseqc: config.diseqc };
+    const scanInfo = lnbScanInfo(config);
     const scanOption = {
       ...config.scanOption,
       isSelected: config.selected,

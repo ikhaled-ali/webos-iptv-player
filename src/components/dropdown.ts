@@ -8,15 +8,17 @@ export function dropdown(
   id: string,
   options: { value: string; label: string }[],
   active: string,
+  // For a host whose re-renders would drop the class toggleDropdown() adds.
+  open = false,
 ): Safe {
   const current = options.find(o => o.value === active) ?? options[0];
   return html`
-    <div class="dropdown" id="${id}" data-value="${active}">
+    <div class="dropdown ${open ? 'open' : ''}" id="${id}" data-value="${active}">
       <span class="dropdown-sizer" aria-hidden="true">
         ${options.map(o => html`<span>${o.label}</span>`)}
       </span>
       <button class="dropdown-trigger" data-focusable data-dropdown-trigger
-              data-key="${id}:trigger" aria-expanded="false">
+              data-key="${id}:trigger" aria-expanded="${open ? 'true' : 'false'}">
         <span class="dropdown-current">${current.label}</span>
         <span class="dropdown-caret"></span>
       </button>

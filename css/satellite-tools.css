@@ -121,8 +121,48 @@
   margin-top: 0;
 }
 
-.sat-tools-digits-hint {
+.sat-tools-digits-hint,
+.sat-tools-lnb-hint {
   margin-top: 10px;
+}
+
+/* --- Typed fields and the transponder menu keep the number fields' size. */
+
+.sat-tools-input {
+  box-sizing: border-box;
+  width: 260px;
+  height: 56px;
+  font-size: 26px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+/* Typing with the remote's digits: the accent marks the field. */
+.sat-tools-input.editing {
+  border-color: var(--accent);
+}
+
+.sat-tools-tp {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The menu takes what the symbol rate leaves of the column. */
+.sat-tools-tp .dropdown {
+  width: 100%;
+  min-width: 0;
+}
+
+/* Five ports fit beside the LNB frequency within the column. */
+.sat-tools-port .toggle-option {
+  min-width: 72px;
+  padding: 10px 16px;
+}
+
+.sat-tools-tp .dropdown-trigger {
+  height: 56px;
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
 }
 
 .sat-tools-action {

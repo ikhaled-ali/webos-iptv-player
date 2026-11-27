@@ -40,6 +40,10 @@ import { Search } from './components/search';
 import {
   HomeView, liveHomeSources, type HomeModel, type HomeRow, type HomeTitle,
 } from './components/home';
+import { SatelliteView } from './components/satellite';
+import { SatelliteTools, type SatelliteTool } from './components/satellite-tools';
+import { SatelliteScanSession } from './services/satellite-scan-session';
+import { KeepAwake } from './services/keep-awake';
 import { SearchHistoryDropdown } from './components/search-history-dropdown';
 import { showToast } from './components/toast';
 import { showNumberEntry, hideNumberEntry } from './components/number-entry';
@@ -97,9 +101,10 @@ import {
 } from './utils/perf-trace';
 
 const log = createLogger('App');
+const SATELLITE_WARM_DELAY_MS = 8000;
 
 type ViewName = 'home' | 'channels' | 'player' | 'epg' | 'settings' | 'parental-controls' | 'reminders'
-  | 'loading' | 'movies' | 'series' | 'search' | 'recordings';
+  | 'loading' | 'movies' | 'series' | 'search' | 'recordings' | 'satellite' | 'satellite-tools';
 
 class App {
   private views!: Record<ViewName, HTMLElement>;
@@ -129,6 +134,8 @@ class App {
   private movies!: Movies;
   private series!: Series;
   private home!: HomeView;
+  private satellite!: SatelliteView;
+  private satelliteTools!: SatelliteTools;
   // Live playback started from Home returns there on Back.
   private returnHome = false;
   private lastSearchQuery = '';
@@ -196,6 +203,8 @@ class App {
       series: $('#view-series')!,
       search: $('#view-search')!,
       recordings: $('#view-recordings')!,
+      satellite: $('#view-satellite')!,
+      'satellite-tools': $('#view-satellite-tools')!,
       loading: $('#view-loading')!,
     };
 
@@ -280,6 +289,7 @@ class App {
       (name, proceed) => this.authorizeLiveEditing(name, proceed),
       (id, proceed, turnOff) => this.authorizeSourceRemoval(id, proceed, turnOff),
       id => this.loadXtreamAccount(id),
+      tool => this.openSatelliteTool(tool),
     );
     this.parentalControls = new ParentalControls(
       this.views['parental-controls'],
@@ -455,6 +465,33 @@ class App {
       onOpenTitle: (title) => this.openHomeTitle(title),
       onSeeAll: (row, model) => this.openHomeSeeAll(row, model),
     });
+    this.satellite = new SatelliteView(this.views.satellite, {
+      onRevealTabBar: (dir) => this.leaveEdge(dir),
+      onBack: () => this.showHome(),
+      onFullscreenChange: (fullscreen) => this.tabBar.setShown(!fullscreen),
+    });
+    this.satelliteTools = new SatelliteTools(this.views['satellite-tools'], {
+      onRevealTabBar: (dir) => this.leaveEdge(dir),
+      onBack: () => {
+        this.settings.render();
+        this.showView('settings');
+      },
+      onChannelsChanged: () => this.satellite.invalidate(),
+    });
+    // A scan runs in the background: Satellite (which needs the tuner) waits
+    // for it, and its lineup is read again once it saved.
+    let scanPhase = SatelliteScanSession.state.phase;
+    SatelliteScanSession.subscribe(() => {
+      const phase = SatelliteScanSession.state.phase;
+      this.tabBar.setSectionDisabled('satellite', SatelliteScanSession.busy);
+      // A scan runs with no remote input; the screensaver would end it.
+      if (SatelliteScanSession.busy) KeepAwake.hold('satellite-scan');
+      else KeepAwake.release('satellite-scan');
+      if (phase !== scanPhase && phase === 'done') this.satellite.invalidate();
+      scanPhase = phase;
+    });
+    // Satellite's lineup is refreshed in the background once the app settles.
+    setTimeout(() => this.satellite.warm(), SATELLITE_WARM_DELAY_MS);
     this.historyDropdown = new SearchHistoryDropdown({
       onPick: (query) => {
         this.tabBar.setSearchQuery(query);
@@ -497,6 +534,9 @@ class App {
         if (!this.lastSearchQuery.trim()) this.openHistoryDropdown();
       },
       onLockNow: () => ParentalControlService.lock('lock-now'),
+      onDisabledSection: (section) => {
+        if (section === 'satellite') showToast(t('satellite.scanInProgress'));
+      },
     });
     this.tabBar.init();
     startWeather(setStatusWeather);
@@ -1412,6 +1452,9 @@ class App {
       this.viewStack = ['settings'];
     }
     this.historyDropdown?.close('view-change');
+    // webOS plays one media element at a time: leaving Satellite frees the tuner's.
+    if (name !== 'satellite') this.satellite?.deactivate();
+    if (name !== 'satellite-tools') this.satelliteTools?.close();
     this.livePreview?.beforeViewChange(name);
     if (name !== 'channels' && this.channelList.isEditing) this.channelList.exitEditMode();
     // Re-assert the saved appearance on every view transition.
@@ -1483,12 +1526,17 @@ class App {
       this.home.open();
       return;
     }
+    if (section === 'satellite') {
+      this.showView('satellite');
+      this.satellite.open();
+      return;
+    }
     if (section === 'epg') { this.openEpg(); return; }
     if (section === 'movies') {
       this.showView('movies');
       const account = this.activeXtreamAccount();
       if (account) {
-        this.movies.open(account)
+        this.movies.show(account)
           .catch((err) => log.error(
             'Movies open failed',
             'event=xtream.view.open.failed',
@@ -1502,7 +1550,7 @@ class App {
       this.showView('series');
       const seriesAccount = this.activeXtreamAccount();
       if (seriesAccount) {
-        this.series.open(seriesAccount)
+        this.series.show(seriesAccount)
           .catch((err) => log.error(
             'Series open failed',
             'event=xtream.view.open.failed',
@@ -1674,6 +1722,12 @@ class App {
       t(turnOff ? 'parental.enterToTurnOff' : 'parental.enterToRemove', { name }), proceed);
   }
 
+  // Settings' satellite tools take the whole screen; Back returns to Settings.
+  private openSatelliteTool(tool: SatelliteTool): void {
+    this.showView('satellite-tools');
+    void this.satelliteTools.open(tool);
+  }
+
   private openParentalControls(): void {
     const open = () => {
       this.showView('parental-controls');
@@ -1693,7 +1747,14 @@ class App {
     this.tabBar.setActive(section);
     // Back into the shown section: re-opening it would drop unsaved edits and
     // the position the ring comes back to.
-    if (via === 'key' && sectionForView(this.viewStack[this.viewStack.length - 1]) === section) {
+    // Satellite waits for a background scan, which holds the tuner.
+    if (section === 'satellite' && SatelliteScanSession.busy) {
+      showToast(t('satellite.scanInProgress'));
+      return;
+    }
+    const shownView = this.viewStack[this.viewStack.length - 1];
+    // Satellite tools sit under Settings' tab but are not Settings itself.
+    if (via === 'key' && shownView !== 'satellite-tools' && sectionForView(shownView) === section) {
       if (section === 'settings') {
         this.settings.resumeFocus();
         return;
@@ -1929,6 +1990,11 @@ class App {
       else this.search.refreshLocks();
     }
     const account = this.activeXtreamAccount();
+    // A hidden catalog keeps its browse, so it reloads with the new locks when shown.
+    if (account) {
+      if (current !== 'movies') this.movies.invalidateAccount(account.id);
+      if (current !== 'series') this.series.invalidateAccount(account.id);
+    }
     if (account && (current === 'movies' || current === 'series')) {
       if (concealmentChanged) this.reopenAccountSection(account);
       else (current === 'movies' ? this.movies : this.series).refreshLocks();
@@ -2110,6 +2176,8 @@ class App {
     const own: Partial<Record<ViewName, FocusScope>> = {
       epg: this.epgGrid.focusScope,
       home: this.home.focusScope,
+      satellite: this.satellite.focusScope,
+      'satellite-tools': this.satelliteTools.focusScope,
       channels: this.channelList.focusScope,
       settings: this.settings.focusScope,
       'parental-controls': this.parentalControls.focusScope,
@@ -2201,7 +2269,7 @@ class App {
     // Direct channel entry: echo the digits while KeyHandler buffers them, in
     // the two views that act on them (the guide and prompts ignore numbers).
     if (action === 'number_input') {
-      if (currentView === 'channels' || currentView === 'player') {
+      if (currentView === 'channels' || currentView === 'player' || currentView === 'satellite') {
         showNumberEntry(event?.digits ?? '');
       }
       return;
@@ -2216,7 +2284,8 @@ class App {
     // Global shortcuts
     // While the channel list is in edit mode the color keys belong to the editor.
     const editingChannels = currentView === 'channels' && this.channelList.isEditing;
-    if (action === 'red' && currentView !== 'epg' && currentView !== 'player'
+    // Satellite tools keep the color keys: leaving would abandon a scan.
+    if (action === 'red' && currentView !== 'epg' && currentView !== 'player' && currentView !== 'satellite-tools'
         && currentView !== 'recordings' && !editingChannels) {
       this.sidebar.hide();
       this.menu.hide();
@@ -2224,7 +2293,7 @@ class App {
       this.openEpg();
       return;
     }
-    if (action === 'blue' && currentView !== 'settings' && !editingChannels) {
+    if (action === 'blue' && currentView !== 'settings' && currentView !== 'satellite-tools' && !editingChannels) {
       if (currentView === 'epg') this.epgGrid.deactivateFilters();
       this.sidebar.hide();
       this.menu.hide();
@@ -2277,6 +2346,14 @@ class App {
       }
       if (currentView === 'home') {
         this.home.handleAction('back');
+        return;
+      }
+      if (currentView === 'satellite') {
+        this.satellite.handleAction('back');
+        return;
+      }
+      if (currentView === 'satellite-tools') {
+        this.satelliteTools.handleAction('back');
         return;
       }
       if (currentView === 'channels') {
@@ -2360,6 +2437,12 @@ class App {
         break;
       case 'home':
         this.home.handleAction(action);
+        break;
+      case 'satellite':
+        this.satellite.handleAction(action, event);
+        break;
+      case 'satellite-tools':
+        this.satelliteTools.handleAction(action);
         break;
     }
   }

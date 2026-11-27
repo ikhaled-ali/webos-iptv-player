@@ -3,6 +3,7 @@ import { html, raw, type Safe } from '../utils/dom';
 import { ChannelHealthService } from '../services/channel-health';
 import { t, type TextMessageKey } from '../i18n';
 import { channelLockBadge } from './parental-badge';
+import { posterThumb, requestPosterThumb } from '../utils/poster-thumbs';
 import { favoriteIcon, SEE_ALL_ICON, TAB_LIVE_ICON, TAB_MOVIES_ICON, TAB_SERIES_ICON } from './icons';
 
 // The one channel card and one poster card every surface draws (Live, Home,
@@ -71,10 +72,12 @@ let artListening = false;
 function onArtEvent(e: Event): void {
   const img = e.target;
   if (!(img instanceof HTMLImageElement) || !img.hasAttribute('data-art')) return;
-  const src = img.getAttribute('src');
+  // A thumbnail keys its outcome by the poster it stands for.
+  const src = img.getAttribute('data-art') || img.getAttribute('src');
   if (!src) return;
   const failed = e.type === 'error';
   (failed ? failedArt : loadedArt).add(src);
+  if (!failed && img.hasAttribute('data-thumb')) requestPosterThumb(src, img.naturalWidth);
   img.parentElement?.classList.add(failed ? 'art-failed' : 'art-loaded');
 }
 
@@ -96,7 +99,7 @@ export function channelLogo(channel: Channel | null, failed = false): Safe {
   const src = channel?.logo ?? '';
   const state = artState(src, failed);
   return html`<div class="channel-logo-wrap art-box ${state}">${artPlaceholder('channel')}${
-    state === 'art-failed' ? '' : html`<img class="channel-logo" data-art src="${src}" alt="" loading="lazy">`}</div>`;
+    state === 'art-failed' ? '' : html`<img class="channel-logo" data-art src="${src}" alt="" loading="lazy" decoding="async">`}</div>`;
 }
 
 export const PLAYING_MARK = raw('<div class="playing-indicator">&#9654;</div>');
@@ -152,10 +155,13 @@ export interface PosterCardOptions {
 }
 
 // The poster with its placeholder, filling the box it sits in (an art-box).
-export function posterImage(kind: ArtKind, poster: string): Safe {
+// A tile (`thumb`) draws the poster's small copy once one exists.
+export function posterImage(kind: ArtKind, poster: string, thumb = false): Safe {
   listenForArt();
-  return html`${artPlaceholder(kind)}${artState(poster) === 'art-failed' ? ''
-    : html`<img class="catalog-poster" data-art src="${poster}" alt="" loading="lazy" decoding="async">`}`;
+  if (artState(poster) === 'art-failed') return artPlaceholder(kind);
+  const src = (thumb && posterThumb(poster)) || poster;
+  return html`${artPlaceholder(kind)}<img class="catalog-poster" data-art="${poster}" ${
+    thumb ? raw('data-thumb') : ''} src="${src}" alt="" loading="lazy" decoding="async">`;
 }
 
 // The class for the box a posterImage() sits in.
@@ -174,7 +180,7 @@ export function posterCard(options: PosterCardOptions): Safe {
   return html`
     <div class="catalog-tile" ${raw(options.focusable === false ? '' : 'data-focusable')}
          data-key="${options.key}" ${options.attrs ?? ''}>
-      <div class="catalog-poster-wrap ${artBoxClass(options.poster)}">${posterImage(options.art, options.poster)}${
+      <div class="catalog-poster-wrap ${artBoxClass(options.poster)}">${posterImage(options.art, options.poster, true)}${
         raw(String(options.lock ?? ''))}${progress ? progressBar(progress.position, progress.duration) : ''}${
         options.overlay ?? ''}</div>
       <div class="catalog-tile-name" dir="auto">${options.name}</div>

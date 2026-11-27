@@ -31,7 +31,9 @@ body.tabbar-docked #view-movies,
 body.tabbar-docked #view-series,
 body.tabbar-docked #view-search,
 body.tabbar-docked #view-settings,
-body.tabbar-docked #view-recordings {
+body.tabbar-docked #view-recordings,
+body.tabbar-docked #view-satellite,
+body.tabbar-docked #view-satellite-tools {
   top: 128px;
   left: 120px;
   width: 1800px;
@@ -40,13 +42,30 @@ body.tabbar-docked #view-recordings {
 
 /* Settings' menu panel runs to the top behind the search strip, as Live's
    does; its content still starts below the strip. */
-body.tabbar-docked #view-settings {
+body.tabbar-docked #view-settings,
+body.tabbar-docked #view-satellite-tools {
   top: 0;
   height: 1080px;
 }
 
 body.tabbar-docked #view-settings .settings-sidebar,
-body.tabbar-docked #view-settings .settings-main {
+body.tabbar-docked #view-settings .settings-main,
+body.tabbar-docked #view-satellite-tools .settings-sidebar,
+body.tabbar-docked #view-satellite-tools .settings-main {
+  padding-top: 128px;
+}
+
+/* Satellite runs to the top the same way: its menu panel, list, and
+   preview reach behind the search strip, their content below it. */
+body.tabbar-docked #view-satellite {
+  top: 0;
+  height: 1080px;
+}
+
+body.tabbar-docked #view-satellite .sat-sidebar,
+body.tabbar-docked #view-satellite .sat-list-column,
+body.tabbar-docked #view-satellite .sat-preview,
+body.tabbar-docked #view-satellite .sat-notice {
   padding-top: 128px;
 }
 
@@ -371,4 +390,9 @@ html:not(.keyboard-nav) .tab-bar-search:hover .tab-bar-search-input::placeholder
 .tab-bar-status.with-account .status-clock {
   padding-right: 0.7em;
   border-right: 2px solid var(--border);
+}
+
+/* A section that waits for something (Satellite during a scan). */
+.tab-bar-tab.disabled {
+  opacity: 0.35;
 }

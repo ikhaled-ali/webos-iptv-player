@@ -38,6 +38,7 @@ import { CONFIG } from '../config';
 import { THEMES, OVERLAY_STYLES, TEXT_SIZES, DEFAULT_TEXT_SIZE, type ThemeMeta, type OverlayStyle, type TextSize } from '../config/themes';
 import { previewTheme, applyTextSize } from '../services/theme-service';
 import { showToast } from './toast';
+import type { SatelliteTool } from './satellite-tools';
 import { ConfirmationPrompt } from './confirmation-prompt';
 import { sourceToggle, toggleGroup } from './toggle-controls';
 import {
@@ -72,6 +73,7 @@ import {
   DATABASE_ICON,
   GLOBE_ICON,
   GUIDE_ICON,
+  TAB_SATELLITE_ICON,
   LOCK_ICON,
   NAV_HORIZONTAL_ICON,
   NAV_VERTICAL_ICON,
@@ -249,8 +251,15 @@ function timeoutOptions(values: readonly number[]): { value: string; label: stri
   });
 }
 
-type SettingsCategory = 'general' | 'sources' | 'guide' | 'appearance'
+type SettingsCategory = 'general' | 'sources' | 'satellite' | 'guide' | 'appearance'
   | 'playback' | 'subtitles' | 'data' | 'advanced';
+
+// The satellite tools Settings opens, in their order.
+const SATELLITE_TOOLS: ReadonlyArray<{ id: SatelliteTool; label: TextMessageKey; hint: TextMessageKey }> = [
+  { id: 'finder', label: 'satelliteTools.signalFinder', hint: 'satelliteTools.signalFinderHint' },
+  { id: 'tpscan', label: 'satelliteTools.tpScan', hint: 'satelliteTools.tpScanHint' },
+  { id: 'scan', label: 'satelliteTools.channelScan', hint: 'satelliteTools.channelScanHint' },
+];
 
 const SETTINGS_CATEGORIES: readonly {
   id: SettingsCategory;
@@ -266,6 +275,11 @@ const SETTINGS_CATEGORIES: readonly {
     id: 'sources',
     label: 'settings.sources',
     icon: raw(SOURCES_ICON),
+  },
+  {
+    id: 'satellite',
+    label: 'nav.satellite',
+    icon: raw(TAB_SATELLITE_ICON),
   },
   {
     id: 'guide',
@@ -555,6 +569,7 @@ export class Settings {
       (id: string, proceed: () => void, turnOff?: boolean) => void =
       (_id, proceed) => proceed(),
     private onLoadAccount: (id: string) => Promise<void> = async () => {},
+    private onOpenSatelliteTool: (tool: SatelliteTool) => void = () => {},
   ) {
     this.container = container;
     this.onSave = onSave;
@@ -919,6 +934,21 @@ export class Settings {
                   <button class="btn btn-danger" data-focusable id="reset-customization"
                           aria-label="${t('settings.resetCustomization')}">${t('settings.resetCustomization')}</button>
                   <div class="settings-item-hint">${t('settings.resetCustomizationHint')}</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-category" id="settings-satellite" data-settings-category="satellite">
+              <div class="settings-section">
+                <h3 class="settings-section-title">${t('nav.satellite')}</h3>
+                <p class="settings-item-hint settings-satellite-lead">${t('settings.satelliteHint')}</p>
+                <div class="settings-satellite-tools">
+                  ${SATELLITE_TOOLS.map(tool => html`
+                    <div class="settings-item settings-item--action">
+                      <button class="btn" data-focusable id="satellite-tool-${tool.id}"
+                              data-satellite-tool="${tool.id}">${t(tool.label)}</button>
+                      <div class="settings-item-hint">${t(tool.hint)}</div>
+                    </div>`)}
                 </div>
               </div>
             </div>
@@ -1582,6 +1612,8 @@ export class Settings {
       this.onManageReminders();
     } else if (el.id === 'manage-parental-controls') {
       this.onManageParentalControls();
+    } else if (el.dataset.satelliteTool) {
+      this.onOpenSatelliteTool(el.dataset.satelliteTool as SatelliteTool);
     } else if (el.id === 'reset-customization') {
       this.authorizeLiveEditing(t('settings.resetCustomization'), () => this.confirmResetCustomization());
     } else if (el.id === 'clear-recently-watched') {

@@ -1,0 +1,649 @@
+/* Satellite: the TV's tuner, laid out like Live (group rail, channel list,
+   preview). It reuses Live's sidebar, row, and preview classes; this file
+   holds only what differs. */
+
+/* The broadcast picture sits under the UI; the preview slot is left
+   unpainted so the video plane shows through it. */
+#view-satellite {
+  background: transparent;
+}
+
+.sat-video {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 1920px;
+  height: 1080px;
+  background: #000;
+  /* SD services are anamorphic 720x576; the engine reads them as 5:4 and
+     would pillarbox them, so the picture always fills the frame. */
+  object-fit: fill;
+}
+
+.sat-ui {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 1;
+}
+
+.sat-view,
+.sat-browse {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.sat-browse {
+  display: flex;
+}
+
+.sat-sidebar {
+  flex-shrink: 0;
+}
+
+.sat-sample-badge {
+  margin-left: auto;
+  padding: 4px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+/* Few enough groups to lay out in flow, unlike Live's virtual rail. */
+.sat-group-list .group-item {
+  position: relative;
+}
+
+/* --- Channel list */
+
+.sat-list-column {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-primary);
+}
+
+.sat-list-heading {
+  flex-shrink: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 22px 32px 10px;
+}
+
+.sat-list-title {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 28px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sat-list-count {
+  flex-shrink: 0;
+  font-size: 18px;
+  color: var(--text-muted);
+}
+
+.sat-channel-main {
+  position: relative;
+}
+
+/* Numbers right-aligned in one column, as on the TV's own list. */
+.sat-number {
+  flex-shrink: 0;
+  min-width: 56px;
+  font-size: 22px;
+  font-weight: 600;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.sat-badges {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.sat-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+
+.sat-badge-icon {
+  padding: 0 4px;
+}
+
+.sat-badge svg {
+  width: 18px;
+  height: 18px;
+}
+
+.sat-badge-lock svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+}
+
+.sat-channel.focused .sat-number,
+.sat-channel.focused .sat-badge {
+  color: #000;
+  border-color: rgba(0, 0, 0, 0.3);
+}
+
+/* The legend sits under the list column only; the preview runs to the bottom. */
+.edit-hints.sat-hints {
+  right: 760px;
+}
+
+/* --- Preview */
+
+.sat-preview {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 760px;
+  width: 760px;
+  box-sizing: border-box;
+  padding: 0 36px 0 28px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: -18px 0 32px rgba(0, 0, 0, 0.14);
+}
+
+.sat-preview-number {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 52px;
+  height: 40px;
+  padding: 0 10px;
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.sat-slot-message {
+  flex-direction: column;
+  gap: 16px;
+}
+
+
+
+.sat-details {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+
+.sat-description {
+  max-height: 2.8em;
+  margin: 14px 0 0;
+  overflow: hidden;
+  font-size: 20px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.sat-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.sat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  font-size: 18px;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.sat-chip .group-logo {
+  width: 20px;
+  height: 20px;
+}
+
+/* --- Loading and failure notice */
+
+.sat-notice {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0 240px;
+  text-align: center;
+  background: var(--bg-primary);
+}
+
+.sat-notice-icon {
+  display: flex;
+  width: 96px;
+  height: 96px;
+  margin-bottom: 28px;
+  color: var(--accent);
+}
+
+.sat-notice-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.sat-notice-loading {
+  animation: sat-pulse 1.6s ease-in-out infinite;
+}
+
+html[data-animation="essential"] .sat-notice-loading {
+  animation: none;
+}
+
+@keyframes sat-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.sat-notice-title {
+  margin: 0;
+  font-size: 32px;
+  font-weight: 600;
+}
+
+.sat-notice-body {
+  max-width: 920px;
+  margin: 16px 0 0;
+  font-size: 24px;
+  color: var(--text-secondary);
+}
+
+.sat-notice-actions {
+  display: flex;
+  gap: 20px;
+  margin-top: 40px;
+}
+
+.btn.sat-notice-button {
+  min-height: 54px;
+  box-sizing: border-box;
+}
+
+/* --- Full screen */
+
+#view-satellite.sat-fullscreen {
+  top: 0;
+  left: 0;
+  width: 1920px;
+  height: 1080px;
+}
+
+.sat-fullscreen .sat-browse,
+.sat-fullscreen .sat-notice {
+  display: none;
+}
+
+.sat-osd {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  opacity: 0;
+  transition: opacity 200ms ease-out;
+  pointer-events: none;
+}
+
+.sat-osd.visible {
+  opacity: 1;
+}
+
+/* The OSD speaks the app's own palette: the theme's surface and text, in
+   every theme. Blurred glass where the engine can blur the picture; on the
+   TV, whose video plane no blur reaches, a nearly opaque panel. It leaves
+   the status strip below free, as the player's OSD does. */
+.sat-osd-panel {
+  position: absolute;
+  right: 40px;
+  bottom: calc(40px + 28px * var(--font-scale));
+  left: 40px;
+  padding: 22px 32px 24px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgb(var(--catalog-hero-scrim-rgb) / 0.94);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.32);
+  color: var(--text-primary);
+}
+
+@supports (backdrop-filter: blur(1px)) {
+  .sat-osd-panel {
+    background: rgb(var(--catalog-hero-scrim-rgb) / 0.78);
+    backdrop-filter: blur(28px) saturate(140%);
+  }
+
+  .sat-hardware-video .sat-osd-panel {
+    background: rgb(var(--catalog-hero-scrim-rgb) / 0.94);
+    backdrop-filter: none;
+  }
+}
+
+.sat-osd-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.sat-osd-number {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 64px;
+  height: 48px;
+  padding: 0 12px;
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+  font-size: 28px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.sat-osd-name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 32px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sat-osd-name .favorite-glyph {
+  width: 22px;
+  height: 22px;
+  margin-right: 10px;
+  vertical-align: -2px;
+  fill: currentColor;
+  color: var(--accent);
+}
+
+.sat-osd .sat-badge {
+  border-color: var(--border);
+}
+
+.sat-osd-clock {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: 26px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.sat-osd-program {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  margin-top: 14px;
+}
+
+.sat-osd-title {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 26px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sat-osd-muted {
+  color: var(--text-muted);
+}
+
+.sat-osd-time {
+  flex-shrink: 0;
+  font-size: 22px;
+  color: var(--text-secondary);
+}
+
+.sat-osd-progress {
+  height: 4px;
+  margin-top: 12px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--bg-tertiary);
+}
+
+.sat-osd-progress > div {
+  height: 100%;
+  background: var(--accent);
+}
+
+.sat-osd-next {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-top: 12px;
+  overflow: hidden;
+  font-size: 22px;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.sat-osd-next-label {
+  color: var(--text-muted);
+}
+
+/* --- Status: the IPTV player's label, at the bottom leading edge */
+
+.sat-slot .sat-status {
+  bottom: 18px;
+  left: 20px;
+  max-width: calc(100% - 160px);
+}
+
+.sat-status[data-state="error"] .player-status-text {
+  font-weight: 600;
+}
+
+/* A radio service has no picture: its glyph stands in, on the black. */
+.sat-slot-radio {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  font-size: 22px;
+  color: rgba(255, 255, 255, 0.72);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.sat-slot-radio svg {
+  width: 64px;
+  height: 64px;
+}
+
+.sat-fs-radio {
+  font-size: 30px;
+}
+
+.sat-fs-radio svg {
+  width: 120px;
+  height: 120px;
+}
+
+/* --- Signal: source, picture, and reception under the preview and in the OSD */
+
+.sat-signal {
+  flex-shrink: 0;
+  padding-top: 18px;
+  background: var(--bg-primary);
+}
+
+.sat-signal-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  font-size: 18px;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.sat-signal-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+
+.sat-signal-source .group-logo {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  color: var(--accent);
+}
+
+.sat-signal-frequency {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.sat-signal-quality {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.sat-quality-chip {
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.sat-meters {
+  display: flex;
+  gap: 28px;
+  margin-top: 14px;
+}
+
+.sat-meter {
+  flex: 1;
+  min-width: 0;
+}
+
+.sat-meter-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.sat-meter-label {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 18px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+}
+
+.sat-meter-value {
+  flex-shrink: 0;
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.sat-meter-bar {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--bg-tertiary);
+}
+
+.sat-meter-bar > div {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--text-muted);
+}
+
+/* Reception is a status, so it takes the status colors. */
+.sat-meter[data-level="good"] .sat-meter-bar > div { background: var(--success); }
+.sat-meter[data-level="fair"] .sat-meter-bar > div { background: var(--warning); }
+.sat-meter[data-level="poor"] .sat-meter-bar > div { background: var(--danger); }
+
+/* In the OSD: one row under a divider, the meters at the trailing end. */
+.sat-signal.sat-signal-compact {
+  display: flex;
+  align-items: center;
+  gap: 40px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  background: transparent;
+}
+
+.sat-signal-compact .sat-signal-head {
+  flex: 1;
+}
+
+.sat-signal-compact .sat-meters {
+  flex: 0 0 640px;
+  margin-top: 0;
+}
+
+/* Cached values until this tune's readings arrive. */
+.sat-signal-cached .sat-meters,
+.sat-signal-cached .sat-signal-quality {
+  opacity: 0.55;
+}
+

@@ -35,6 +35,7 @@ import { VirtualGrid } from '../utils/virtual-grid';
 import { VirtualList } from '../utils/virtual-list';
 import { VirtualScrollGuard } from '../utils/virtual-scroll';
 import { createLogger } from '../utils/logger';
+import { onCatalogListRefreshed } from '../services/xtream-catalog';
 import {
   defaultSortDirection, isCatalogSort, sortCatalogItems,
   type CatalogSort, type CatalogSortDirection, type CatalogSortItem, type CatalogSortPreference,
@@ -227,6 +228,13 @@ export abstract class CatalogView<C extends { id: string; name: string }, I exte
       has: (key) => this.hasKey(key),
       reveal: (key) => this.revealKey(key),
       concealOnLeave: true,
+    });
+    // New lists from a background refresh reach the browse the next time
+    // the section shows (show() keeps a loaded one otherwise).
+    onCatalogListRefreshed((key, changed = true) => {
+      const id = this.account?.id;
+      if (!changed || !id || !key.startsWith(`${id}|${this.parentalKind}`) || key.includes('_info|')) return;
+      this.browseStale = true;
     });
     // The pointer lights a tile or button where it rests, without scrolling.
     this.container.addEventListener('nav:hover', (e: Event) => {
@@ -1059,6 +1067,28 @@ export abstract class CatalogView<C extends { id: string; name: string }, I exte
     this.showLayer('browse');
     // Nothing to land on until browse loads; the detail's key is gone.
     if (parseKey(this.focusScope.focusKey)?.mode !== 'browse') this.focusScope.track(null);
+  }
+
+  // Showing the section again keeps what it loaded, back on its browse, rather
+  // than reloading it. Stale data, another account, or a Search deep link or
+  // a collection left showing opens it afresh.
+  show(account: PlaylistEntry): Promise<void> {
+    if (this.browseStale || this.account?.id !== account.id || this.deepLinkBack
+        || this.collection || this.managing
+        || !this.layers.browse.querySelector('.catalog-browse')) {
+      return this.open(account);
+    }
+    this.clearPrompt.hide();
+    this.dismissDropdown(null);
+    if (this.mode === 'browse') {
+      this.resumeFocus();
+    } else {
+      this.gridCategory = null;
+      this.clearLayer('grid');
+      this.clearLayer('detail');
+      this.renderBrowse();
+    }
+    return Promise.resolve();
   }
 
   // For re-showing the section without open(), e.g. when Search closes: reload

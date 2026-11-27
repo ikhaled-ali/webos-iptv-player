@@ -1199,6 +1199,39 @@ export const StorageService = {
     set('live_preview', val);
   },
 
+  // Satellite favorites and the last tuned channel, by the TV's channelId.
+  getSatelliteFavorites(): string[] {
+    const value = get<unknown>('satellite_favorites', []);
+    return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
+  },
+  setSatelliteFavorites(ids: string[]): void {
+    set('satellite_favorites', ids);
+  },
+  getSatelliteLastChannel(): string | null {
+    const value = get<unknown>('satellite_last_channel', null);
+    return typeof value === 'string' && value ? value : null;
+  },
+  setSatelliteLastChannel(id: string): void {
+    set('satellite_last_channel', id);
+  },
+  // The Satellite section's own channel order, as service keys.
+  getSatelliteOrder(): string[] {
+    const value = get<unknown>('satellite_order', []);
+    return Array.isArray(value) ? value.filter((key): key is string => typeof key === 'string') : [];
+  },
+  setSatelliteOrder(keys: string[]): void {
+    set('satellite_order', keys);
+  },
+  // The viewer's own aspect for this app while Satellite overrides it.
+  getSatelliteAspectRestore(): string | null {
+    const value = get<unknown>('satellite_aspect_restore', null);
+    return typeof value === 'string' && value ? value : null;
+  },
+  setSatelliteAspectRestore(value: string | null): void {
+    if (value) set('satellite_aspect_restore', value);
+    else remove('satellite_aspect_restore');
+  },
+
   getPrebuffering(): boolean {
     return get<unknown>('prebuffering', true) !== false;
   },

@@ -3,7 +3,7 @@ import { html, raw } from '../utils/dom';
 import { morph } from '../utils/morph';
 import {
   APP_LOGO, MIC_ICON, SEARCH_ICON, SETTINGS_ICON, UNLOCK_ICON,
-  RECORD_ICON, TAB_GUIDE_ICON, TAB_HOME_ICON, TAB_LIVE_ICON, TAB_MOVIES_ICON, TAB_SERIES_ICON,
+  RECORD_ICON, TAB_GUIDE_ICON, TAB_HOME_ICON, TAB_LIVE_ICON, TAB_MOVIES_ICON, TAB_SATELLITE_ICON, TAB_SERIES_ICON,
 } from './icons';
 import { StatusClock } from './status-clock';
 import { AccountSwitcher, type AccountMenuCloseReason } from './account-switcher';
@@ -25,6 +25,7 @@ type SearchCollapseReason = 'back' | 'escape' | 'dismiss' | 'hidden' | 'section-
 export const SECTIONS = [
   { id: 'home', labelKey: 'nav.home', view: 'home', xtreamOnly: false },
   { id: 'live', labelKey: 'nav.live', view: 'channels', xtreamOnly: false },
+  { id: 'satellite', labelKey: 'nav.satellite', view: 'satellite', xtreamOnly: false },
   { id: 'series', labelKey: 'nav.series', view: 'series', xtreamOnly: true },
   { id: 'movies', labelKey: 'nav.movies', view: 'movies', xtreamOnly: true },
   { id: 'epg', labelKey: 'nav.epg', view: 'epg', xtreamOnly: false },
@@ -41,6 +42,7 @@ type SectionDef = typeof SECTIONS[number];
 const TAB_ICONS: Partial<Record<Section, string>> = {
   home: TAB_HOME_ICON,
   live: TAB_LIVE_ICON,
+  satellite: TAB_SATELLITE_ICON,
   epg: TAB_GUIDE_ICON,
   movies: TAB_MOVIES_ICON,
   series: TAB_SERIES_ICON,
@@ -57,6 +59,8 @@ function visibleSections(hasXtream: boolean, hasRecordings: boolean): readonly S
 // The section a view belongs to (null for the chromeless player / loading
 // views, which own no tab).
 export function sectionForView(view: string): Section | null {
+  // Satellite tools open from Settings and keep its tab.
+  if (view === 'satellite-tools') return 'settings';
   return SECTIONS.find((s) => s.view === view)?.id ?? null;
 }
 
@@ -85,6 +89,8 @@ interface TabBarHandlers {
   onAccountMenuClose: (reason: TabBarAccountMenuCloseReason, hit?: Element) => void;
   // End a parental unlock session before it times out.
   onLockNow: () => void;
+  // A disabled section was clicked; the host says why.
+  onDisabledSection?: (section: Section) => void;
 }
 
 // Persistent, docked left rail of section icons (hidden on the full-screen
@@ -119,6 +125,8 @@ export class TabBar {
   private accounts: PlaylistEntry[] = [];
   private selectedAccountId = '';
   private lockShown = false;
+  // Sections shown but not enterable for now, such as Satellite during a scan.
+  private readonly disabled = new Set<Section>();
   private readonly scope: FocusScope;
 
   constructor(handlers: TabBarHandlers) {
@@ -154,7 +162,7 @@ export class TabBar {
     const keys: RingKey[] = ['search', 'voice'];
     if (this.accountShown) keys.push('account-avatar');
     for (const s of this.sections) {
-      if (s.id !== 'search' && s.id !== 'settings') keys.push(s.id);
+      if (s.id !== 'search' && s.id !== 'settings' && !this.disabled.has(s.id)) keys.push(s.id);
     }
     if (this.lockShown) keys.push('lock-now');
     keys.push('settings');
@@ -212,6 +220,18 @@ export class TabBar {
     if (this.hasRecordings === hasRecordings) return;
     this.hasRecordings = hasRecordings;
     this.setSections(this.hasXtream);
+  }
+
+  setSectionDisabled(section: Section, disabled: boolean): void {
+    if (this.disabled.has(section) === disabled) return;
+    if (disabled) this.disabled.add(section);
+    else this.disabled.delete(section);
+    this.focusIndex = Math.min(this.focusIndex, this.ring().length - 1);
+    if (this._shown) this.render();
+  }
+
+  isSectionDisabled(section: Section): boolean {
+    return this.disabled.has(section);
   }
 
   setSections(hasXtream: boolean): void {
@@ -351,6 +371,10 @@ export class TabBar {
       const item = hit?.closest<HTMLElement>('.tab-bar-item');
       if (!item || !item.dataset.section) return;
       const section = item.dataset.section as Section;
+      if (this.disabled.has(section)) {
+        this.handlers.onDisabledSection?.(section);
+        return;
+      }
       if (section === 'search') {
         // The box is always shown: a click puts the caret in it.
         if (this.searchExpanded) {
@@ -674,8 +698,10 @@ export class TabBar {
         <button class="tab-bar-item tab-bar-icon voice-search ${listening ? 'listening' : ''}"
                 data-key="voice" data-voice-search aria-label="${t('search.voice')}">${raw(MIC_ICON)}${listening ? html`<span class="tab-bar-voice-tip" role="status">${t('search.listening')}</span>` : ''}</button>
         ${this.sections.filter((s) => s.id !== 'search' && s.id !== 'settings').map((s) => html`
-          <button class="tab-bar-item tab-bar-icon tab-bar-tab ${s.id === this.active ? 'active' : ''}"
-                  data-key="${s.id}" data-section="${s.id}" aria-label="${t(s.labelKey)}">${raw(TAB_ICONS[s.id] ?? '')}</button>
+          <button class="tab-bar-item tab-bar-icon tab-bar-tab ${s.id === this.active ? 'active' : ''} ${
+            this.disabled.has(s.id) ? 'disabled' : ''}"
+                  data-key="${s.id}" data-section="${s.id}" aria-label="${t(s.labelKey)}"
+                  ${this.disabled.has(s.id) ? raw('aria-disabled="true"') : ''}>${raw(TAB_ICONS[s.id] ?? '')}</button>
         `)}
         <span class="tab-bar-spacer" data-key="spacer"></span>
         ${this.lockShown ? html`

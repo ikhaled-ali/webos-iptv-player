@@ -1,0 +1,492 @@
+/* Satellite tools: Settings' layout with a live tuner card. The view stays
+   unpainted so the tuner's picture shows through the card's slot; the
+   sidebar and every control keep Settings' own surfaces. */
+
+#view-satellite-tools,
+#view-satellite-tools .sat-tools {
+  background: transparent;
+}
+
+.sat-tools-scroll {
+  padding-top: 40px;
+}
+
+.sat-tools-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 60px;
+}
+
+.sat-tools-content {
+  flex: 1;
+  min-width: 0;
+  max-width: 800px;
+}
+
+/* Without the live card (a scan in progress) the content takes the width. */
+.sat-tools-layout.wide .sat-tools-content {
+  max-width: none;
+}
+
+.sat-tools-lead {
+  margin: -8px 0 28px;
+}
+
+.sat-tools-empty {
+  margin-top: 24px;
+  font-size: 24px;
+  color: var(--text-secondary);
+}
+
+/* --- Number fields and steppers: a value between chevrons; digits type into
+   a field, Left and Right step it. */
+
+.sat-tools-number {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  box-sizing: border-box;
+  min-width: 340px;
+  height: 56px;
+  padding: 0 16px;
+  font-family: inherit;
+  font-size: 26px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.sat-tools-number.focused {
+  background-image: var(--focus-layer);
+}
+
+/* Typing: the accent marks the field that takes the digits. */
+.sat-tools-number.editing {
+  border-color: var(--accent);
+}
+
+.sat-tools-number[aria-disabled="true"] {
+  opacity: 0.5;
+}
+
+.sat-tools-number-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-align: center;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sat-tools-chevron {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.sat-tools-chevron svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.sat-tools-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 3px;
+  vertical-align: -0.15em;
+  background: var(--accent);
+}
+
+.sat-tools-stepper {
+  min-width: 420px;
+}
+
+.sat-tools-grid {
+  display: flex;
+  gap: 40px;
+  margin-top: 20px;
+}
+
+.sat-tools-grid > .settings-item {
+  margin-top: 0;
+}
+
+.sat-tools-digits-hint {
+  margin-top: 10px;
+}
+
+.sat-tools-action {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  margin-top: 36px;
+}
+
+.sat-tools-action .btn {
+  min-height: 54px;
+  box-sizing: border-box;
+}
+
+.sat-tools-action .btn[aria-disabled="true"] {
+  opacity: 0.5;
+}
+
+.sat-tools-action .settings-item-hint {
+  margin-top: 0;
+}
+
+.sat-tools-error {
+  color: var(--danger);
+}
+
+/* --- Channel scan: one row per satellite, then the options */
+
+.sat-tools-sat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Each satellite: its name and switch, then its LNB and DiSEqC port. */
+.sat-tools-sat {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 18px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.sat-tools-sat-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 24px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sat-tools-sat-head {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.sat-tools-sat-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 40px;
+}
+
+.sat-tools-sat:not(.selected) .sat-tools-sat-controls {
+  opacity: 0.5;
+}
+
+.sat-tools-sat:not(.selected) .sat-tools-sat-name {
+  color: var(--text-muted);
+}
+
+.sat-tools-sat-control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sat-tools-sat-label {
+  font-size: 16px;
+  color: var(--text-muted);
+}
+
+.sat-tools-lnb {
+  min-width: 230px;
+  height: 48px;
+  font-size: 22px;
+}
+
+.sat-tools-sat .toggle-option {
+  min-width: 52px;
+  padding: 6px 12px;
+  font-size: 20px;
+}
+
+.sat-tools-switch {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.sat-tools-row {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.sat-tools-row-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.sat-tools-row-title {
+  font-size: 24px;
+  color: var(--text-primary);
+}
+
+.sat-tools-row .settings-item-hint {
+  margin-top: 4px;
+}
+
+/* --- Scan progress */
+
+.sat-tools-progress {
+  padding: 24px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.sat-tools-progress-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.sat-tools-progress-title {
+  font-size: 28px;
+  font-weight: 600;
+}
+
+.sat-tools-progress-value {
+  font-size: 28px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.sat-meter-bar.sat-tools-progress-bar {
+  height: 10px;
+  margin: 16px 0 10px;
+  border-radius: 5px;
+}
+
+.sat-tools-progress-bar > div {
+  background: var(--accent);
+}
+
+.sat-tools-found {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.sat-tools-report {
+  margin-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.sat-tools-report-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 12px 0;
+  font-size: 22px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sat-tools-report-row > span:last-child {
+  color: var(--text-secondary);
+}
+
+/* --- Live tuner card */
+
+/* The picture sits above the card, on the unpainted view: a painted card
+   behind the slot would hide the video plane. */
+.sat-tools-live {
+  flex: 0 0 520px;
+  width: 520px;
+}
+
+.sat-tools-slot {
+  position: relative;
+  height: 293px;
+  margin-bottom: 16px;
+  overflow: hidden;
+  border-radius: var(--radius);
+}
+
+.sat-tools-live-card {
+  padding: 20px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+/* Drawn on the picture, so it keeps its own dark pill. */
+.sat-tools-lock {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  padding: 4px 14px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.6);
+  font-size: 18px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.sat-tools-lock[data-state="locked"] {
+  color: var(--success);
+}
+
+.sat-tools-lock[data-state="nolock"] {
+  color: var(--danger);
+}
+
+.sat-tools-meter + .sat-tools-meter {
+  margin-top: 18px;
+}
+
+.sat-tools-meter .sat-meter-bar {
+  height: 10px;
+  border-radius: 5px;
+}
+
+.sat-tools-facts {
+  margin-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.sat-tools-facts > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 12px;
+  font-size: 18px;
+}
+
+.sat-tools-facts > div > span:first-child {
+  color: var(--text-muted);
+}
+
+.sat-tools-facts > div > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* --- Settings entry */
+
+.settings-satellite-lead {
+  margin: -8px 0 20px;
+}
+
+/* --- Live scan details */
+
+.sat-tools-now {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  margin-top: 4px;
+  font-size: 22px;
+}
+
+.sat-tools-now-label {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.sat-tools-now-value {
+  min-width: 0;
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The lock pill in the flow of a line, not over a picture. */
+.sat-tools-lock.sat-tools-lock-inline {
+  position: static;
+  flex-shrink: 0;
+  background: var(--bg-tertiary);
+}
+
+.sat-tools-log {
+  margin-top: 28px;
+}
+
+.sat-tools-scroller {
+  max-height: 420px;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+
+
+.sat-tools-added-index {
+  display: inline-block;
+  min-width: 48px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.sat-tools-log-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 10px 0;
+  font-size: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sat-tools-log-tp {
+  min-width: 0;
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sat-tools-log-count {
+  flex-shrink: 0;
+  color: var(--success);
+}
+
+.sat-tools-log-row.empty .sat-tools-log-count {
+  color: var(--text-muted);
+}
+
+
+
+.sat-tools-added-kind {
+  color: var(--text-muted);
+}
+
+/* A service the lineup did not have before the scan; as in the Live
+   category picker. */
+.sat-tools-new {
+  display: inline-block;
+  margin-left: 12px;
+  padding: 1px 10px;
+  border-radius: 999px;
+  color: #111;
+  background: var(--success);
+  font-size: 15px;
+  font-weight: 600;
+  vertical-align: 2px;
+  white-space: nowrap;
+}

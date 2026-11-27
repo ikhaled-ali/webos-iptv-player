@@ -51,6 +51,9 @@ let activeHandler: ActionHandler | null = null;
 let numberBuffer = '';
 let numberTimer: ReturnType<typeof setTimeout> | null = null;
 let channelCount: (() => number) | null = null;
+// A numeric field that takes each digit as typed (a frequency), bypassing
+// the channel-number buffer and its cap.
+let digitSink: ((digit: number) => void) | null = null;
 let wheelWarmedUp = true;
 let wheelIdleTimer: ReturnType<typeof setTimeout> | null = null;
 let dispatchingWheel = false;
@@ -212,7 +215,8 @@ export const KeyHandler = {
 
       if (keyCode >= K.NUM_0 && keyCode <= K.NUM_9) {
         e.preventDefault();
-        handleNumber(keyCode - K.NUM_0);
+        if (digitSink) digitSink(keyCode - K.NUM_0);
+        else handleNumber(keyCode - K.NUM_0);
         return;
       }
 
@@ -567,6 +571,12 @@ export const KeyHandler = {
   // Whether the action being handled is a wheel step rather than a key.
   isWheelAction(): boolean {
     return dispatchingWheel;
+  },
+
+  // While set, digits go straight to `sink` instead of channel entry.
+  setDigitSink(sink: ((digit: number) => void) | null): void {
+    cancelNumber();
+    digitSink = sink;
   },
 
   setHandler(handler: ActionHandler): void {

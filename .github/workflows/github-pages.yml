@@ -7,6 +7,10 @@ on:
       - README.md
       - homebrew-repository.json
       - scripts/render-github-pages.mjs
+      - scripts/build-finder-viewer.mjs
+      - src/finder-viewer/**
+      - src/services/finder-share-protocol.ts
+      - src/services/mqtt-lite.ts
       - .github/workflows/github-pages.yml
   workflow_dispatch:
 
@@ -36,11 +40,18 @@ jobs:
         id: pages
         uses: actions/configure-pages@v6
 
+      # The fork has no README.md; the phone page publishes without it.
       - name: Render README
+        if: hashFiles('README.md') != ''
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_PAGES_BASE_URL: ${{ steps.pages.outputs.base_url }}
         run: node scripts/render-github-pages.mjs
+
+      - run: npm ci
+
+      - name: Build the signal finder phone page
+        run: node scripts/build-finder-viewer.mjs _site/finder/index.html
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5

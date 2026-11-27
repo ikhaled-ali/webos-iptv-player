@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "preview"],
       "port": 3000
+    },
+    {
+      "name": "finder-viewer",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "3100", "--bind", "127.0.0.1", "--directory", "build/finder"],
+      "port": 3100
     }
   ]
 }

@@ -248,6 +248,32 @@
   margin-top: 4px;
 }
 
+/* --- Phone share: the QR beside what to do with it. */
+
+.sat-tools-share {
+  margin-top: 28px;
+}
+
+.sat-tools-share-card {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  margin-top: 16px;
+}
+
+.sat-tools-share-qr {
+  flex: 0 0 auto;
+}
+
+.sat-tools-share-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.sat-tools-share-text .settings-item-hint {
+  margin-top: 6px;
+}
+
 /* --- Scan progress */
 
 .sat-tools-progress {

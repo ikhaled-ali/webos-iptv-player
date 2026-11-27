@@ -22,6 +22,10 @@ import {
   type OrderMode,
   type ScanOptions,
 } from '../services/satellite-scan-session';
+import { FinderShare, type FinderReading } from '../services/finder-share';
+import { signalLevel, type ViewerLabels } from '../services/finder-share-protocol';
+import { InputMode } from '../navigation/input-mode';
+import { qrDataUrl } from '../utils/qr';
 import { BroadcastVideo } from './broadcast-video';
 import { ConfirmationPrompt } from './confirmation-prompt';
 import { toggleGroup, sourceToggle } from './toggle-controls';
@@ -59,6 +63,14 @@ const NUMBER_FIELDS: Record<NumberField, { min: number; max: number; step: numbe
 
 // A scroller moves this far per Up or Down.
 const SCROLL_STEP_PX = 132;
+// The QR stays clear of the screen's bottom edge, which overscan may crop.
+export const SHARE_GUTTER_PX = 40;
+
+// How far to scroll so a block shows whole with a gutter below it, without
+// pushing its top out of view; 0 when it already shows.
+export function revealDelta(view: { top: number; bottom: number }, box: { top: number; bottom: number }, gutter: number): number {
+  return Math.max(0, Math.min(box.bottom + gutter - view.bottom, box.top - view.top));
+}
 
 function lnbIndex(config: SatelliteConfig): number {
   const at = LNB_PRESETS.findIndex(preset => preset.min === config.lnb.min && preset.max === config.lnb.max);
@@ -118,6 +130,7 @@ export class SatelliteTools {
   private scanOptions: ScanOptions = { network: true, blind: false, freeOnly: false, skipRadio: false };
   private orderMode: OrderMode = 'keep';
   private unsubscribe: (() => void) | null = null;
+  private unsubscribeShare: (() => void) | null = null;
   // The scan's phase at the last render, to notice it ending.
   private seenPhase = SatelliteScanSession.state.phase;
   private token = 0;
@@ -139,6 +152,7 @@ export class SatelliteTools {
       id: 'view.satellite-tools',
       root: container,
       leaveFor: { up: 'tabbar', left: 'tabbar' },
+      reveal: key => (key === 'sat-tools-share' ? this.revealShareCard() : false),
       defaultKey: () => {
         const el = this.nav.focused;
         return el && this.container.contains(el) ? el.dataset.key ?? null : null;
@@ -163,6 +177,8 @@ export class SatelliteTools {
     this.seenPhase = SatelliteScanSession.state.phase;
     this.unsubscribe?.();
     this.unsubscribe = SatelliteScanSession.subscribe(() => this.onSessionChange());
+    this.unsubscribeShare?.();
+    this.unsubscribeShare = FinderShare.subscribe(() => this.onShareChange());
     const token = ++this.token;
     this.loadState = 'loading';
     this.tpResult = null;
@@ -236,6 +252,9 @@ export class SatelliteTools {
     // A scan goes on in the background; only this screen's picture stops.
     this.unsubscribe?.();
     this.unsubscribe = null;
+    this.unsubscribeShare?.();
+    this.unsubscribeShare = null;
+    FinderShare.stop();
     void this.releasePicture();
   }
 
@@ -308,6 +327,7 @@ export class SatelliteTools {
     this.signal = null;
     this.tpResult = null;
     this.render();
+    this.shareReading();
     const ok = await SatelliteScan.tune(id, config, this.form, this.knownTransponders);
     if (token !== this.token || !this.active) return;
     this.tuning = false;
@@ -364,6 +384,7 @@ export class SatelliteTools {
       const id = SatelliteScanSession.busy ? null : this.broadcastId;
       if (!id) {
         if (this.active) this.render();
+        this.shareReading();
         this.pollReading(token);
         return;
       }
@@ -371,6 +392,7 @@ export class SatelliteTools {
         if (token !== this.token || !this.active) return;
         this.signal = signal;
         this.render();
+        this.shareReading();
         this.pollReading(token);
       });
     }, READING_MS);
@@ -440,6 +462,78 @@ export class SatelliteTools {
     await this.releasePicture();
     this.refocus('scan-stop');
     await SatelliteScanSession.start(configs, this.scanOptions, this.orderMode);
+  }
+
+  // --- Phone share ---------------------------------------------------------
+
+  // The phone page shows the TV's own words, in the TV's language.
+  private shareLabels(): ViewerLabels {
+    return {
+      title: t('satelliteTools.signalFinder'),
+      strength: t('satellite.signalStrength'),
+      quality: t('satellite.signalQuality'),
+      ber: t('satelliteTools.ber'),
+      transponder: t('satelliteTools.transponder'),
+      locked: t('satelliteTools.locked'),
+      noLock: t('satelliteTools.noLock'),
+      searching: t('satelliteTools.searching'),
+      waiting: t('finderShare.waiting'),
+      stopped: t('finderShare.stopped'),
+      stale: t('finderShare.stale'),
+      sound: t('finderShare.sound'),
+      peak: t('finderShare.peak'),
+      resetPeak: t('common.reset'),
+    };
+  }
+
+  private toggleShare(): void {
+    if (FinderShare.active && FinderShare.state !== 'failed') {
+      FinderShare.stop();
+      return;
+    }
+    void FinderShare.start(this.shareLabels()).then(() => this.shareReading());
+  }
+
+  private onShareChange(): void {
+    if (!this.active) return;
+    this.render();
+    // The QR appears under the switch; asking for the switch again reveals
+    // it. A pointer user scrolls for themselves.
+    const toggle = this.nav.focused;
+    if (FinderShare.state === 'live' && InputMode.current === 'keys' && toggle
+      && toggle.dataset.key === 'sat-tools-share') this.nav.focus(toggle);
+  }
+
+  // Scrolls the share card into view as far as the switch above it allows;
+  // false leaves the switch itself to the scope's own check.
+  private revealShareCard(): boolean {
+    const scroller = this.ui.querySelector<HTMLElement>('.sat-tools-scroll');
+    const block = this.ui.querySelector<HTMLElement>('.sat-tools-share');
+    if (!scroller || !block) return false;
+    const below = revealDelta(scroller.getBoundingClientRect(), block.getBoundingClientRect(), SHARE_GUTTER_PX);
+    if (below <= 0) return false;
+    scroller.scrollTop += below;
+    return true;
+  }
+
+  private liveLock(): 'locked' | 'nolock' | 'searching' {
+    const signal = this.signal;
+    return this.tuning ? 'searching' : signal && signal.locked ? 'locked' : signal ? 'nolock' : 'searching';
+  }
+
+  private shareReading(): void {
+    if (FinderShare.state !== 'live') return;
+    const config = this.config;
+    const signal = this.tuning ? null : this.signal;
+    const reading: FinderReading = {
+      lock: this.liveLock(),
+      strength: signal ? signal.strength : null,
+      quality: signal ? signal.quality : null,
+      ber: signal ? signal.ber : null,
+      satellite: config ? config.satelliteName : '',
+      transponder: transponderLabel({ id: 0, ...this.form }),
+    };
+    FinderShare.publish(reading);
   }
 
   // --- Keys ----------------------------------------------------------------
@@ -535,6 +629,7 @@ export class SatelliteTools {
     const target = el.closest<HTMLElement>('[data-action]') ?? el;
     switch (target.dataset.action) {
       case 'tp-scan': void this.scanTransponder(); break;
+      case 'share': this.toggleShare(); break;
       case 'cfg-toggle': this.toggleConfig(target.dataset.config); break;
       case 'option': this.toggleOption(target.dataset.option as keyof ScanOptions); break;
       case 'order':
@@ -550,6 +645,8 @@ export class SatelliteTools {
 
   private switchTool(tool: SatelliteTool): void {
     if (tool === this.tool) return;
+    // The phone share belongs to the signal finder.
+    if (tool !== 'finder') FinderShare.stop();
     this.tool = tool;
     this.tpResult = null;
     this.render();
@@ -767,7 +864,36 @@ export class SatelliteTools {
           ], this.form.system)}
         </div>
       </div>
-      ${this.tool === 'tpscan' ? this.renderTpScanAction() : ''}`;
+      ${this.tool === 'tpscan' ? this.renderTpScanAction() : ''}
+      ${this.tool === 'finder' ? this.renderShare() : ''}`;
+  }
+
+  private renderShare(): Safe {
+    const state = FinderShare.state;
+    const url = FinderShare.viewerUrl;
+    const status = state === 'connecting' ? t('finderShare.connecting')
+      : state === 'reconnecting' ? t('finderShare.reconnecting')
+      : state === 'failed' ? t('finderShare.failed') : '';
+    return html`
+      <div class="settings-item sat-tools-share">
+        <div class="sat-tools-row">
+          <div class="sat-tools-row-text">
+            <div class="sat-tools-row-title">${t('finderShare.title')}</div>
+            <div class="settings-item-hint">${t('finderShare.hint')}</div>
+          </div>
+          <span class="sat-tools-switch" data-action="share">${
+            sourceToggle(FinderShare.active && state !== 'failed', 'sat-tools-share')}</span>
+        </div>
+        ${state !== 'off' ? html`
+          <div class="sat-tools-share-card" data-key="sat-tools-share-card">
+            ${url ? html`<img class="setup-qr sat-tools-share-qr" alt="${t('settings.qrAlt', { url })}" src="${qrDataUrl(url)}">` : ''}
+            <div class="sat-tools-share-text">
+              ${url ? html`<div class="sat-tools-row-title">${t('settings.setupScanQr')}</div>` : ''}
+              ${status ? html`<div class="settings-item-hint ${state === 'failed' ? 'sat-tools-error' : ''}">${status}</div>` : ''}
+              ${url ? html`<div class="settings-item-hint">${t('finderShare.relayNote')}</div>` : ''}
+            </div>
+          </div>` : ''}
+      </div>`;
   }
 
   private renderTpScanAction(): Safe {
@@ -936,7 +1062,7 @@ export class SatelliteTools {
 
   private renderLive(): Safe {
     const signal = this.signal;
-    const state = this.tuning ? 'searching' : signal && signal.locked ? 'locked' : signal ? 'nolock' : 'searching';
+    const state = this.liveLock();
     const label = state === 'locked' ? t('satelliteTools.locked')
       : state === 'nolock' ? t('satelliteTools.noLock') : t('satelliteTools.searching');
     const config = this.config;
@@ -945,7 +1071,7 @@ export class SatelliteTools {
         ? `${config.satelliteName} · ${transponderLabel({ id: 0, ...this.form })}`
         : '–';
     const meter = (title: TextMessageKey, value: number | null) => {
-      const level = value === null ? 'none' : value >= 60 ? 'good' : value >= 30 ? 'fair' : 'poor';
+      const level = signalLevel(value);
       return html`
         <div class="sat-meter sat-tools-meter" data-level="${level}">
           <div class="sat-meter-top">

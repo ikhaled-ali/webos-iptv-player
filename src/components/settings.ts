@@ -47,7 +47,7 @@ import {
   dropdown,
   toggleDropdown,
 } from './dropdown';
-import qrcode from 'qrcode-generator';
+import { qrDataUrl } from '../utils/qr';
 import { createLogger } from '../utils/logger';
 import { ParentalControlService, isResumeConcealed, isWatchlistConcealed } from '../services/parental-control';
 import { parentalPinSupported } from '../services/parental-pin';
@@ -89,14 +89,6 @@ const CATEGORY_SCROLL_IDLE_FRAMES = 8;
 const CATEGORY_SCROLL_MAX_FRAMES = 120;
 
 type EpgScopePlaylist = Pick<PlaylistEntry, 'id' | 'name' | 'url'>;
-
-/** Generate a PNG data URL containing a QR code for the given text. */
-function qrDataUrl(text: string): string {
-  const qr = qrcode(0, 'M');
-  qr.addData(text);
-  qr.make();
-  return qr.createDataURL(6, 4);
-}
 
 /** "UTC+08:00" / "UTC-05:00" / "UTC" for a feed offset in minutes. */
 function formatOffset(min: number): string {

@@ -16,6 +16,7 @@
     "service:smoke": "npm run service:build && node scripts/run-service-smoke.mjs",
     "service:smoke:matrix": "npm run service:build && node scripts/run-service-smoke.mjs --matrix",
     "manifest": "node scripts/generate-homebrew-manifest.mjs",
+    "finder-viewer": "node scripts/build-finder-viewer.mjs build/finder/index.html",
     "package": "bash build.sh",
     "clean": "rm -rf dist build test-output *.ipk *.manifest.json",
     "preview": "npm run typecheck && node esbuild.config.mjs --preview && node scripts/serve.mjs",

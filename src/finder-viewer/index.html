@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#f6f7fb">
+<title>Signal finder</title>
+<style>
+  :root {
+    --bg: #f6f7fb;
+    --card: #fff;
+    --text: #1a2138;
+    --muted: #5d6680;
+    --border: #dce2ed;
+    --track: #e8ecf4;
+    --accent: #4c7eff;
+    --good: #1a8a4a;
+    --fair: #b86e00;
+    --poor: #c43b4d;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #10131c;
+      --card: #1a1f2b;
+      --text: #eef1f8;
+      --muted: #a3abc2;
+      --border: #2c3344;
+      --track: #2a3040;
+      --accent: #7a9dff;
+      --good: #3ccf7a;
+      --fair: #f0a530;
+      --poor: #ff6b7d;
+    }
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    padding: max(20px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    color: var(--text);
+    background: var(--bg);
+    -webkit-tap-highlight-color: transparent;
+  }
+  main { max-width: 520px; margin: 0 auto; }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  h1 { margin: 0; font-size: 20px; font-weight: 600; }
+  .lock {
+    flex: 0 0 auto;
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #fff;
+    background: var(--muted);
+  }
+  .lock[data-state="locked"] { background: var(--good); }
+  .lock[data-state="nolock"] { background: var(--poor); }
+  .card {
+    padding: 20px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+  .card + .card { margin-top: 12px; }
+  .notice {
+    margin: 0 0 12px;
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 15px;
+    color: var(--text);
+    background: var(--track);
+  }
+  .meter + .meter { margin-top: 20px; }
+  .meter-top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .meter-label { font-size: 15px; color: var(--muted); }
+  .meter-value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .meter.primary .meter-value { font-size: 56px; line-height: 1; }
+  .bar {
+    position: relative;
+    height: 14px;
+    overflow: hidden;
+    border-radius: 7px;
+    background: var(--track);
+  }
+  .meter.primary .bar { height: 22px; border-radius: 11px; }
+  .bar-fill {
+    height: 100%;
+    width: 0;
+    border-radius: inherit;
+    background: var(--muted);
+    transition: width 0.3s ease-out;
+  }
+  .meter[data-level="good"] .bar-fill { background: var(--good); }
+  .meter[data-level="fair"] .bar-fill { background: var(--fair); }
+  .meter[data-level="poor"] .bar-fill { background: var(--poor); }
+  .peak-mark {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    margin-left: -1px;
+    background: var(--text);
+  }
+  .facts { margin: 0; font-size: 15px; }
+  .facts div { display: flex; justify-content: space-between; gap: 16px; }
+  .facts div + div { margin-top: 10px; }
+  .facts dt { color: var(--muted); }
+  .facts dd {
+    min-width: 0;
+    margin: 0;
+    overflow: hidden;
+    text-align: right;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-variant-numeric: tabular-nums;
+  }
+  .controls { display: flex; gap: 12px; margin-top: 12px; }
+  button {
+    flex: 1;
+    min-height: 48px;
+    padding: 0 16px;
+    font: inherit;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  button[aria-pressed="true"] { color: #fff; background: var(--accent); border-color: var(--accent); }
+  .stale .meters { opacity: 0.45; }
+</style>
+</head>
+<body>
+<main id="app">
+  <header>
+    <h1 id="title">Signal finder</h1>
+    <span class="lock" id="lock" data-state="searching" hidden></span>
+  </header>
+  <p class="notice" id="notice"></p>
+  <section class="card meters">
+    <div class="meter primary" id="quality" data-level="none">
+      <div class="meter-top">
+        <span class="meter-label" data-label="quality"></span>
+        <span class="meter-value">–</span>
+      </div>
+      <div class="bar"><div class="bar-fill"></div><div class="peak-mark" hidden></div></div>
+    </div>
+    <div class="meter" id="strength" data-level="none">
+      <div class="meter-top">
+        <span class="meter-label" data-label="strength"></span>
+        <span class="meter-value">–</span>
+      </div>
+      <div class="bar"><div class="bar-fill"></div></div>
+    </div>
+  </section>
+  <section class="card">
+    <dl class="facts">
+      <div><dt data-label="peak"></dt><dd id="peak">–</dd></div>
+      <div><dt data-label="ber"></dt><dd id="ber">–</dd></div>
+      <div><dt data-label="transponder"></dt><dd id="transponder">–</dd></div>
+    </dl>
+  </section>
+  <div class="controls">
+    <button type="button" id="sound" aria-pressed="false" data-label="sound"></button>
+    <button type="button" id="reset" data-label="resetPeak"></button>
+  </div>
+</main>
+<!-- VIEWER_SCRIPT -->
+</body>
+</html>

@@ -4,6 +4,9 @@ import { EpgService } from './epg-service';
 import { isLunaAvailable, lunaRequest, type LunaResponse } from './luna';
 import { rootLunaBatch, rootLunaCall } from './root-exec';
 import { sampleChannels, samplePrograms } from './broadcast-sample';
+import { BroadcastCache } from './broadcast-cache';
+import { applyOrder } from './broadcast-order';
+import { StorageService } from './storage-service';
 import {
   currentChannelId,
   normalizeChannelList,
@@ -153,6 +156,8 @@ class BroadcastServiceImpl {
   private programMethod: string | null = null;
   private programMisses = 0;
   private readonly programCache = new Map<string, { at: number; programs: BroadcastProgram[] }>();
+  // Sample channels deleted in the channel manager, until the app restarts.
+  private readonly sampleRemoved = new Set<string>();
 
   get activeRoute(): BroadcastRoute | null { return this.route; }
 
@@ -217,8 +222,24 @@ class BroadcastServiceImpl {
     this.programCache.clear();
   }
 
+  private sampleList(): BroadcastChannel[] {
+    return sampleChannels().filter(channel => !this.sampleRemoved.has(channel.id));
+  }
+
+  removeSample(ids: readonly string[]): boolean {
+    for (const id of ids) this.sampleRemoved.add(id);
+    return true;
+  }
+
+  // The lineup as the Satellite section numbers it, from what is already
+  // known here (no TV call); empty before the section was ever used.
+  knownLineup(): BroadcastChannel[] {
+    const list = this.route === 'sample' ? this.sampleList() : BroadcastCache.channels();
+    return list && list.length ? applyOrder(list, StorageService.getSatelliteOrder()).channels : [];
+  }
+
   async loadChannels(): Promise<ChannelLoad> {
-    if (this.route === 'sample') return { ok: true, route: 'sample', channels: sampleChannels(), currentId: null };
+    if (this.route === 'sample') return { ok: true, route: 'sample', channels: this.sampleList(), currentId: null };
     if (!isLunaAvailable()) return { ok: false, reason: 'unsupported' };
     const reply = await this.call(API_ADAPTER, 'tv/getChannelList', {}, 'channels');
     if (!reply.ok) {

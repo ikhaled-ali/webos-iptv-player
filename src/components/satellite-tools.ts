@@ -11,9 +11,11 @@ import {
   LNB_PRESETS,
   SatelliteScan,
   sameTransponder,
+  selectedTpRecord,
   TONES,
   toneLocked,
   type SatelliteConfig,
+  type SatelliteSetting,
   type SignalReading,
   type TuneRequest,
 } from '../services/satellite-scan';
@@ -22,6 +24,7 @@ import { BroadcastCache } from '../services/broadcast-cache';
 import {
   captureLineup,
   SatelliteScanSession,
+  scanCounts,
   type OrderMode,
   type ScanOptions,
 } from '../services/satellite-scan-session';
@@ -34,7 +37,8 @@ import { ConfirmationPrompt } from './confirmation-prompt';
 import { toggleGroup, sourceToggle } from './toggle-controls';
 import { dropdown } from './dropdown';
 import { CONFIG } from '../config';
-import { chevronLeftIcon, chevronRightIcon, TAB_SATELLITE_ICON } from './icons';
+import { CHANNEL_MANAGER_ICON, CHECK_ICON, chevronLeftIcon, chevronRightIcon, SATELLITE_SCAN_ICON, SIGNAL_FINDER_ICON } from './icons';
+import { SatelliteChannelManager } from './satellite-channel-manager';
 import { showToast } from './toast';
 import { createLogger } from '../utils/logger';
 
@@ -51,12 +55,12 @@ const PICTURE_DELAY_MS = 2000;
 // A saved transponder shows up in the TV's list within a few seconds.
 const TP_COUNT_ATTEMPTS = 4;
 const TP_COUNT_DELAY_MS = 2500;
-export type SatelliteTool = 'finder' | 'tpscan' | 'scan';
+export type SatelliteTool = 'finder' | 'scan' | 'manager';
 
-const TOOLS: ReadonlyArray<{ id: SatelliteTool; label: TextMessageKey; hint: TextMessageKey }> = [
-  { id: 'finder', label: 'satelliteTools.signalFinder', hint: 'satelliteTools.signalFinderHint' },
-  { id: 'tpscan', label: 'satelliteTools.tpScan', hint: 'satelliteTools.tpScanHint' },
-  { id: 'scan', label: 'satelliteTools.channelScan', hint: 'satelliteTools.channelScanHint' },
+export const SATELLITE_TOOLS: ReadonlyArray<{ id: SatelliteTool; label: TextMessageKey; hint: TextMessageKey; icon: string }> = [
+  { id: 'finder', label: 'satelliteTools.signalFinder', hint: 'satelliteTools.signalFinderHint', icon: SIGNAL_FINDER_ICON },
+  { id: 'scan', label: 'satelliteTools.channelScan', hint: 'satelliteTools.channelScanHint', icon: SATELLITE_SCAN_ICON },
+  { id: 'manager', label: 'satelliteTools.channelManager', hint: 'satelliteTools.channelManagerHint', icon: CHANNEL_MANAGER_ICON },
 ];
 
 type NumberField = 'frequency' | 'symbolRate';
@@ -68,13 +72,72 @@ const NUMBER_FIELDS: Record<NumberField, { min: number; max: number; step: numbe
 
 // A scroller moves this far per Up or Down.
 const SCROLL_STEP_PX = 132;
-// The QR stays clear of the screen's bottom edge, which overscan may crop.
+// A block scrolled in from below (the QR, the scan's list) stays clear of
+// the screen's bottom edge, which overscan may crop.
 export const SHARE_GUTTER_PX = 40;
 
 // How far to scroll so a block shows whole with a gutter below it, without
 // pushing its top out of view; 0 when it already shows.
 export function revealDelta(view: { top: number; bottom: number }, box: { top: number; bottom: number }, gutter: number): number {
   return Math.max(0, Math.min(box.bottom + gutter - view.bottom, box.top - view.top));
+}
+
+// One Up or Down on the scan's button above its list of channels. Down
+// first scrolls the page in one go until the whole list shows, keeping the
+// button in view, then scrolls the list; Up scrolls the list back. Both
+// zero: the list is at its end, and focus moves on.
+export function logScrollStep(
+  action: 'up' | 'down',
+  page: { top: number; bottom: number },
+  block: { top: number; bottom: number },
+  button: { top: number },
+  listTop: number,
+  listMax: number,
+): { page: number; list: number } {
+  if (action === 'up') return { page: 0, list: listTop > 0 ? -Math.min(SCROLL_STEP_PX, listTop) : 0 };
+  const reveal = revealDelta(page, { top: Math.min(button.top, block.top), bottom: block.bottom }, SHARE_GUTTER_PX);
+  if (reveal > 0) return { page: reveal, list: 0 };
+  return { page: 0, list: Math.min(SCROLL_STEP_PX, Math.max(0, listMax - listTop)) };
+}
+
+// A satellite's saved channels by the transponder they are on. The TV keeps
+// channels apart from its transponder list, so deleting a transponder
+// leaves its channels behind; those, and any whose transponder is not
+// listed, are `orphans`. A channel names its transponder by id; one without
+// an id goes by frequency, when only one listed transponder has it.
+export function channelsByTransponder(
+  channels: readonly BroadcastChannel[],
+  satelliteName: string,
+  transponders: readonly Transponder[],
+): { on: Map<number, BroadcastChannel[]>; orphans: BroadcastChannel[] } {
+  const ids = new Set(transponders.map(item => item.id));
+  const on = new Map<number, BroadcastChannel[]>();
+  const orphans: BroadcastChannel[] = [];
+  for (const channel of channels) {
+    if (channel.satellite !== satelliteName) continue;
+    let id: number | null = channel.transponderId && ids.has(channel.transponderId) ? channel.transponderId : null;
+    if (id === null && !channel.transponderId && channel.frequency) {
+      const near = transponders.filter(item => Math.abs(item.frequency - channel.frequency) <= 3);
+      if (near.length === 1) id = near[0].id;
+    }
+    if (id === null) {
+      orphans.push(channel);
+      continue;
+    }
+    const list = on.get(id);
+    if (list) list.push(channel);
+    else on.set(id, [channel]);
+  }
+  return { on, orphans };
+}
+
+// A found channel's kind, satellite, and transponder frequency.
+export function addedDetail(channel: BroadcastChannel): string {
+  return [
+    channel.kind === 'radio' ? t('satellite.radio') : t('satellite.tv'),
+    channel.satellite,
+    channel.frequency ? `${String(channel.frequency)} MHz` : '',
+  ].filter(Boolean).join(' · ');
 }
 
 function lnbIndex(config: SatelliteConfig): number {
@@ -99,17 +162,19 @@ const formMatches = sameTransponder;
 interface SatelliteToolsOptions {
   onRevealTabBar: (dir: 'up' | 'left') => void;
   onBack: () => void;
-  // A scan changed the TV's channel list.
+  // A scan or a delete changed the TV's channel list.
   onChannelsChanged: () => void;
+  // The channel manager saved a new order.
+  onOrderChanged: () => void;
 }
 
 /**
  * Satellite tools, opened from Settings and laid out like it: a signal
- * finder that tunes a transponder and shows its signal live, a transponder
- * scan that adds one transponder's channels, and a channel scan of whole
- * satellites with each one's LNB and DiSEqC port. A live tuner card (the
- * picture, lock, strength, quality, and bit error rate) stays beside every
- * tool. Satellite and transponder names come from the TV, through `html`.
+ * finder that tunes a transponder, shows its signal live, and adds its
+ * channels, and a channel scan of whole satellites with each one's LNB,
+ * DiSEqC port, and transponder list. A live tuner card (the picture, lock,
+ * strength, quality, and bit error rate) stays beside the finder. Satellite
+ * and transponder names come from the TV, through `html`.
  */
 export class SatelliteTools {
   readonly focusScope: FocusScope;
@@ -118,6 +183,7 @@ export class SatelliteTools {
   private readonly video: BroadcastVideo;
   private readonly nav: SpatialNav;
   private readonly prompt = new ConfirmationPrompt('prompt.satellite-tools');
+  private readonly manager: SatelliteChannelManager;
 
   private active = false;
   private tool: SatelliteTool = 'finder';
@@ -132,13 +198,25 @@ export class SatelliteTools {
   // "New transponder" picked: the form stays a new one even where it matches.
   private newTp = false;
   private lnbTimer: ReturnType<typeof setTimeout> | null = null;
+  // Satellites whose last tuned transponder the TV has yet to store.
+  private readonly unsavedTp = new Set<SatelliteConfig>();
   private broadcastId: string | null = null;
   private tuned = false;
   private tuning = false;
   private signal: SignalReading | null = null;
   private tpResult: { tv: number; radio: number } | 'failed' | 'saving' | null = null;
+  // Save to TV: the settings the TV did not keep, once read back.
+  private saveResult: SatelliteSetting[] | 'failed' | 'saving' | null = null;
   private scanOptions: ScanOptions = { network: true, blind: false, freeOnly: false, skipRadio: false };
   private orderMode: OrderMode = 'keep';
+  // A satellite's transponder list, opened from the Satellite scan.
+  private tpManager: { configId: number; selected: Set<number> } | null = null;
+  // Delete all channels is running.
+  private wiping = false;
+  // The delete button pressed, while its delete runs.
+  private deleting: 'tpm-delete' | 'tpm-delete-all' | 'tpm-orphans' | null = null;
+  // The TV's satellite channels, while a transponder list is open.
+  private satChannels: BroadcastChannel[] | null = null;
   private unsubscribe: (() => void) | null = null;
   private unsubscribeShare: (() => void) | null = null;
   // The scan's phase at the last render, to notice it ending.
@@ -171,6 +249,15 @@ export class SatelliteTools {
       },
     });
     this.nav = new SpatialNav(container, el => this.onFocus(el), { scope: this.focusScope });
+    this.manager = new SatelliteChannelManager({
+      nav: this.nav,
+      prompt: this.prompt,
+      ui: () => this.ui,
+      render: () => this.render(),
+      focusKey: key => this.refocus(key),
+      onOrderChanged: () => this.options.onOrderChanged(),
+      onChannelsChanged: () => this.options.onChannelsChanged(),
+    });
     container.setAttribute('data-self-activate', '');
     container.addEventListener('click', (event: MouseEvent) => {
       const control = (event.target as HTMLElement).closest<HTMLElement>('[data-focusable]');
@@ -180,7 +267,15 @@ export class SatelliteTools {
     });
     // The global key handler leaves a text field its keys, so the field owns
     // its ways out; leaving commits what was typed.
-    container.addEventListener('keydown', (event: KeyboardEvent) => this.onFieldKey(event));
+    container.addEventListener('keydown', (event: KeyboardEvent) => {
+      if (!this.manager.onFieldKey(event)) this.onFieldKey(event);
+    });
+    container.addEventListener('input', (event: Event) => {
+      if (event.target instanceof HTMLInputElement) this.manager.onInput(event.target);
+    });
+    container.addEventListener('scroll', (event: Event) => {
+      if (event.target instanceof HTMLElement && event.target.dataset.cmScroller) this.manager.onScroll(event.target);
+    }, true);
     container.addEventListener('focusout', (event: FocusEvent) => {
       const input = event.target as HTMLInputElement;
       if (input.tagName === 'INPUT' && input.dataset.number) this.commitField(input);
@@ -201,6 +296,12 @@ export class SatelliteTools {
     const token = ++this.token;
     this.loadState = 'loading';
     this.tpResult = null;
+    this.saveResult = null;
+    this.tpManager = null;
+    // The TV's lists may have changed since: a scan's network search adds
+    // transponders, and LG's own settings edit them.
+    this.transponders.clear();
+    if (this.tool === 'manager') void this.manager.open();
     this.render();
     this.focusFirst();
     const configs = await SatelliteScan.configurations();
@@ -208,7 +309,7 @@ export class SatelliteTools {
     if (!configs) {
       this.loadState = 'unavailable';
       this.render();
-      this.focusFirst();
+      if (this.tool !== 'manager') this.focusFirst();
       return;
     }
     this.configs = configs;
@@ -224,21 +325,24 @@ export class SatelliteTools {
         skipRadio: this.scanOptions.skipRadio,
       };
     }
-    this.render();
-    this.focusFirst();
-    if (config) void this.loadTransponders(config);
+    if (this.tool !== 'manager') {
+      this.render();
+      this.focusFirst();
+    }
+    if (this.tool === 'scan') this.loadAllTransponders();
+    else if (config) void this.loadTransponders(config);
     this.pollReading(token);
-    if (this.tool !== 'scan') await this.openPicture();
+    if (this.tool === 'finder') await this.openPicture();
   }
 
   // The picture and live signal, once the tuner is free.
   private async openPicture(): Promise<void> {
     const token = this.token;
-    if (this.broadcastId || this.tool === 'scan' || SatelliteScanSession.busy) return;
+    if (this.broadcastId || this.tool !== 'finder' || SatelliteScanSession.busy) return;
     this.broadcastId = await this.video.prepare();
     if (token !== this.token || !this.active) return;
-    // Switched to the Satellite scan tool, or a scan began, meanwhile.
-    if ((this.tool as SatelliteTool) === 'scan' || SatelliteScanSession.busy) {
+    // Switched to a tool without a picture, or a scan began, meanwhile.
+    if ((this.tool as SatelliteTool) !== 'finder' || SatelliteScanSession.busy) {
       void this.releasePicture();
       return;
     }
@@ -254,6 +358,8 @@ export class SatelliteTools {
     this.seenPhase = phase;
     this.render();
     if (ended) {
+      this.transponders.clear();
+      if (this.tool === 'scan') this.loadAllTransponders();
       this.refocus('scan-done');
       void this.openPicture();
     }
@@ -268,6 +374,8 @@ export class SatelliteTools {
     this.commitDigits(false);
     this.caretInput()?.blur();
     this.menuOpen = false;
+    this.tpManager = null;
+    this.manager.close();
     KeyHandler.setDigitSink(null);
     this.prompt.hide();
     // A scan goes on in the background; only this screen's picture stops.
@@ -276,6 +384,7 @@ export class SatelliteTools {
     this.unsubscribeShare?.();
     this.unsubscribeShare = null;
     FinderShare.stop();
+    this.saveTps();
     void this.releasePicture();
   }
 
@@ -326,6 +435,10 @@ export class SatelliteTools {
     if (this.active) this.render();
   }
 
+  private loadAllTransponders(): void {
+    for (const config of this.configs ?? []) void this.loadTransponders(config);
+  }
+
   private get knownTransponders(): Transponder[] {
     const config = this.config;
     return config ? this.transponders.get(config.id) ?? [] : [];
@@ -344,20 +457,37 @@ export class SatelliteTools {
   private async retune(): Promise<void> {
     const config = this.config;
     const id = this.broadcastId;
-    if (!this.active || !config || !id || this.tool === 'scan' || SatelliteScanSession.busy) return;
+    if (!this.active || !config || !id || this.tool !== 'finder' || SatelliteScanSession.busy) return;
     const token = this.token;
     this.tuning = true;
     this.signal = null;
     this.tpResult = null;
     this.render();
     this.shareReading();
-    const ok = await SatelliteScan.tune(id, config, this.form, this.knownTransponders);
+    const form = this.form;
+    const ok = await SatelliteScan.tune(id, config, form, this.knownTransponders);
     if (token !== this.token || !this.active) return;
     this.tuning = false;
     this.tuned = this.tuned || ok;
     if (!ok) showToast(t('satellite.tuneFailed'));
+    else this.rememberTp(config, form);
     this.render();
     if (ok) this.showPicture(token, id, config);
+  }
+
+  // The finder opens again on the transponder last tuned, as LG's settings
+  // do; the TV stores it once the finder closes, not on every tune.
+  private rememberTp(config: SatelliteConfig, form: TuneRequest): void {
+    const selected = selectedTpRecord(form, this.transponders.get(config.id) ?? []);
+    const stored = (config.scanInfo.selectedTp ?? {}) as Record<string, unknown>;
+    if (Object.keys(selected).every(field => stored[field] === selected[field])) return;
+    config.scanInfo = { ...config.scanInfo, selectedTp: selected };
+    this.unsavedTp.add(config);
+  }
+
+  private saveTps(): void {
+    for (const config of this.unsavedTp) void SatelliteScan.saveLnb(config);
+    this.unsavedTp.clear();
   }
 
   // A manual tune locks the transponder but plays no service; once it
@@ -406,7 +536,8 @@ export class SatelliteTools {
       // made as another app, can end the scan.
       const id = SatelliteScanSession.busy ? null : this.broadcastId;
       if (!id) {
-        if (this.active) this.render();
+        // The channel manager shows no reading.
+        if (this.active && this.tool !== 'manager') this.render();
         this.shareReading();
         this.pollReading(token);
         return;
@@ -571,10 +702,15 @@ export class SatelliteTools {
       this.menuAction(action, focused);
       return;
     }
+    if (this.tool === 'manager' && !SatelliteScanSession.busy && this.manager.handleAction(action, focused)) return;
     if (action === 'back') {
       if (this.editing) {
         this.editing = null;
         this.render();
+        return;
+      }
+      if (this.tpManager) {
+        this.closeTpManager();
         return;
       }
       this.options.onBack();
@@ -587,13 +723,8 @@ export class SatelliteTools {
     if ((action === 'left' || action === 'right') && focused && this.adjust(focused, action === 'left' ? -1 : 1)) return;
     // The scan's list takes no focus: Up and Down on its button scroll it
     // until its end, then focus moves on.
-    const scroller = focused && focused.closest('.sat-tools-action')
-      ? this.ui.querySelector<HTMLElement>('[data-scroller]') : null;
-    if ((action === 'up' || action === 'down') && scroller) {
-      const before = scroller.scrollTop;
-      scroller.scrollTop += action === 'down' ? SCROLL_STEP_PX : -SCROLL_STEP_PX;
-      if (scroller.scrollTop !== before) return;
-    }
+    if ((action === 'up' || action === 'down') && focused && focused.closest('.sat-tools-action')
+      && this.scrollLog(focused, action)) return;
     if (action === 'up' || action === 'down' || action === 'left' || action === 'right') {
       if (!this.nav.move(action) && (action === 'up' || action === 'left')) this.options.onRevealTabBar(action);
     }
@@ -620,14 +751,30 @@ export class SatelliteTools {
     return false;
   }
 
+  // Down first brings the whole list into the page, then scrolls the list
+  // itself, so every press moves something on screen.
+  private scrollLog(focused: HTMLElement, action: 'up' | 'down'): boolean {
+    const page = this.ui.querySelector<HTMLElement>('.sat-tools-scroll');
+    const block = this.ui.querySelector<HTMLElement>('.sat-tools-log');
+    const list = this.ui.querySelector<HTMLElement>('[data-scroller]');
+    if (!page || !block || !list) return false;
+    const step = logScrollStep(action, page.getBoundingClientRect(), block.getBoundingClientRect(),
+      focused.getBoundingClientRect(), list.scrollTop, list.scrollHeight - list.clientHeight);
+    if (step.page) page.scrollTop += step.page;
+    if (step.list) list.scrollTop += step.list;
+    return step.page !== 0 || step.list !== 0;
+  }
+
   private formChanged(): void {
     this.tpResult = null;
+    this.saveResult = null;
     this.render();
     this.scheduleRetune();
   }
 
   private activate(el: HTMLElement): void {
     if (el.getAttribute('aria-disabled') === 'true') return;
+    if (this.tool === 'manager' && this.manager.activate(el)) return;
     if (el.tagName === 'INPUT') {
       this.commitDigits(false);
       (el as HTMLInputElement).focus();
@@ -655,6 +802,14 @@ export class SatelliteTools {
     const target = el.closest<HTMLElement>('[data-action]') ?? el;
     switch (target.dataset.action) {
       case 'tp-scan': void this.scanTransponder(); break;
+      case 'save-to-tv': void this.saveToTv(); break;
+      case 'new-tp': this.startNewTransponder(); break;
+      case 'tp-manage': this.openTpManager(target.dataset.config); break;
+      case 'tpm-toggle': this.toggleTp(target.dataset.tp); break;
+      case 'tpm-select-all': this.selectAllTps(); break;
+      case 'tpm-delete': this.confirmTpDelete(false); break;
+      case 'tpm-delete-all': this.confirmTpDelete(true); break;
+      case 'tpm-orphans': this.confirmOrphanDelete(); break;
       case 'share': this.toggleShare(); break;
       case 'lnb-power': {
         const config = this.config;
@@ -670,7 +825,8 @@ export class SatelliteTools {
         this.orderMode = this.orderMode === 'keep' ? 'reset' : 'keep';
         this.render();
         break;
-      case 'scan-start': this.confirmScan(); break;
+      case 'scan-start': if (!this.wiping) this.confirmScan(); break;
+      case 'wipe': this.confirmWipe(); break;
       case 'scan-stop': void SatelliteScanSession.stop(); break;
       case 'scan-done': this.finishScan(); break;
       case 'back': this.options.onBack(); break;
@@ -678,14 +834,21 @@ export class SatelliteTools {
   }
 
   private switchTool(tool: SatelliteTool): void {
-    if (tool === this.tool) return;
+    if (tool === this.tool) {
+      if (this.tpManager) this.closeTpManager();
+      return;
+    }
     this.menuOpen = false;
+    this.tpManager = null;
     // The phone share belongs to the signal finder.
     if (tool !== 'finder') FinderShare.stop();
+    if (this.tool === 'manager') this.manager.close();
     this.tool = tool;
     this.tpResult = null;
+    if (tool === 'manager') void this.manager.open();
     this.render();
-    if (tool === 'scan') void this.releasePicture();
+    if (tool === 'scan') this.loadAllTransponders();
+    if (tool !== 'finder') void this.releasePicture();
     else if (this.broadcastId) this.scheduleRetune(0);
     else void this.openPicture();
   }
@@ -735,6 +898,40 @@ export class SatelliteTools {
     this.render();
   }
 
+  // --- Delete all channels ----------------------------------------------------
+
+  private confirmWipe(): void {
+    if (this.wiping || SatelliteScanSession.busy) return;
+    this.prompt.show({
+      title: t('satelliteTools.deleteAllTitle'),
+      message: t('satelliteTools.deleteAllBody'),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      onConfirm: () => { void this.wipe(); },
+      onCancel: () => this.refocus('sat-tools-wipe'),
+    });
+  }
+
+  private async wipe(): Promise<void> {
+    this.wiping = true;
+    this.render();
+    this.refocus('sat-tools-wipe');
+    const result = await SatelliteScan.deleteAllChannels();
+    // The satellite setup was rebuilt: its ids and transponder lists are new.
+    const configs = await SatelliteScan.configurations();
+    this.wiping = false;
+    if (configs) this.configs = configs;
+    this.configIndex = 0;
+    this.transponders.clear();
+    this.options.onChannelsChanged();
+    if (!this.active) return;
+    showToast(t(!result.ok ? 'satelliteTools.deleteChannelsFailed'
+      : result.restored ? 'satelliteTools.allChannelsDeleted' : 'satelliteTools.satellitesNotRestored'));
+    this.render();
+    if (this.tool === 'scan') this.loadAllTransponders();
+    this.refocus('sat-tools-wipe');
+  }
+
   private finishScan(): void {
     SatelliteScanSession.dismiss();
     this.render();
@@ -746,6 +943,7 @@ export class SatelliteTools {
   // The Satellite scan saves its LNB choices when it starts; the finders save
   // at once, as LG's satellite settings do, and retune on the new setup.
   private lnbChanged(config: SatelliteConfig): void {
+    this.saveResult = null;
     this.render();
     if (this.tool === 'scan') return;
     if (this.lnbTimer) clearTimeout(this.lnbTimer);
@@ -760,6 +958,25 @@ export class SatelliteTools {
     }, RETUNE_DELAY_MS);
   }
 
+  // Writes the satellite's setup and the form's transponder to the TV now,
+  // then shows whether the TV kept them.
+  private async saveToTv(): Promise<void> {
+    const config = this.config;
+    if (!config || this.saveResult === 'saving') return;
+    this.commitDigits(false);
+    if (this.lnbTimer) clearTimeout(this.lnbTimer);
+    this.lnbTimer = null;
+    config.scanInfo = { ...config.scanInfo, selectedTp: selectedTpRecord(this.form, this.knownTransponders) };
+    this.unsavedTp.delete(config);
+    this.saveResult = 'saving';
+    this.render();
+    const token = this.token;
+    const unkept = await SatelliteScan.saveAndCheck(config);
+    if (token !== this.token || !this.active || this.saveResult !== 'saving') return;
+    this.saveResult = unkept ?? 'failed';
+    this.render();
+  }
+
   // --- Transponder menu ------------------------------------------------------
 
   private selectedTp(): string {
@@ -768,6 +985,8 @@ export class SatelliteTools {
   }
 
   private setMenu(open: boolean): void {
+    // Nothing listed yet: the form is a new transponder already.
+    if (open && !this.knownTransponders.length) return;
     this.menuOpen = open;
     this.render();
     this.refocus(open ? `sat-tools-tp:${this.selectedTp()}` : 'sat-tools-tp:trigger');
@@ -787,14 +1006,20 @@ export class SatelliteTools {
     }
   }
 
+  // A new transponder starts from the form, its frequency ready to type.
+  private startNewTransponder(): void {
+    this.menuOpen = false;
+    this.newTp = true;
+    this.render();
+    this.refocus('sat-tools-frequency');
+  }
+
   private pickTransponder(value: string): void {
     this.menuOpen = false;
     const picked = this.knownTransponders.find(item => String(item.id) === value);
     if (!picked) {
-      // A new transponder starts from the form, its frequency ready to type.
-      this.newTp = true;
       this.render();
-      this.refocus('sat-tools-frequency');
+      this.refocus('sat-tools-tp:trigger');
       return;
     }
     this.newTp = false;
@@ -806,6 +1031,127 @@ export class SatelliteTools {
     };
     this.formChanged();
     this.refocus('sat-tools-tp:trigger');
+  }
+
+  // --- Transponder list ------------------------------------------------------
+
+  private openTpManager(id: string | undefined): void {
+    const config = this.configs?.find(item => String(item.id) === id);
+    if (!config || SatelliteScanSession.state.phase !== 'idle') return;
+    this.tpManager = { configId: config.id, selected: new Set() };
+    this.satChannels = null;
+    void this.loadTransponders(config);
+    void this.loadSatChannels();
+    this.render();
+    this.focusFirst();
+  }
+
+  private async loadSatChannels(): Promise<void> {
+    const load = await BroadcastService.loadChannels();
+    this.satChannels = load.ok && load.route !== 'sample' ? load.channels : [];
+    if (this.active) this.render();
+  }
+
+  private managedChannels(config: SatelliteConfig): ReturnType<typeof channelsByTransponder> | null {
+    const list = this.transponders.get(config.id);
+    return list && this.satChannels ? channelsByTransponder(this.satChannels, config.satelliteName, list) : null;
+  }
+
+  private closeTpManager(): void {
+    const manager = this.tpManager;
+    this.tpManager = null;
+    this.satChannels = null;
+    this.render();
+    if (manager) this.refocus(`sat-tools-tps:${String(manager.configId)}`);
+  }
+
+  private managedConfig(): SatelliteConfig | null {
+    const manager = this.tpManager;
+    return manager ? this.configs?.find(item => item.id === manager.configId) ?? null : null;
+  }
+
+  private toggleTp(id: string | undefined): void {
+    const manager = this.tpManager;
+    const value = Number(id);
+    if (!manager || !id || !isFinite(value)) return;
+    if (manager.selected.has(value)) manager.selected.delete(value);
+    else manager.selected.add(value);
+    this.render();
+  }
+
+  private selectAllTps(): void {
+    const manager = this.tpManager;
+    const list = manager ? this.transponders.get(manager.configId) ?? [] : [];
+    if (!manager || !list.length) return;
+    manager.selected = manager.selected.size === list.length ? new Set() : new Set(list.map(item => item.id));
+    this.render();
+  }
+
+  private confirmTpDelete(all: boolean): void {
+    const manager = this.tpManager;
+    const config = this.managedConfig();
+    if (!manager || !config || this.deleting) return;
+    const list = this.transponders.get(config.id) ?? [];
+    const targets = all ? list : list.filter(item => manager.selected.has(item.id));
+    if (!targets.length) return;
+    const grouped = this.managedChannels(config);
+    const channels = grouped ? targets.reduce<BroadcastChannel[]>((sum, item) => sum.concat(grouped.on.get(item.id) ?? []), []) : [];
+    this.prompt.show({
+      title: tp('satelliteTools.deleteTpTitle', targets.length),
+      message: [
+        t('satelliteTools.deleteTpBody', { satellite: config.satelliteName }),
+        channels.length ? t('satelliteTools.deleteTpChannels', { count: channels.length }) : '',
+      ].filter(Boolean).join(' '),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      onConfirm: () => { void this.deleteTransponders(config, targets, channels, all ? 'tpm-delete-all' : 'tpm-delete'); },
+      onCancel: () => this.refocus(all ? 'tpm-delete-all' : 'tpm-delete'),
+    });
+  }
+
+  private confirmOrphanDelete(): void {
+    const config = this.managedConfig();
+    const grouped = config ? this.managedChannels(config) : null;
+    if (!config || !grouped || !grouped.orphans.length || this.deleting) return;
+    const orphans = grouped.orphans;
+    this.prompt.show({
+      title: tp('satelliteTools.deleteChannelsTitle', orphans.length),
+      message: t('satelliteTools.deleteChannelsBody'),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      onConfirm: () => { void this.deleteTransponders(config, [], orphans, 'tpm-orphans'); },
+      onCancel: () => this.refocus('tpm-orphans'),
+    });
+  }
+
+  // Transponders go first; their channels only once they are gone, so a
+  // refused delete leaves both as they were.
+  private async deleteTransponders(
+    config: SatelliteConfig,
+    targets: Transponder[],
+    channels: BroadcastChannel[],
+    button: NonNullable<SatelliteTools['deleting']>,
+  ): Promise<void> {
+    this.deleting = button;
+    this.render();
+    this.refocus(button);
+    const ok = await SatelliteScan.deleteTransponders(config, targets);
+    const channelsOk = ok && channels.length ? await SatelliteScan.deleteChannels(channels.map(item => item.id)) : true;
+    // The TV's lists are read again, whatever it answered.
+    this.transponders.delete(config.id);
+    await Promise.all([this.loadTransponders(config), channels.length ? this.loadSatChannels() : Promise.resolve()]);
+    if (channels.length) this.options.onChannelsChanged();
+    this.deleting = null;
+    if (!this.active) return;
+    const manager = this.tpManager;
+    if (manager && manager.configId === config.id) {
+      const left = new Set((this.transponders.get(config.id) ?? []).map(item => item.id));
+      manager.selected = new Set(Array.from(manager.selected).filter(id => left.has(id)));
+    }
+    if (!ok) showToast(t('satelliteTools.deleteTpFailed'));
+    else if (!channelsOk) showToast(t('satelliteTools.deleteChannelsFailed'));
+    this.render();
+    this.focusFirst();
   }
 
   // --- Text fields -----------------------------------------------------------
@@ -849,7 +1195,9 @@ export class SatelliteTools {
   private onFocus(el: HTMLElement | null): void {
     const field = el ? el.dataset.number as NumberField | undefined : undefined;
     if (!field || (this.editing && this.editing.field !== field)) this.commitDigits(true);
-    KeyHandler.setDigitSink(field ? (digit) => this.typeDigit(field, digit) : null);
+    KeyHandler.setDigitSink(field ? (digit) => this.typeDigit(field, digit)
+      : this.tool === 'manager' ? this.manager.digitSinkFor(el) : null);
+    if (this.tool === 'manager') this.manager.trackFocus(el);
   }
 
   // The first digit replaces the value, the next ones extend it, as on a
@@ -903,22 +1251,23 @@ export class SatelliteTools {
   private render(): void {
     if (!this.active) return;
     // No picture or signal while a scan runs: the tuner is the scan's.
-    const showLive = this.loadState === 'ready' && this.tool !== 'scan' && !SatelliteScanSession.busy;
+    const showLive = this.loadState === 'ready' && this.tool === 'finder' && !SatelliteScanSession.busy;
+    const managing = this.tool === 'manager' && !SatelliteScanSession.busy;
     morph(this.ui, html`
       <div class="settings-view sat-tools">
         <nav class="settings-sidebar" data-nav-container aria-label="${t('satelliteTools.title')}">
           <h2 class="settings-title">${t('satelliteTools.title')}</h2>
           <div class="settings-nav-list">
-            ${TOOLS.map(item => html`
+            ${SATELLITE_TOOLS.map(item => html`
               <button class="settings-nav-item ${item.id === this.tool ? 'active' : ''}" data-focusable
                       data-key="tool:${item.id}" data-tool="${item.id}">
-                <span class="settings-nav-icon">${raw(TAB_SATELLITE_ICON)}</span>
+                <span class="settings-nav-icon">${raw(item.icon)}</span>
                 <span>${t(item.label)}</span>
               </button>`)}
           </div>
         </nav>
         <div class="settings-main">
-          <div class="settings-scroll sat-tools-scroll">
+          <div class="settings-scroll sat-tools-scroll ${managing ? 'sat-cm-page' : ''}">
             <div class="sat-tools-layout ${showLive ? '' : 'wide'}">
               <div class="sat-tools-content" data-nav-container>${this.renderContent()}</div>
               ${showLive ? this.renderLive() : ''}
@@ -933,14 +1282,16 @@ export class SatelliteTools {
       const value = input.getAttribute('value') ?? '';
       if (input !== document.activeElement && input.value !== value) input.value = value;
     });
+    if (managing) this.manager.syncFields();
     this.video.showPreview();
   }
 
   private renderContent(): Safe {
-    const tool = TOOLS.find(item => item.id === this.tool) ?? TOOLS[0];
+    const tool = SATELLITE_TOOLS.find(item => item.id === this.tool) ?? SATELLITE_TOOLS[0];
     const head = html`
       <h3 class="settings-section-title">${t(tool.label)}</h3>
       <p class="settings-item-hint sat-tools-lead">${t(tool.hint)}</p>`;
+    if (this.tool === 'manager' && !SatelliteScanSession.busy) return html`${head}${this.manager.render()}`;
     if (this.loadState === 'loading') return html`${head}<p class="sat-tools-empty">${t('common.loading')}</p>`;
     if (this.loadState === 'unavailable') {
       return html`${head}<p class="sat-tools-empty">${t('satelliteTools.unavailable')}</p>`;
@@ -956,6 +1307,8 @@ export class SatelliteTools {
             t('satelliteTools.seeProgress')}</button>
         </div>`;
     }
+    const managed = this.tool === 'scan' && SatelliteScanSession.state.phase === 'idle' ? this.managedConfig() : null;
+    if (managed) return this.renderTpManager(managed);
     return html`${head}${this.tool === 'scan' ? this.renderScan() : this.renderTuneForm()}`;
   }
 
@@ -1016,10 +1369,7 @@ export class SatelliteTools {
     const config = this.config;
     const known = this.knownTransponders;
     const selected = this.selectedTp();
-    const options = [
-      { value: 'new', label: t('satelliteTools.newTransponder') },
-      ...known.map(item => ({ value: String(item.id), label: transponderLabel(item) })),
-    ];
+    const options = known.map(item => ({ value: String(item.id), label: transponderLabel(item) }));
     return html`
       <div class="settings-item">
         <div class="settings-item-title">${t('satelliteTools.satellite')}</div>
@@ -1028,18 +1378,20 @@ export class SatelliteTools {
           config ? String(config.id) : '')}
       </div>
       ${config ? this.renderLnb(config) : ''}
-      <div class="sat-tools-grid sat-tools-tp-row">
-        <div class="settings-item sat-tools-tp">
-          <div class="settings-item-title">${t('satelliteTools.transponder')}</div>
-          ${dropdown('sat-tools-tp', options, selected, this.menuOpen)}
-          <div class="settings-item-hint">${tp('satelliteTools.transponderCount', known.length)}</div>
+      <div class="settings-item sat-tools-tp">
+        <div class="settings-item-title">${t('satelliteTools.transponder')}</div>
+        <div class="sat-tools-tp-pick">
+          ${dropdown('sat-tools-tp', options, selected, this.menuOpen, transponderLabel({ id: 0, ...this.form }))}
+          <button class="btn sat-tools-new-tp" data-focusable
+                  data-key="sat-tools-new-tp" data-action="new-tp"
+                  aria-pressed="${selected === 'new' ? 'true' : 'false'}">${t('satelliteTools.newTransponder')}</button>
         </div>
+        <div class="settings-item-hint">${tp('satelliteTools.transponderCount', known.length)}</div>
+      </div>
+      <div class="sat-tools-grid">
+        ${selected === 'new' ? this.inputField('frequency', 'satelliteTools.frequency', 'sat-tools-frequency') : ''}
         ${this.inputField('symbolRate', 'satelliteTools.symbolRate', 'sat-tools-symbol-rate')}
       </div>
-      ${selected === 'new' ? html`
-        <div class="sat-tools-grid">
-          ${this.inputField('frequency', 'satelliteTools.frequency', 'sat-tools-frequency')}
-        </div>` : ''}
       <div class="settings-item-hint sat-tools-digits-hint">${t('satelliteTools.digitsHint')}</div>
       <div class="sat-tools-grid">
         <div class="settings-item">
@@ -1057,8 +1409,9 @@ export class SatelliteTools {
           ], this.form.system)}
         </div>
       </div>
-      ${this.tool === 'tpscan' ? this.renderTpScanAction() : ''}
-      ${this.tool === 'finder' ? this.renderShare() : ''}`;
+      ${this.renderTpScanAction()}
+      ${this.renderSaveAction()}
+      ${this.renderShare()}`;
   }
 
   private renderShare(): Safe {
@@ -1086,6 +1439,25 @@ export class SatelliteTools {
               ${url ? html`<div class="settings-item-hint">${t('finderShare.relayNote')}</div>` : ''}
             </div>
           </div>` : ''}
+      </div>`;
+  }
+
+  private renderSaveAction(): Safe {
+    const result = this.saveResult;
+    const labels: Record<SatelliteSetting, TextMessageKey> = {
+      lnb: 'satelliteTools.lnb', diseqc: 'satelliteTools.diseqc', tone: 'satelliteTools.tone',
+      lnbPower: 'satelliteTools.lnbPower', transponder: 'satelliteTools.transponder',
+    };
+    const message = result === 'saving' ? ''
+      : result === 'failed' ? t('satelliteTools.saveToTvFailed')
+      : result && result.length ? t('satelliteTools.saveToTvUnkept', { settings: result.map(item => t(labels[item])).join(', ') })
+      : result ? t('satelliteTools.saveToTvChecked') : '';
+    const error = result === 'failed' || (Array.isArray(result) && result.length > 0);
+    return html`
+      <div class="settings-item settings-item--action sat-tools-action">
+        <button class="btn" data-focusable data-key="sat-tools-save" data-action="save-to-tv"
+                ${result === 'saving' ? raw('aria-disabled="true"') : ''}>${t('satelliteTools.saveToTv')}</button>
+        ${message ? html`<div class="settings-item-hint ${error ? 'sat-tools-error' : ''}">${message}</div>` : ''}
       </div>`;
   }
 
@@ -1124,6 +1496,8 @@ export class SatelliteTools {
             <div class="sat-tools-sat ${config.selected ? 'selected' : ''}" data-key="sat-row:${config.id}">
               <div class="sat-tools-sat-head">
                 <span class="sat-tools-sat-name">${config.satelliteName}</span>
+                <button class="btn sat-tools-tps-open" data-focusable data-key="sat-tools-tps:${config.id}"
+                        data-action="tp-manage" data-config="${config.id}">${this.transpondersLabel(config)}</button>
                 <span class="sat-tools-switch" data-action="cfg-toggle" data-config="${config.id}">${
                   sourceToggle(config.selected, `sat-tools-cfg:${config.id}`)}</span>
               </div>
@@ -1158,7 +1532,72 @@ export class SatelliteTools {
       </div>
       <div class="settings-item settings-item--action sat-tools-action">
         <button class="btn btn-primary" data-focusable data-key="scan-start" data-action="scan-start"
-                ${any ? '' : raw('aria-disabled="true"')}>${t('satelliteTools.startScan')}</button>
+                ${any && !this.wiping ? '' : raw('aria-disabled="true"')}>${t('satelliteTools.startScan')}</button>
+      </div>
+      <div class="settings-item sat-tools-row sat-tools-wipe">
+        <div class="sat-tools-row-text">
+          <div class="sat-tools-row-title">${t('satelliteTools.deleteAllChannels')}</div>
+          <div class="settings-item-hint">${t('satelliteTools.deleteAllChannelsHint')}</div>
+        </div>
+        <button class="btn btn-danger" data-focusable data-key="sat-tools-wipe" data-action="wipe"
+                ${this.wiping ? raw('aria-disabled="true" aria-busy="true"') : ''}>${this.wiping
+                  ? html`<span class="sat-tools-spinner" aria-hidden="true"></span>${t('satelliteTools.deleting')}`
+                  : t('satelliteTools.deleteAllChannels')}</button>
+      </div>`;
+  }
+
+  private transpondersLabel(config: SatelliteConfig): string {
+    const list = this.transponders.get(config.id);
+    return list ? `${t('satelliteTools.transponders')} · ${String(list.length)}` : t('satelliteTools.transponders');
+  }
+
+  // One satellite's transponders, to pick and delete; Back returns to the scan.
+  private renderTpManager(config: SatelliteConfig): Safe {
+    const list = this.transponders.get(config.id);
+    const selected = this.tpManager ? this.tpManager.selected : new Set<number>();
+    const all = !!list && list.length > 0 && selected.size === list.length;
+    const busy = this.deleting ? raw('aria-disabled="true" aria-busy="true"') : '';
+    // The pressed delete shows it is working; the rest wait for it.
+    const label = (key: NonNullable<SatelliteTools['deleting']>, text: string): Safe => (this.deleting === key
+      ? html`<span class="sat-tools-spinner" aria-hidden="true"></span>${t('satelliteTools.deleting')}` : html`${text}`);
+    const head = html`
+      <h3 class="settings-section-title">${config.satelliteName}</h3>
+      <p class="settings-item-hint sat-tools-lead">${t('satelliteTools.transponders')}${
+        list ? ` · ${String(list.length)}` : ''}</p>`;
+    if (!list) return html`${head}<p class="sat-tools-empty">${t('common.loading')}</p>`;
+    const grouped = this.managedChannels(config);
+    const orphans = grouped && grouped.orphans.length ? html`
+      <div class="sat-tools-row sat-tools-tpm-orphans">
+        <div class="sat-tools-row-text">
+          <div class="sat-tools-row-title">${tp('satelliteTools.orphanChannels', grouped.orphans.length)}</div>
+          <div class="settings-item-hint">${t('satelliteTools.orphanChannelsHint')}</div>
+        </div>
+        <button class="btn btn-danger" data-focusable data-key="tpm-orphans" data-action="tpm-orphans" ${busy}>${
+          label('tpm-orphans', t('satelliteTools.deleteChannels'))}</button>
+      </div>` : '';
+    if (!list.length) return html`${head}<p class="sat-tools-empty">${t('satelliteTools.noTransponders')}</p>${orphans}`;
+    return html`${head}${orphans}
+      <div class="sat-tools-tpm-actions">
+        <button class="btn" data-focusable data-key="tpm-select-all" data-action="tpm-select-all" ${busy}>${
+          t(all ? 'channel.favoriteDeselectAll' : 'channel.favoriteSelectAll')}</button>
+        <button class="btn btn-danger" data-focusable data-key="tpm-delete" data-action="tpm-delete"
+                ${this.deleting ? busy : selected.size ? '' : raw('aria-disabled="true"')}>${
+          label('tpm-delete', t('satelliteTools.deleteSelected', { count: selected.size }))}</button>
+        <button class="btn btn-danger" data-focusable data-key="tpm-delete-all" data-action="tpm-delete-all" ${busy}>${
+          label('tpm-delete-all', t('satelliteTools.deleteAll'))}</button>
+      </div>
+      <div class="sat-tools-tpm-list">
+        ${list.map((item) => {
+          const on = selected.has(item.id);
+          return html`
+            <button class="sat-tools-tpm-row ${on ? 'favorite-selected' : ''}" data-focusable data-key="tpm:${item.id}"
+                    data-action="tpm-toggle" data-tp="${item.id}" aria-pressed="${on ? 'true' : 'false'}" ${busy}>
+              <span class="favorite-checkbox">${on ? raw(CHECK_ICON) : ''}</span>
+              <span class="sat-tools-tpm-label">${transponderLabel(item)}</span>
+              ${grouped ? html`<span class="sat-tools-tpm-count">${
+                tp('channel.count', (grouped.on.get(item.id) ?? []).length)}</span>` : ''}
+            </button>`;
+        })}
       </div>`;
   }
 
@@ -1177,17 +1616,7 @@ export class SatelliteTools {
     const seconds = Math.max(0, Math.floor((Date.now() - state.startedAt) / 1000));
     const elapsed = `${String(Math.floor(seconds / 60))}:${String(seconds % 60).padStart(2, '0')}`;
     const current = state.feed ? state.feed.current : null;
-    // The running totals the TV reported, summed over satellites.
-    const totals = new Map<number, { tv: number; radio: number }>();
-    for (const status of state.feed ? state.feed.completed : []) {
-      totals.set(status.configurationId, { tv: status.tv, radio: status.radio });
-    }
-    if (current && current.state === 'COMPLETED') totals.set(current.configurationId, { tv: current.tv, radio: current.radio });
-    let liveTv = 0;
-    let liveRadio = 0;
-    totals.forEach((entry) => { liveTv += entry.tv; liveRadio += entry.radio; });
-    const reportTv = state.report.reduce((sum, entry) => sum + entry.tv, 0);
-    const reportRadio = state.report.reduce((sum, entry) => sum + entry.radio, 0);
+    const counts = scanCounts(state);
     const unlocked = !!current && (current.state === 'UNLOCK' || current.state === 'UNLOCKED');
     const added = state.added;
     const fresh = new Set(state.fresh);
@@ -1212,16 +1641,16 @@ export class SatelliteTools {
             </div>` : ''}
           <div class="sat-tools-found">
             ${running ? html`<span class="sat-chip">${t('satelliteTools.elapsed', { time: elapsed })}</span>` : ''}
-            <span class="sat-chip">${t('satellite.tv')} ${String(running ? liveTv : reportTv)}</span>
-            ${state.skipRadio ? '' : html`<span class="sat-chip">${t('satellite.radio')} ${String(running ? liveRadio : reportRadio)}</span>`}
+            <span class="sat-chip">${t('satellite.tv')} ${String(counts.tv)}</span>
+            ${state.skipRadio ? '' : html`<span class="sat-chip">${t('satellite.radio')} ${String(counts.radio)}</span>`}
             ${!running && state.removed ? html`<span class="sat-chip">${tp('satelliteTools.removedCount', state.removed)}</span>` : ''}
           </div>` : ''}
         ${!running && state.report.length ? html`
           <div class="sat-tools-report">
-            ${state.report.map(entry => html`
+            ${counts.satellites.map(entry => html`
               <div class="sat-tools-report-row">
                 <span>${entry.satelliteName}</span>
-                <span>${tp('channel.count', state.skipRadio ? entry.tv : entry.channels)}</span>
+                <span>${tp('channel.count', entry.channels)}</span>
               </div>`)}
           </div>` : ''}
       </div>
@@ -1237,12 +1666,11 @@ export class SatelliteTools {
         <div class="settings-item sat-tools-log" data-key="scan-added">
           <div class="settings-item-title">${t('satelliteTools.addedChannels')} · ${String(added.length)}</div>
           <div class="sat-tools-scroller" data-scroller data-key="scan-added-list">
-            ${added.map((channel, index) => html`
+            ${added.slice().reverse().map((channel, index) => html`
               <div class="sat-tools-log-row" data-key="added:${channel.id}">
-                <span class="sat-tools-log-tp"><span class="sat-tools-added-index">${String(index + 1)}</span>${channel.name}${
+                <span class="sat-tools-log-tp"><span class="sat-tools-added-index">${String(added.length - index)}</span>${channel.name}${
                   fresh.has(channel.serviceKey) ? html`<span class="sat-tools-new">${t('satelliteTools.newTag')}</span>` : ''}</span>
-                <span class="sat-tools-added-kind">${channel.kind === 'radio' ? t('satellite.radio') : t('satellite.tv')} · ${
-                  channel.satellite}</span>
+                <span class="sat-tools-added-kind">${addedDetail(channel)}</span>
               </div>`)}
           </div>
         </div>` : ''}`;

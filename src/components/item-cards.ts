@@ -21,6 +21,8 @@ export interface ChannelCardOptions {
   playing?: boolean;
   // A logo that failed to load stays out, leaving the empty art box.
   logoFailed?: boolean;
+  // A logo without an IPTV channel, such as a satellite service's.
+  logo?: string;
   // The health dot, on by default.
   health?: boolean;
   // Extra state badges in the top corner, before the playing mark.
@@ -94,7 +96,7 @@ function artState(src: string, failed = false): string {
   return loadedArt.has(src) ? 'art-loaded' : '';
 }
 
-export function channelLogo(channel: Channel | null, failed = false): Safe {
+export function channelLogo(channel: Pick<Channel, 'logo'> | null, failed = false): Safe {
   listenForArt();
   const src = channel?.logo ?? '';
   const state = artState(src, failed);
@@ -112,7 +114,7 @@ export function channelCard(options: ChannelCardOptions): Safe {
          data-focusable data-key="${options.key}" ${options.attrs ?? ''}
          ${options.style ? html`style="${options.style}"` : ''}>
       <div class="channel-tile-art">
-        ${channelLogo(channel, options.logoFailed)}
+        ${channelLogo(channel ?? (options.logo ? { logo: options.logo } : null), options.logoFailed)}
         <div class="channel-tile-status">
           ${channel && options.health !== false ? channelHealthDot(channel) : ''}
           ${options.status ?? ''}

@@ -11,6 +11,9 @@ import { ReminderService } from '../services/reminder-service';
 import { StorageService } from '../services/storage-service';
 import { XtreamArchiveService } from '../services/xtream-archive';
 import { persistSearchIndexes } from '../services/search-index-store';
+import { BroadcastCache } from '../services/broadcast-cache';
+import { BroadcastService } from '../services/broadcast-service';
+import type { BroadcastChannel } from '../services/broadcast-normalize';
 import {
   getSearchCatalogExpiresAt,
   loadAllSeries,
@@ -22,6 +25,7 @@ import {
   prepareSearchItems,
   rankPreparedNamesTopK,
   rankPreparedTopK,
+  type PreparedNameSearchIndex,
 } from '../utils/channel-search';
 import { channelKey, legacyChannelKey } from '../utils/channel';
 import { formatDayLabel, formatTime } from '../utils/time';
@@ -77,6 +81,8 @@ export interface SearchHandlers {
   onReleaseTabBar: () => void;
   onBack: () => void;
   onPlayChannel: (index: number, catchup?: CatchupInfo) => void;
+  // A satellite channel, by its service key: the Satellite section plays it.
+  onOpenSatelliteChannel: (serviceKey: string) => void;
   onOpenMovie: (account: PlaylistEntry, vod: VodItem) => void;
   onOpenSeries: (account: PlaylistEntry, series: SeriesItem) => void;
   // The live channel playing now, or -1.
@@ -172,9 +178,14 @@ export class Search {
   private visiblePrograms: ProgramResult[] = [];
   private visibleMovies: VodItem[] = [];
   private visibleSeries: SeriesItem[] = [];
+  private visibleSatellite: BroadcastChannel[] = [];
+  // The Satellite section's lineup, prepared once per open; satellite
+  // lineups are small enough to rank on the main thread.
+  private satelliteIndex: PreparedNameSearchIndex<BroadcastChannel> | null = null;
   private resumePrompt = new CatchupResumePrompt('prompt.search');
   private readonly programVirtualizer = this.createVirtualizer(109, SEARCH_ROW_OVERSCAN, SEARCH_LIST_VIEWPORT);
   private readonly channelRailVirtualizer = this.createVirtualizer(CHANNEL_RAIL_STRIDE, SEARCH_RAIL_OVERSCAN, SEARCH_RAIL_VIEWPORT);
+  private readonly satelliteVirtualizer = this.createVirtualizer(CHANNEL_RAIL_STRIDE, SEARCH_RAIL_OVERSCAN, SEARCH_RAIL_VIEWPORT);
   private readonly movieVirtualizer = this.createVirtualizer(240, SEARCH_RAIL_OVERSCAN, SEARCH_RAIL_VIEWPORT);
   private readonly seriesVirtualizer = this.createVirtualizer(240, SEARCH_RAIL_OVERSCAN, SEARCH_RAIL_VIEWPORT);
   private scrollFrame: number | null = null;
@@ -295,6 +306,7 @@ export class Search {
     this.account = account;
     this.query = query;
     this.resultLimit = CONFIG.SEARCH.INITIAL_RESULTS;
+    this.loadSatellite();
     if (!reuseWorkerIndex) {
       this.pendingIndex = { channels: true, programmes: true, catalog: !!account };
       this.clearResults();
@@ -350,6 +362,24 @@ export class Search {
       log.error('Search index build failed', 'event=search.worker.index.failed', error);
       this.indexLost(sessionId, 'error', 'channels', 'programmes');
     }
+  }
+
+  // The lineup is read again on each open: the channel manager may have
+  // renumbered it. A cache read that lands after a query adds its results.
+  private loadSatellite(): void {
+    this.satelliteIndex = null;
+    void BroadcastCache.load().then(() => {
+      // A query ranked before the cache was read saw no lineup.
+      this.satelliteIndex = null;
+      if (!this.active || !this.query.trim() || this.queryPending || this.pendingIndex) return;
+      this.visibleSatellite = this.rankSatellite(this.query).items;
+      this.render();
+    });
+  }
+
+  private rankSatellite(query: string): { items: BroadcastChannel[]; hasMore: boolean } {
+    if (!this.satelliteIndex) this.satelliteIndex = prepareNameSearchItems(BroadcastService.knownLineup());
+    return rankPreparedNamesTopK(this.satelliteIndex, query, this.resultLimit);
   }
 
   private async indexChannelsAndProgrammes(
@@ -716,6 +746,9 @@ export class Search {
       const channel = PlaylistService.channels[index];
       if (channel) rememberQuery(query, liveParentalRequest(channel));
       this.handlers.onPlayChannel(index);
+    } else if (el.dataset.satService !== undefined) {
+      StorageService.addSearchHistory(query);
+      this.handlers.onOpenSatelliteChannel(el.dataset.satService);
     } else if (el.dataset.programIndex !== undefined) {
       void this.activateProgram(parseInt(el.dataset.programIndex, 10), query);
     } else if (this.account && el.dataset.streamId !== undefined) {
@@ -789,7 +822,7 @@ export class Search {
       <div class="catalog-rail">
         <h2 class="catalog-rail-title">${title}</h2>
         <div class="catalog-rail-track search-virtual-rail ${
-               key === 'channels-rail' ? 'search-channel-rail' : ''
+               key === 'channels-rail' || key === 'satellite' ? 'search-channel-rail' : ''
              }"
              data-edge-scroll data-search-virtual="${key}" data-search-axis="horizontal">
           <div class="search-virtual-rail-spacer"
@@ -859,6 +892,22 @@ export class Search {
       favorite: StorageService.getFavorites().includes(channelKey(ch)),
       playing: idx === this.handlers.playingIndex(),
       attrs: html`data-channel-index="${String(idx)}"`,
+    });
+  }
+
+  // A satellite channel as the shared channel card, without IPTV state.
+  private satelliteTile(channel: BroadcastChannel): ReturnType<typeof html> {
+    const now = Date.now();
+    const program = (BroadcastService.cachedPrograms(channel, now) ?? [])
+      .find(item => item.start <= now && item.end > now);
+    return channelCard({
+      key: `sat:${channel.serviceKey}`,
+      channel: null,
+      logo: channel.logo,
+      title: channel.name,
+      subtitle: program ? program.title : channel.satellite,
+      health: false,
+      attrs: html`data-sat-service="${channel.serviceKey}"`,
     });
   }
 
@@ -1375,8 +1424,10 @@ export class Search {
     this.visiblePrograms = itemsAt(this.programIndex, response.programmes.indices);
     this.visibleMovies = itemsAt(vod, response.movies.indices);
     this.visibleSeries = itemsAt(series, response.series.indices);
+    const satellite = this.rankSatellite(this.query);
+    this.visibleSatellite = satellite.items;
     this.hasMoreResults = response.channels.hasMore || response.programmes.hasMore
-      || response.movies.hasMore || response.series.hasMore;
+      || response.movies.hasMore || response.series.hasMore || satellite.hasMore;
   }
 
   private clearResults(): void {
@@ -1384,6 +1435,7 @@ export class Search {
     this.visiblePrograms = [];
     this.visibleMovies = [];
     this.visibleSeries = [];
+    this.visibleSatellite = [];
     this.hasMoreResults = false;
     this.queryPending = false;
     this.resetVirtualOffsets();
@@ -1554,7 +1606,7 @@ export class Search {
     const isXtream = !!this.account;
 
     const hasResults = this.visibleChannels.length > 0 || this.visiblePrograms.length > 0
-      || this.visibleMovies.length > 0 || this.visibleSeries.length > 0;
+      || this.visibleMovies.length > 0 || this.visibleSeries.length > 0 || this.visibleSatellite.length > 0;
     const channelSection = this.visibleChannels.length
       ? this.virtualRail(
           t('common.channels'),
@@ -1562,6 +1614,15 @@ export class Search {
           this.visibleChannels,
           this.channelRailVirtualizer,
           (ch) => this.channelTile(ch),
+        )
+      : '';
+    const satelliteSection = this.visibleSatellite.length
+      ? this.virtualRail(
+          t('nav.satellite'),
+          'satellite',
+          this.visibleSatellite,
+          this.satelliteVirtualizer,
+          (channel) => this.satelliteTile(channel),
         )
       : '';
     const programSection = this.visiblePrograms.length
@@ -1587,6 +1648,7 @@ export class Search {
         : isXtream
           ? html`
                 ${channelSection}
+                ${satelliteSection}
                 ${programSection}
                 ${this.visibleMovies.length
                   ? this.virtualRail(
@@ -1609,6 +1671,7 @@ export class Search {
               `
           : html`
               ${channelSection}
+              ${satelliteSection}
               ${programSection}
             `;
 
@@ -1643,6 +1706,7 @@ export class Search {
     return {
       programmes: this.programVirtualizer,
       'channels-rail': this.channelRailVirtualizer,
+      satellite: this.satelliteVirtualizer,
       movies: this.movieVirtualizer,
       series: this.seriesVirtualizer,
     };
@@ -1710,26 +1774,14 @@ export class Search {
     const key = cell?.dataset.searchSection;
     const rawIndex = cell?.dataset.searchIndex;
     if (!key || rawIndex === undefined) return false;
-    const horizontal = key === 'channels-rail' || key === 'movies' || key === 'series';
+    const horizontal = key !== 'programmes';
     if ((horizontal && action !== 'left' && action !== 'right')
         || (!horizontal && action !== 'up' && action !== 'down')) return false;
-    let items = key === 'channels-rail'
-      ? this.visibleChannels
-      : key === 'programmes'
-        ? this.visiblePrograms
-        : key === 'movies'
-          ? this.visibleMovies
-          : this.visibleSeries;
+    let items: unknown[] = this.resultItems(key);
     const current = parseInt(rawIndex, 10);
     let next = current + (action === 'left' || action === 'up' ? -1 : 1);
     if (next >= items.length && this.expandResults()) {
-      items = key === 'channels-rail'
-        ? this.visibleChannels
-        : key === 'programmes'
-          ? this.visiblePrograms
-          : key === 'movies'
-            ? this.visibleMovies
-            : this.visibleSeries;
+      items = this.resultItems(key);
       next = current + 1;
     }
     // Right at a rail's end stays put rather than jumping to another rail.
@@ -1760,15 +1812,20 @@ export class Search {
     return rail.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0);
   }
 
+  private resultItems(key: string): unknown[] {
+    if (key === 'channels-rail') return this.visibleChannels;
+    if (key === 'satellite') return this.visibleSatellite;
+    if (key === 'programmes') return this.visiblePrograms;
+    if (key === 'movies') return this.visibleMovies;
+    return this.visibleSeries;
+  }
+
   private resultCount(key: string): number {
-    if (key === 'channels-rail') return this.visibleChannels.length;
-    if (key === 'programmes') return this.visiblePrograms.length;
-    if (key === 'movies') return this.visibleMovies.length;
-    return this.visibleSeries.length;
+    return this.resultItems(key).length;
   }
 
   private resultItemSize(key: string): number {
-    if (key === 'channels-rail') return CHANNEL_RAIL_STRIDE;
+    if (key === 'channels-rail' || key === 'satellite') return CHANNEL_RAIL_STRIDE;
     if (key === 'programmes') return 109;
     return 240;
   }

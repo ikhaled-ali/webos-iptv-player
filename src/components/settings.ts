@@ -249,8 +249,8 @@ type SettingsCategory = 'general' | 'sources' | 'satellite' | 'guide' | 'appeara
 // The satellite tools Settings opens, in their order.
 const SATELLITE_TOOLS: ReadonlyArray<{ id: SatelliteTool; label: TextMessageKey; hint: TextMessageKey }> = [
   { id: 'finder', label: 'satelliteTools.signalFinder', hint: 'satelliteTools.signalFinderHint' },
-  { id: 'tpscan', label: 'satelliteTools.tpScan', hint: 'satelliteTools.tpScanHint' },
   { id: 'scan', label: 'satelliteTools.channelScan', hint: 'satelliteTools.channelScanHint' },
+  { id: 'manager', label: 'satelliteTools.channelManager', hint: 'satelliteTools.channelManagerHint' },
 ];
 
 const SETTINGS_CATEGORIES: readonly {

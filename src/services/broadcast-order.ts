@@ -1,4 +1,4 @@
-import type { BroadcastChannel } from './broadcast-normalize';
+import type { BroadcastChannel, BroadcastKind } from './broadcast-normalize';
 
 // The Satellite section keeps its own channel order, keyed by each service's
 // broadcast identity: a rescan renumbers the TV's list and gives channels new
@@ -35,4 +35,45 @@ export function applyOrder(list: readonly BroadcastChannel[], saved: readonly st
       return { ...channel, number, numberLabel: String(number) };
     });
   return { channels, order, changed: fresh.length > 0 || order.length !== saved.length };
+}
+
+// The saved order with `key` at `position` (1-based, clamped) among the
+// lineup's channels of its kind. The other kind, and services gone from
+// the lineup, keep their slots.
+export function moveInOrder(
+  lineup: readonly BroadcastChannel[],
+  saved: readonly string[],
+  key: string,
+  position: number,
+): string[] {
+  const { channels, order } = applyOrder(lineup, saved);
+  const moved = channels.find(channel => channel.serviceKey === key);
+  if (!moved) return order;
+  const kindKeys = channels.filter(channel => channel.kind === moved.kind).map(channel => channel.serviceKey);
+  const sequence = kindKeys.filter(item => item !== key);
+  const at = Math.max(0, Math.min(sequence.length, Math.round(position) - 1));
+  sequence.splice(at, 0, key);
+  const slots = new Set(kindKeys);
+  const placed = new Set<string>();
+  let next = 0;
+  const result: string[] = [];
+  for (const item of order) {
+    if (placed.has(item)) continue;
+    placed.add(item);
+    result.push(slots.has(item) ? sequence[next++] : item);
+  }
+  return result;
+}
+
+// The saved order without a deleted service, so a rescan that finds it
+// again adds it at the end rather than back in its old place.
+export function dropFromOrder(saved: readonly string[], keys: readonly string[]): string[] {
+  const gone = new Set(keys);
+  return saved.filter(item => !gone.has(item));
+}
+
+export function kindCount(channels: readonly BroadcastChannel[], kind: BroadcastKind): number {
+  let count = 0;
+  for (const channel of channels) if (channel.kind === kind) count++;
+  return count;
 }

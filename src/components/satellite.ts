@@ -23,7 +23,7 @@ import { isLunaAvailable } from '../services/luna';
 import { isWebOS } from '../utils/platform';
 import { KeepAwake } from '../services/keep-awake';
 import { BroadcastVideo, type BroadcastVideoStatus } from './broadcast-video';
-import { favoriteIcon, FULLSCREEN_ICON, LIVE_CATEGORIES_ICON, LOCK_ICON, TAB_LIVE_ICON, TAB_SATELLITE_ICON } from './icons';
+import { favoriteIcon, FULLSCREEN_ICON, KEY_ICON, LIVE_CATEGORIES_ICON, LOCK_ICON, TAB_LIVE_ICON, TAB_SATELLITE_ICON } from './icons';
 import { groupIcon } from './group-icon';
 import { PLAYING_MARK } from './item-cards';
 import { liveBadge } from './live-badge';
@@ -88,10 +88,6 @@ const ICONS = {
   freeToAir: outline('<rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 7.6-1.7"/>'),
 };
 
-// An encrypted service needs a CA module or card; a key, as satellite
-// receivers draw it, kept apart from the parental lock.
-const KEY_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="12" r="4"/><path d="M11.5 12h10M18.5 12v3.5M21.5 12v2.5"/></svg>';
-
 type MeterLevel = 'good' | 'fair' | 'poor';
 
 function meterLevel(value: number): MeterLevel {
@@ -111,6 +107,10 @@ function transponderText(channel: BroadcastChannel): string {
   const transponder = BroadcastCache.transponder(channel.transponderId);
   if (transponder) return transponderLabel(transponder);
   return channel.frequency ? `${String(channel.frequency)} MHz` : '';
+}
+
+function timeRange(program: BroadcastProgram): string {
+  return `${formatTime(new Date(program.start))} – ${formatTime(new Date(program.end))}`;
 }
 
 function programAt(programs: readonly BroadcastProgram[], now: number): BroadcastProgram | null {
@@ -185,6 +185,8 @@ export class SatelliteView {
   private dwellTimer: ReturnType<typeof setTimeout> | null = null;
   private scrollFrame = 0;
   private readonly programsInFlight = new Set<string>();
+  // A channel Search asked for, by service key, until the lineup shows.
+  private pendingChannel: string | null = null;
 
   constructor(private readonly container: HTMLElement, private readonly options: SatelliteViewOptions) {
     this.stage = document.createElement('div');
@@ -240,6 +242,12 @@ export class SatelliteView {
       void this.load();
       return;
     }
+    if (this.pendingChannel) {
+      this.render();
+      this.showPending();
+      void this.refresh();
+      return;
+    }
     this.render();
     this.syncFocus('resume');
     // Back from another section: the tuner is still on the channel; show it again.
@@ -250,6 +258,33 @@ export class SatelliteView {
 
   resumeFocus(): void {
     this.syncFocus('resume');
+  }
+
+  // The next open lands on this channel, as Search picked it, and watches it.
+  queueChannel(serviceKey: string): void {
+    this.pendingChannel = serviceKey;
+  }
+
+  private showPending(): void {
+    const key = this.pendingChannel;
+    this.pendingChannel = null;
+    const channel = key ? this.channels.find(item => item.serviceKey === key) : undefined;
+    if (!channel) {
+      this.syncFocus('resume');
+      return;
+    }
+    this.area = 'channels';
+    this.selectGroup(this.list.some(item => item.id === channel.id) ? this.groupId : 'all', channel.id);
+    this.render();
+    this.revealChannel();
+    this.render();
+    this.syncFocus('key');
+    void this.watch(channel);
+  }
+
+  // The channel manager saved a new order: renumber in place.
+  reorder(): void {
+    if (this.phase === 'ready') this.applyChannels(this.channels, null, false);
   }
 
   // At app start: reads the cache and refreshes it from the TV in the
@@ -346,7 +381,7 @@ export class SatelliteView {
   private applyChannels(tvList: BroadcastChannel[], currentId: string | null, initial: boolean): void {
     const focusId = this.focusedChannel ? this.focusedChannel.id : null;
     this.route = BroadcastService.activeRoute;
-    const list = this.route === 'sample' ? tvList : this.ordered(tvList);
+    const list = this.ordered(tvList);
     this.channels = list;
     this.byId = new Map(list.map(channel => [channel.id, channel]));
     this.rebuildGroups();
@@ -364,6 +399,11 @@ export class SatelliteView {
     }
     this.phase = 'ready';
     this.area = 'channels';
+    if (this.pendingChannel && this.active) {
+      this.selectGroup(groupId, null);
+      this.showPending();
+      return;
+    }
     // Land on the channel the TV is on, else the last one watched here.
     const last = StorageService.getSatelliteLastChannel();
     const resume = (currentId ? this.byId.get(currentId) : undefined)
@@ -699,6 +739,8 @@ export class SatelliteView {
   }
 
   private showOsd(): void {
+    const channel = this.osdChannel;
+    if (channel) this.loadPrograms(channel);
     this.osdVisible = true;
     this.clearTimer('osd');
     this.osdTimer = setTimeout(() => {
@@ -770,11 +812,21 @@ export class SatelliteView {
     this.armPanel();
   }
 
+  // A pick tunes and leaves the list open to try the next; picking the
+  // channel already playing (OK again, a double click) closes it.
   private pickPanel(channel: BroadcastChannel | undefined): void {
-    this.closePanel();
     if (!channel) return;
-    if (channel.id !== this.playingId) void this.watch(channel);
-    else this.showOsd();
+    if (channel.id === this.playingId) {
+      this.closePanel();
+      this.showOsd();
+      return;
+    }
+    const at = this.ring.indexOf(channel);
+    if (at >= 0) this.panelIndex = at;
+    void this.watch(channel);
+    this.render();
+    this.syncFocus('key');
+    this.armPanel();
   }
 
   private handlePanel(action: Action, event?: NumberEvent): void {
@@ -1517,12 +1569,17 @@ export class SatelliteView {
     const channel = this.osdChannel;
     if (!channel) return '';
     const now = Date.now();
-    const programs = BroadcastService.cachedPrograms(channel, now) ?? [];
+    const cached = BroadcastService.cachedPrograms(channel, now);
+    const loaded = !!cached;
+    const programs = cached ?? [];
     const current = programAt(programs, now);
     const next = programs.find(program => program.start >= (current ? current.end : now)) ?? null;
     const length = current ? current.end - current.start : 0;
     const fraction = current && length > 0 ? Math.max(0, Math.min(1, (now - current.start) / length)) : 0;
+    const remaining = current ? Math.max(0, Math.ceil((current.end - now) / 60000)) : 0;
     const zapping = !!this.zapId;
+    // The program rows keep their place whether or not the guide has
+    // answered yet, so the panel never jumps when it does.
     return html`
       ${zapping ? '' : this.renderStatus(channel)}
       ${!zapping && channel.kind === 'radio' ? html`<div class="sat-slot-radio sat-fs-radio" data-key="sat-fs-radio">${
@@ -1537,19 +1594,24 @@ export class SatelliteView {
             <span class="sat-badges">${this.badges(channel)}</span>
             <span class="sat-osd-clock">${formatTime(new Date(now))}</span>
           </div>
-          <div class="sat-osd-program">
-            ${current ? html`
-              <span class="sat-osd-title" dir="auto">${current.title}</span>
-              <time class="sat-osd-time">${formatTime(new Date(current.start))} – ${formatTime(new Date(current.end))}</time>`
-              : html`<span class="sat-osd-title sat-osd-muted">${t('epg.noData')}</span>`}
+          <div class="sat-osd-guide">
+            <div class="sat-osd-slot sat-osd-now">
+              <span class="sat-osd-label">${t('player.now')}</span>
+              <span class="sat-osd-title ${current ? '' : 'sat-osd-muted'}" dir="auto">${
+                current ? current.title : loaded ? t('epg.noData') : ''}</span>
+              <time class="sat-osd-time">${current ? timeRange(current) : ''}</time>
+            </div>
+            <div class="sat-osd-slot sat-osd-elapsed">
+              <span class="sat-osd-label"></span>
+              <div><div class="sat-osd-progress"><div style="width:${fraction * 100}%"></div></div></div>
+              <span class="sat-osd-remaining">${current ? t('preview.timeLeft', { minutes: remaining }) : ''}</span>
+            </div>
+            <div class="sat-osd-slot sat-osd-next ${next ? '' : 'empty'}">
+              <span class="sat-osd-label">${t('player.upNext')}</span>
+              <span class="sat-osd-title" dir="auto">${next ? next.title : ''}</span>
+              <time class="sat-osd-time">${next ? timeRange(next) : ''}</time>
+            </div>
           </div>
-          ${current ? html`<div class="sat-osd-progress"><div style="width:${fraction * 100}%"></div></div>` : ''}
-          ${next ? html`
-            <div class="sat-osd-next">
-              <span class="sat-osd-next-label">${t('player.upNext')}</span>
-              <time>${formatTime(new Date(next.start))}</time>
-              <span dir="auto">${next.title}</span>
-            </div>` : ''}
           ${this.renderSignal(channel, true)}
         </div>
       </div>`;

@@ -413,34 +413,86 @@ html[data-animation="essential"] .sat-notice-loading {
   color: var(--text-secondary);
 }
 
-.sat-osd-program {
-  display: flex;
-  align-items: baseline;
-  gap: 18px;
-  margin-top: 14px;
+/* Now and next: a compact guide of aligned columns (label, title, time)
+   that stops well short of the trailing edge. Each row keeps its height
+   while empty, so the panel never jumps when the guide answers. */
+.sat-osd-guide {
+  display: table;
+  width: calc(860px * var(--font-scale));
+  max-width: 100%;
+  margin-top: 16px;
+  border-collapse: collapse;
 }
 
-.sat-osd-title {
-  min-width: 0;
-  overflow: hidden;
-  font-size: 26px;
+.sat-osd-slot {
+  display: table-row;
+}
+
+.sat-osd-slot > * {
+  display: table-cell;
+  vertical-align: baseline;
   white-space: nowrap;
-  text-overflow: ellipsis;
 }
 
-.sat-osd-muted {
+.sat-osd-label {
+  width: 1%;
+  padding-right: 24px;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--text-muted);
 }
 
-.sat-osd-time {
-  flex-shrink: 0;
+.sat-osd-now .sat-osd-label {
+  color: var(--accent);
+}
+
+/* max-width: 0 lets a table cell take the free width and still ellipsize. */
+.sat-osd-title {
+  max-width: 0;
+  height: calc(36px * var(--font-scale));
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sat-osd-now .sat-osd-title {
+  font-size: 26px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.sat-osd-next .sat-osd-title {
   font-size: 22px;
   color: var(--text-secondary);
 }
 
+.sat-osd-title.sat-osd-muted {
+  color: var(--text-muted);
+}
+
+.sat-osd-time {
+  width: 1%;
+  padding-left: 24px;
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--text-secondary);
+}
+
+.sat-osd-next .sat-osd-time {
+  color: var(--text-muted);
+}
+
+.sat-osd-elapsed > * {
+  padding-top: 2px;
+  padding-bottom: 10px;
+  line-height: 1;
+  vertical-align: middle;
+}
+
 .sat-osd-progress {
   height: 4px;
-  margin-top: 12px;
   overflow: hidden;
   border-radius: 2px;
   background: var(--bg-tertiary);
@@ -451,19 +503,17 @@ html[data-animation="essential"] .sat-notice-loading {
   background: var(--accent);
 }
 
-.sat-osd-next {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  margin-top: 12px;
-  overflow: hidden;
-  font-size: 22px;
-  white-space: nowrap;
-  color: var(--text-secondary);
+.sat-osd-remaining {
+  width: 1%;
+  padding-left: 24px;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--text-muted);
 }
 
-.sat-osd-next-label {
-  color: var(--text-muted);
+.sat-osd-next.empty {
+  visibility: hidden;
 }
 
 /* --- Status: the IPTV player's label, at the bottom leading edge */

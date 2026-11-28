@@ -10,8 +10,11 @@ export function dropdown(
   active: string,
   // For a host whose re-renders would drop the class toggleDropdown() adds.
   open = false,
+  // Shown when no option is the active one.
+  placeholder?: string,
 ): Safe {
-  const current = options.find(o => o.value === active) ?? options[0];
+  const match = options.find(o => o.value === active);
+  const current = match ?? (placeholder !== undefined ? { label: placeholder } : options[0]);
   return html`
     <div class="dropdown ${open ? 'open' : ''}" id="${id}" data-value="${active}">
       <span class="dropdown-sizer" aria-hidden="true">

@@ -14,7 +14,13 @@ const {
   workerMock,
   cacheMock,
   persistMock,
+  satelliteMock,
 } = vi.hoisted(() => ({
+  satelliteMock: {
+    lineup: [] as unknown[],
+    knownLineup: vi.fn((): unknown[] => satelliteMock.lineup),
+    cachedPrograms: vi.fn((): unknown[] | null => null),
+  },
   persistMock: vi.fn(async (_candidates?: Array<{ key: string; prefix: string }>) => undefined),
   catalogMock: {
     getSearchCatalogExpiresAt: vi.fn(),
@@ -69,6 +75,8 @@ vi.mock('../services/reminder-service', () => ({ ReminderService: reminderMock }
 vi.mock('../services/storage-service', () => ({ StorageService: storageMock }));
 vi.mock('../services/xtream-archive', () => ({ XtreamArchiveService: archiveMock }));
 vi.mock('./toast', () => ({ showToast: toastMock }));
+vi.mock('../services/broadcast-service', () => ({ BroadcastService: satelliteMock }));
+vi.mock('../services/broadcast-cache', () => ({ BroadcastCache: { load: async () => undefined } }));
 vi.mock('../services/search-index-store', () => ({ persistSearchIndexes: persistMock }));
 vi.mock('../services/idb-cache', async importOriginal => ({
   ...await importOriginal<typeof import('../services/idb-cache')>(),
@@ -136,6 +144,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   workerMock.terminate();
   playlistMock.channels = [];
+  satelliteMock.lineup = [];
   playlistMock.search.mockReturnValue([]);
   playlistMock.searchRanked.mockImplementation((query: string, limit: number) => {
     const items = playlistMock.search(query);
@@ -165,6 +174,7 @@ function mkHandlers() {
     onReleaseTabBar: vi.fn(),
     onBack: vi.fn(),
     onPlayChannel: vi.fn(),
+    onOpenSatelliteChannel: vi.fn(),
     onOpenMovie: vi.fn(),
     onOpenSeries: vi.fn(),
     playingIndex: vi.fn(() => -1),
@@ -1509,6 +1519,36 @@ describe('Search', () => {
       workerMock.run.mockImplementation(originalRun);
     }
     expect(container.textContent).toContain('Alpha');
+  });
+
+  it('lists matching satellite channels in their own rail and opens one in Satellite', async () => {
+    const sat = (key: string, name: string) => ({
+      id: key, serviceKey: `tv:${key}`, number: 1, numberLabel: '1', name, kind: 'tv', source: 'satellite',
+      satellite: 'Satellite A', frequency: 0, transponderId: 0, hd: false, scrambled: false, locked: false, logo: '',
+    });
+    satelliteMock.lineup = [sat('s1', 'Alpha News'), sat('s2', 'Bravo Sport'), sat('s3', 'Charlie News HD')];
+    playlistMock.channels = [chan('Channel One')];
+    const { view, handlers } = await openWith();
+    await view.setQuery('news');
+    const tiles = Array.from(container.querySelectorAll<HTMLElement>('[data-sat-service]'));
+    expect(tiles.map(tile => tile.dataset.satService)).toEqual(['tv:s1', 'tv:s3']);
+    expect(container.textContent).toContain('Satellite');
+    tiles[1].dispatchEvent(new CustomEvent('nav:hover', { bubbles: true }));
+    view.handleAction('select');
+    expect(handlers.onOpenSatelliteChannel).toHaveBeenCalledWith('tv:s3');
+    expect(handlers.onPlayChannel).not.toHaveBeenCalled();
+  });
+
+  it('shows satellite matches as results when no IPTV channel matches', async () => {
+    satelliteMock.lineup = [{
+      id: 's1', serviceKey: 'tv:s1', number: 1, numberLabel: '1', name: 'Delta Movies', kind: 'tv',
+      source: 'satellite', satellite: '', frequency: 0, transponderId: 0, hd: false, scrambled: false,
+      locked: false, logo: '',
+    }];
+    const { view } = await openWith();
+    await view.setQuery('delta');
+    expect(container.querySelector('[data-sat-service="tv:s1"]')).not.toBeNull();
+    expect(container.textContent).not.toContain('No results found.');
   });
 
   it('plays a channel result on select via its playlist index', async () => {

@@ -423,6 +423,7 @@ class App {
         else this.goLive();
       },
       onPlayChannel: (idx, catchup) => { this.tabBar.blur(); this.playChannel(idx, catchup); },
+      onOpenSatelliteChannel: (serviceKey) => this.openSatelliteChannel(serviceKey),
       playingIndex: () => this.channelList.livePlayingIndex,
       onOpenMovie: (account, vod) => {
         this.tabBar.blur();
@@ -477,6 +478,7 @@ class App {
         this.showView('settings');
       },
       onChannelsChanged: () => this.satellite.invalidate(),
+      onOrderChanged: () => this.satellite.reorder(),
     });
     // A scan runs in the background: Satellite (which needs the tuner) waits
     // for it, and its lineup is read again once it saved.
@@ -1720,6 +1722,19 @@ class App {
     const name = StorageService.getPlaylists().find(entry => entry.id === id)?.name ?? '';
     this.parentalPinPrompt.showVerify(
       t(turnOff ? 'parental.enterToTurnOff' : 'parental.enterToRemove', { name }), proceed);
+  }
+
+  // A satellite channel picked in Search: the Satellite section, on it.
+  private openSatelliteChannel(serviceKey: string): void {
+    if (SatelliteScanSession.busy) {
+      showToast(t('satellite.scanInProgress'));
+      return;
+    }
+    this.tabBar.closeSearch();
+    this.tabBar.blur();
+    this.satellite.queueChannel(serviceKey);
+    this.tabBar.setActive('satellite');
+    this.switchSection('satellite');
   }
 
   // Settings' satellite tools take the whole screen; Back returns to Settings.

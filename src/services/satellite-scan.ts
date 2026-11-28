@@ -1,7 +1,7 @@
 import { createLogger } from '../utils/logger';
 import { BroadcastService } from './broadcast-service';
 import { lunaRequest, type LunaRequestHandle } from './luna';
-import { appDirectory, readAppFile, rootExec, shellQuote } from './root-exec';
+import { appDirectory, lunaSendCommand, readAppFile, rootExec, shellQuote } from './root-exec';
 import { normalizeTransponderList, type Transponder } from './broadcast-normalize';
 
 // The TV's satellite setup and scanning, as LG's own Channel Tuning app
@@ -244,6 +244,32 @@ function transponderRecord(request: TuneRequest, id: number): Raw {
   };
 }
 
+// The transponder the TV opens a satellite's tuning on (scanInfo.selectedTp),
+// as LG's satellite settings record it.
+export function selectedTpRecord(request: TuneRequest, known: readonly Transponder[]): Raw {
+  const match = matchTransponder(known, request);
+  const { tkgsPid: _tkgsPid, ...record } = transponderRecord(request, match ? match.id : USER_TRANSPONDER_ID);
+  return record;
+}
+
+export type SatelliteSetting = 'lnb' | 'diseqc' | 'tone' | 'lnbPower' | 'transponder';
+
+const TP_FIELDS = ['frequency', 'polarisation', 'symbolRate', 'transmissionSystem'];
+
+// The settings the TV did not keep, comparing what it read back with what
+// was saved.
+export function unkeptSettings(want: SatelliteConfig, got: SatelliteConfig): SatelliteSetting[] {
+  const unkept: SatelliteSetting[] = [];
+  if (want.lnb.type !== got.lnb.type || want.lnb.min !== got.lnb.min || want.lnb.max !== got.lnb.max) unkept.push('lnb');
+  if (want.diseqc !== got.diseqc) unkept.push('diseqc');
+  if ((toneLocked(want) ? 'OFF_22KHZTONE' : want.tone) !== got.tone) unkept.push('tone');
+  if (want.lnbPower !== got.lnbPower) unkept.push('lnbPower');
+  const wantTp = record(want.scanInfo.selectedTp);
+  const gotTp = record(got.scanInfo.selectedTp);
+  if (Object.keys(wantTp).length && TP_FIELDS.some(field => wantTp[field] !== gotTp[field])) unkept.push('transponder');
+  return unkept;
+}
+
 // Whether a listed transponder is the one the request describes. The TV
 // tunes a listed record by its id with its own symbol rate and system, so a
 // record that differs in either is another transponder, however close.
@@ -280,6 +306,89 @@ function tuningStatus(value: unknown): TuningStatus | null {
     radio: count('SERVICETYPE_DIGITAL_RADIO'),
     transponder: transponders[0] ?? null,
   };
+}
+
+// The channel provider's map (a binary LevelDB and its second copy) on
+// webOS 10, and the provider process, which ls-hubd starts on demand.
+const CHMAP_DIR = '/mnt/lg/cmn_data';
+const CHMAP_NAMES = ['ldb_chmap', 'ldb_chmap_backup'];
+const PROVIDER_COMM = 'legacy-broadcas';
+const PROVIDER_SERVICE = 'luna://com.webos.service.legacybroadcast.channel';
+const WIPE_DONE = 'CHMAP_WIPED';
+const WIPE_TIMEOUT_MS = 60000;
+const GONE_ATTEMPTS = 3;
+const GONE_DELAY_MS = 2000;
+
+// Killed outright, so it cannot write its map back on the way out; any
+// call then starts it again on an empty map.
+export function wipeChannelMapCommand(): string {
+  const dirs = CHMAP_NAMES.map(name => shellQuote(`${CHMAP_DIR}/${name}`));
+  const wake = lunaSendCommand(`${PROVIDER_SERVICE}/getChannelListUpdateStatus`, {}, 'com.webos.app.livetv');
+  return [
+    `for d in ${dirs.join(' ')}; do [ -d "$d" ] || { echo NOMAP; exit 3; }; done`,
+    `for p in /proc/[0-9]*; do [ "$(cat "$p/comm" 2>/dev/null)" = ${shellQuote(PROVIDER_COMM)} ] && kill -9 "\${p#/proc/}"; done`,
+    `for d in ${dirs.join(' ')}; do rm -rf "$d.deleted"; mv "$d" "$d.deleted"; done`,
+    'sleep 2',
+    `${wake} > /dev/null 2>&1`,
+    'sleep 6',
+    'systemctl restart iepg.service',
+    'sleep 6',
+    `for d in ${dirs.join(' ')}; do [ -d "$d" ] || { echo NOREBUILD; exit 4; }; done`,
+    `echo ${WIPE_DONE}`,
+  ].join('\n');
+}
+
+// The TV's list, read a few times: an empty map can fail a read or two
+// before it answers with nothing.
+async function channelsGone(): Promise<boolean> {
+  for (let attempt = 0; attempt < GONE_ATTEMPTS; attempt++) {
+    if (attempt) await new Promise(resolve => setTimeout(resolve, GONE_DELAY_MS));
+    const load = await BroadcastService.loadChannels();
+    if (load.ok) return load.channels.length === 0;
+    if (load.reason === 'no-channels' || load.reason === 'no-satellite') return true;
+  }
+  return false;
+}
+
+// The empty map comes with one default satellite; each saved one goes back
+// in its old order, with its LNB, DiSEqC, and scan options.
+async function restoreSatellites(saved: readonly SatelliteConfig[]): Promise<boolean> {
+  const fresh = (await SatelliteScan.configurations()) ?? [];
+  let ok = true;
+  for (let i = 0; i < saved.length; i++) {
+    let id: number | null = fresh[i] ? fresh[i].id : null;
+    if (id === null) {
+      const created = await BroadcastService.request(SCAN, 'createDvbSatelliteConfiguration', {});
+      const configuration = record(created ? created.configuration : null);
+      id = typeof configuration.configurationId === 'number' ? configuration.configurationId : null;
+    }
+    if (id === null) {
+      ok = false;
+      continue;
+    }
+    const picked = await BroadcastService.request(SCAN, 'setDvbSatelliteSelectedSatellite',
+      { configurationId: id, satelliteId: saved[i].satelliteId });
+    ok = ok && picked !== null;
+  }
+  const now = (await SatelliteScan.configurations()) ?? [];
+  for (const want of saved) {
+    const config = now.find(item => item.satelliteId === want.satelliteId);
+    if (!config) {
+      ok = false;
+      continue;
+    }
+    config.lnb = want.lnb;
+    config.diseqc = want.diseqc;
+    config.tone = want.tone;
+    config.lnbPower = want.lnbPower;
+    config.selected = want.selected;
+    config.networkSearch = want.networkSearch;
+    config.blindSearch = want.blindSearch;
+    config.skipScrambled = want.skipScrambled;
+    ok = await SatelliteScan.updateConfig(config) && ok;
+  }
+  if (!ok) log.warn('Satellites not restored', 'event=satellite.scan.wipe_restore_failed');
+  return ok;
 }
 
 export const SatelliteScan = {
@@ -368,13 +477,44 @@ export const SatelliteScan = {
     return 'failed';
   },
 
-  // Writes a configuration's LNB settings back, as LG's satellite settings do.
+  // Removes transponders from a satellite's list, as LG's transponder
+  // editor does (com.webos.app.channelsetting, webOS 10). The TV answers
+  // before its list changes, so the list read back decides.
+  async deleteTransponders(config: SatelliteConfig, targets: readonly Transponder[]): Promise<boolean> {
+    if (!targets.length) return true;
+    const ids = targets.map(item => item.id);
+    const reply = await BroadcastService.request(SCAN, 'deleteDvbSatelliteTransponder',
+      { idCount: ids.length, transponderIdList: ids });
+    const left = new Set((await SatelliteScan.transponders(config)).map(item => item.id));
+    const remaining = ids.filter(id => left.has(id)).length;
+    if (!remaining) return true;
+    log.warn('Transponders not deleted', 'event=satellite.scan.tp_delete_failed',
+      `answered=${String(reply !== null)}`, `left=${String(remaining)}`, `asked=${String(ids.length)}`);
+    return false;
+  },
+
+  // Writes a configuration's LNB settings (and its selected transponder)
+  // back, as LG's satellite settings do.
   async saveLnb(config: SatelliteConfig): Promise<boolean> {
     const reply = await BroadcastService.request(SCAN, 'setDvbSatelliteScanInfo',
       { configurationId: config.id, scanInfo: lnbScanInfo(config) });
     if (reply) config.scanInfo = lnbScanInfo(config);
     else log.warn('LNB settings not saved', 'event=satellite.scan.lnb_failed');
     return reply !== null;
+  },
+
+  // Saves a configuration's LNB settings and selected transponder, then reads
+  // them back: null when the TV refused the save, else what it did not keep.
+  async saveAndCheck(config: SatelliteConfig): Promise<SatelliteSetting[] | null> {
+    if (!await SatelliteScan.saveLnb(config)) return null;
+    const saved = (await SatelliteScan.configurations())?.find(item => item.id === config.id);
+    if (!saved) {
+      log.warn('Satellite setup not read back', 'event=satellite.scan.check_failed');
+      return null;
+    }
+    const unkept = unkeptSettings(config, saved);
+    if (unkept.length) log.warn('TV did not keep the satellite setup', 'event=satellite.scan.check_unkept', `settings=${unkept.join(',')}`);
+    return unkept;
   },
 
   // Writes a configuration's LNB settings and scan options back.
@@ -505,15 +645,52 @@ export const SatelliteScan = {
     await rootExec(FEED_KILL);
   },
 
-  // Removes channels from the TV's list, as LG's channel editor deletes them.
+  // Removes channels from the TV's list, as LG's channel editor deletes
+  // them. The TV answers yes even where it deletes nothing (digital
+  // channels on webOS 10), so the list read back decides.
   async deleteChannels(ids: readonly string[]): Promise<boolean> {
-    let ok = true;
+    let answered = true;
     for (let i = 0; i < ids.length; i += DELETE_BATCH) {
       const reply = await BroadcastService.request(IEPG, 'deleteChannel', { channelId: ids.slice(i, i + DELETE_BATCH) });
-      ok = ok && reply !== null;
+      answered = answered && reply !== null;
     }
-    if (!ok) log.warn('Channels not deleted', 'event=satellite.scan.delete_failed');
-    return ok;
+    const load = await BroadcastService.loadChannels();
+    const asked = new Set(ids);
+    const left = load.ok ? load.channels.filter(channel => asked.has(channel.id)).length : ids.length;
+    if (!left) return true;
+    log.warn('Channels not deleted', 'event=satellite.scan.delete_failed', `answered=${String(answered)}`,
+      `left=${String(left)}`, `asked=${String(ids.length)}`);
+    return false;
+  },
+
+  // Every channel on the TV, deleted for good. No call deletes a digital
+  // channel (webOS 10: iepg/deleteChannel takes analog ones, and a scan only
+  // merges), so this resets the channel provider's map instead: the map is
+  // set aside, one copy deep, and the provider restarts on an empty one; the
+  // guide service then rebuilds its copy. The map also holds the satellite
+  // setup, which is put back afterwards; transponder lists return to the
+  // TV's own. Needs root.
+  async deleteAllChannels(): Promise<{ ok: boolean; restored: boolean }> {
+    const saved = await SatelliteScan.configurations();
+    if (!saved) return { ok: false, restored: false };
+    const result = await rootExec(wipeChannelMapCommand(), WIPE_TIMEOUT_MS);
+    // Nothing was touched without root or without a map to set aside.
+    if (result.unavailable || /NOMAP/.test(result.stdout)) {
+      log.warn('Channels not wiped', 'event=satellite.scan.wipe_failed', `reason=${result.unavailable ? 'no_root' : 'no_map'}`);
+      return { ok: false, restored: true };
+    }
+    // Any other answer may come after the map was reset, so the setup is put
+    // back and the channel list itself says whether the channels went.
+    if (!result.ok || result.stdout.indexOf(WIPE_DONE) < 0) {
+      log.warn('Channel wipe unconfirmed', 'event=satellite.scan.wipe_unconfirmed',
+        `error=${result.error.toLowerCase().replace(/[^a-z]+/g, '_').slice(0, 24) || 'none'}`,
+        `rebuilt=${String(!/NOREBUILD/.test(result.stdout))}`);
+    }
+    const restored = await restoreSatellites(saved);
+    const gone = await channelsGone();
+    log.info('Channels wiped', 'event=satellite.scan.wipe', `gone=${String(gone)}`,
+      `satellites=${String(saved.length)}`, `restored=${String(restored)}`);
+    return { ok: gone, restored };
   },
 
   async stopScan(broadcastId: string): Promise<void> {

@@ -78,9 +78,14 @@ function kindOf(raw: Raw): BroadcastKind {
   if (flag(raw, 'Radio', 'isRadio', 'radio')) return 'radio';
   const type = `${str(raw.channelType)} ${str(raw.channelTypeName)}`.toLowerCase();
   if (type.indexOf('radio') !== -1) return 'radio';
-  // DVB service_type 0x02 is digital radio.
-  return raw.serviceType === 2 ? 'radio' : 'tv';
+  if (typeof raw.serviceType === 'string') return raw.serviceType.toLowerCase().indexOf('radio') !== -1 ? 'radio' : 'tv';
+  return typeof raw.serviceType === 'number' && RADIO_SERVICE_TYPES.indexOf(raw.serviceType) !== -1 ? 'radio' : 'tv';
 }
+
+// DVB service types that carry sound only: digital radio (0x02), FM radio
+// (0x07), and advanced codec digital radio (0x0A), which many satellite
+// radio services use.
+const RADIO_SERVICE_TYPES = [0x02, 0x07, 0x0a];
 
 // LG serves logos as http(s) URLs or as absolute paths on the TV; anything
 // else would only resolve against the app.

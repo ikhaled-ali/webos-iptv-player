@@ -61,6 +61,53 @@ export interface ScanSessionState {
   removed: number;
 }
 
+export interface ScanCounts {
+  tv: number;
+  radio: number;
+  satellites: Array<{ satelliteName: string; channels: number }>;
+}
+
+// What the scan screen counts. Once the scan's channels are listed, the
+// counts are the list's own, so the totals and the list always agree;
+// before that, the TV's running totals.
+export function scanCounts(state: ScanSessionState): ScanCounts {
+  const added = state.added;
+  const skip = (kind: string) => state.skipRadio && kind === 'radio';
+  if (added) {
+    const shown = added.filter(channel => !skip(channel.kind));
+    return {
+      tv: shown.filter(channel => channel.kind === 'tv').length,
+      radio: shown.filter(channel => channel.kind === 'radio').length,
+      satellites: state.report.map(entry => ({
+        satelliteName: entry.satelliteName,
+        channels: shown.filter(channel => channel.satellite === entry.satelliteName).length,
+      })),
+    };
+  }
+  const running = state.phase === 'running' || state.phase === 'stopping';
+  let tv = 0;
+  let radio = 0;
+  if (running) {
+    // The TV reports running totals per satellite as each transponder ends.
+    const totals = new Map<number, { tv: number; radio: number }>();
+    const feed = state.feed;
+    const done = feed ? feed.completed.slice() : [];
+    if (feed && feed.current && feed.current.state === 'COMPLETED') done.push(feed.current);
+    done.forEach(status => totals.set(status.configurationId, { tv: status.tv, radio: status.radio }));
+    totals.forEach((entry) => { tv += entry.tv; radio += entry.radio; });
+  } else {
+    state.report.forEach((entry) => { tv += entry.tv; radio += entry.radio; });
+  }
+  return {
+    tv,
+    radio: state.skipRadio ? 0 : radio,
+    satellites: state.report.map(entry => ({
+      satelliteName: entry.satelliteName,
+      channels: state.skipRadio ? entry.tv : entry.channels,
+    })),
+  };
+}
+
 function idleState(): ScanSessionState {
   return {
     phase: 'idle', progress: 0, feed: null, report: [], added: null, error: '', stoppedByUser: false, startedAt: 0, skipRadio: false, fresh: [], removed: 0,

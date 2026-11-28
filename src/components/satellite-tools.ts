@@ -164,14 +164,19 @@ function diseqcLabel(port: string): string {
   return port === 'OFF_DISEQC' ? t('common.off') : port.charAt(0);
 }
 
-// The transponder the TV last tuned for a satellite, as LG's settings keep it.
+function inRange(value: unknown, range: { min: number; max: number }): value is number {
+  return typeof value === 'number' && value >= range.min && value <= range.max;
+}
+
+// The transponder the TV last tuned for a satellite, as LG's settings keep
+// it. The TV stores none as frequency 0 and symbol rate 0.
 function storedForm(config: SatelliteConfig): TuneRequest | null {
   const selected = config.scanInfo.selectedTp as Record<string, unknown> | undefined;
-  if (!selected || typeof selected.frequency !== 'number') return null;
+  if (!selected || !inRange(selected.frequency, FREQUENCY_RANGE)) return null;
   return {
     frequency: selected.frequency,
     polarization: selected.polarisation === 'VERTICAL_POLARISATION' ? 'V' : 'H',
-    symbolRate: typeof selected.symbolRate === 'number' ? selected.symbolRate : 27500,
+    symbolRate: inRange(selected.symbolRate, SYMBOL_RATE_RANGE) ? selected.symbolRate : 27500,
     system: selected.transmissionSystem === 'TRANSMISSIONSYSTEM_DVBS' ? 'DVB-S' : 'DVB-S2',
   };
 }

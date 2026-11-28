@@ -60,6 +60,7 @@ vi.mock('./toast', () => ({ showToast: toastMock }));
 const { SatelliteScanSession } = await import('../services/satellite-scan-session');
 const { StorageService } = await import('../services/storage-service');
 const { addedDetail, channelsByTransponder, logScrollStep, revealDelta, SatelliteTools, SHARE_GUTTER_PX } = await import('./satellite-tools');
+const { parseSettings } = await import('../services/finder-share-protocol');
 
 describe('revealDelta', () => {
   const view = { top: 128, bottom: 1080 };
@@ -324,6 +325,24 @@ describe('SatelliteTools', () => {
       await tools.open('scan');
       await settle();
       expect(share.onApply!(apply())).toBe(false);
+    });
+
+    // The TV stores "no transponder" as frequency 0, symbol rate 0; the
+    // finder opened on 0 MHz and the phone dropped the settings it shared.
+    it('opens on a real transponder, and shares settings the phone accepts, when the TV stored none', async () => {
+      const none = { frequency: 0, symbolRate: 0, transponderId: 65535, polarisation: 'VERTICAL_POLARISATION' };
+      scan.configurations.mockResolvedValue([
+        { ...config(1, 'Alpha'), scanInfo: { selectedTp: none } },
+        { ...config(2, 'Bravo'), scanInfo: { selectedTp: none } },
+      ]);
+      await tools.open('finder');
+      await settle();
+      expect(q('#sat-tools-tp .dropdown-current')!.textContent).toMatch(/^\d{4,5} [HV] \d{4,5} /);
+      share.state = 'live';
+      key('sat-tools-new-tp')!.click();
+      await new Promise(resolve => setTimeout(resolve, 400));
+      const settings = parseSettings(JSON.stringify({ v: 1, ...share.publishSettings.mock.calls.at(-1)?.[0] }));
+      expect(settings?.satellites.map(item => item.name)).toEqual(['Alpha', 'Bravo']);
     });
 
     it('shares every satellite with its transponders once the share is live', async () => {

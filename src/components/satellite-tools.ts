@@ -28,8 +28,15 @@ import {
   type OrderMode,
   type ScanOptions,
 } from '../services/satellite-scan-session';
-import { FinderShare, type FinderReading } from '../services/finder-share';
-import { signalLevel, type ViewerLabels } from '../services/finder-share-protocol';
+import { FinderShare, type FinderReading, type FinderSettings } from '../services/finder-share';
+import {
+  FREQUENCY_RANGE,
+  signalLevel,
+  SYMBOL_RATE_RANGE,
+  type ApplyMessage,
+  type SharedSatellite,
+  type ViewerLabels,
+} from '../services/finder-share-protocol';
 import { InputMode } from '../navigation/input-mode';
 import { qrDataUrl } from '../utils/qr';
 import { BroadcastVideo } from './broadcast-video';
@@ -52,6 +59,8 @@ const RETUNE_DELAY_MS = 450;
 const READING_MS = 800;
 // The picture follows once the tuner has locked.
 const PICTURE_DELAY_MS = 2000;
+// The phone's copy of the settings follows the TV's once edits settle.
+const SHARE_SETTINGS_MS = 300;
 // A saved transponder shows up in the TV's list within a few seconds.
 const TP_COUNT_ATTEMPTS = 4;
 const TP_COUNT_DELAY_MS = 2500;
@@ -66,8 +75,8 @@ export const SATELLITE_TOOLS: ReadonlyArray<{ id: SatelliteTool; label: TextMess
 type NumberField = 'frequency' | 'symbolRate';
 
 const NUMBER_FIELDS: Record<NumberField, { min: number; max: number; step: number; digits: number }> = {
-  frequency: { min: 3000, max: 13000, step: 1, digits: 5 },
-  symbolRate: { min: 1000, max: 45000, step: 1, digits: 5 },
+  frequency: { ...FREQUENCY_RANGE, step: 1, digits: 5 },
+  symbolRate: { ...SYMBOL_RATE_RANGE, step: 1, digits: 5 },
 };
 
 // A scroller moves this far per Up or Down.
@@ -155,6 +164,18 @@ function diseqcLabel(port: string): string {
   return port === 'OFF_DISEQC' ? t('common.off') : port.charAt(0);
 }
 
+// The transponder the TV last tuned for a satellite, as LG's settings keep it.
+function storedForm(config: SatelliteConfig): TuneRequest | null {
+  const selected = config.scanInfo.selectedTp as Record<string, unknown> | undefined;
+  if (!selected || typeof selected.frequency !== 'number') return null;
+  return {
+    frequency: selected.frequency,
+    polarization: selected.polarisation === 'VERTICAL_POLARISATION' ? 'V' : 'H',
+    symbolRate: typeof selected.symbolRate === 'number' ? selected.symbolRate : 27500,
+    system: selected.transmissionSystem === 'TRANSMISSIONSYSTEM_DVBS' ? 'DVB-S' : 'DVB-S2',
+  };
+}
+
 // The finder names a listed transponder only when the TV would tune that
 // record, so what the form shows is what gets tuned.
 const formMatches = sameTransponder;
@@ -225,6 +246,7 @@ export class SatelliteTools {
   private digitTimer: ReturnType<typeof setTimeout> | null = null;
   private retuneTimer: ReturnType<typeof setTimeout> | null = null;
   private readingTimer: ReturnType<typeof setTimeout> | null = null;
+  private shareTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly container: HTMLElement, private readonly options: SatelliteToolsOptions) {
     this.stage = document.createElement('div');
@@ -293,6 +315,7 @@ export class SatelliteTools {
     this.unsubscribe = SatelliteScanSession.subscribe(() => this.onSessionChange());
     this.unsubscribeShare?.();
     this.unsubscribeShare = FinderShare.subscribe(() => this.onShareChange());
+    FinderShare.onApply = message => this.applyFromPhone(message);
     const token = ++this.token;
     this.loadState = 'loading';
     this.tpResult = null;
@@ -384,6 +407,7 @@ export class SatelliteTools {
     this.unsubscribeShare?.();
     this.unsubscribeShare = null;
     FinderShare.stop();
+    FinderShare.onApply = null;
     this.saveTps();
     void this.releasePicture();
   }
@@ -404,8 +428,11 @@ export class SatelliteTools {
   }
 
   private clearTimers(): void {
-    for (const timer of [this.digitTimer, this.retuneTimer, this.readingTimer, this.lnbTimer]) if (timer) clearTimeout(timer);
+    for (const timer of [this.digitTimer, this.retuneTimer, this.readingTimer, this.lnbTimer, this.shareTimer]) {
+      if (timer) clearTimeout(timer);
+    }
     this.lnbTimer = null;
+    this.shareTimer = null;
     this.digitTimer = null;
     this.retuneTimer = null;
     this.readingTimer = null;
@@ -418,14 +445,7 @@ export class SatelliteTools {
   // The finder starts on the transponder the TV last used for the satellite.
   private adoptSelectedTp(config: SatelliteConfig): void {
     this.newTp = false;
-    const selected = config.scanInfo.selectedTp as Record<string, unknown> | undefined;
-    if (!selected || typeof selected.frequency !== 'number') return;
-    this.form = {
-      frequency: selected.frequency,
-      polarization: selected.polarisation === 'VERTICAL_POLARISATION' ? 'V' : 'H',
-      symbolRate: typeof selected.symbolRate === 'number' ? selected.symbolRate : 27500,
-      system: selected.transmissionSystem === 'TRANSMISSIONSYSTEM_DVBS' ? 'DVB-S' : 'DVB-S2',
-    };
+    this.form = storedForm(config) ?? this.form;
   }
 
   private async loadTransponders(config: SatelliteConfig): Promise<void> {
@@ -637,6 +657,25 @@ export class SatelliteTools {
       sound: t('finderShare.sound'),
       peak: t('finderShare.peak'),
       resetPeak: t('common.reset'),
+      satellite: t('satelliteTools.satellite'),
+      lnb: t('satelliteTools.lnb'),
+      diseqc: t('satelliteTools.diseqc'),
+      tone: t('satelliteTools.tone'),
+      lnbPower: t('satelliteTools.lnbPower'),
+      newTransponder: t('satelliteTools.newTransponder'),
+      frequency: t('satelliteTools.frequency'),
+      symbolRate: t('satelliteTools.symbolRate'),
+      polarization: t('satelliteTools.polarization'),
+      horizontal: t('satelliteTools.horizontal'),
+      vertical: t('satelliteTools.vertical'),
+      system: t('satelliteTools.system'),
+      off: t('common.off'),
+      send: t('finderShare.send'),
+      cancel: t('common.cancel'),
+      sending: t('finderShare.sending'),
+      applied: t('finderShare.applied'),
+      notApplied: t('finderShare.notApplied'),
+      noAnswer: t('finderShare.noAnswer'),
     };
   }
 
@@ -645,7 +684,100 @@ export class SatelliteTools {
       FinderShare.stop();
       return;
     }
+    // The phone can pick any satellite, so it gets every transponder list.
+    this.loadAllTransponders();
     void FinderShare.start(this.shareLabels()).then(() => this.shareReading());
+  }
+
+  private scheduleShareSettings(): void {
+    if (this.shareTimer || FinderShare.state !== 'live' || this.tool !== 'finder') return;
+    this.shareTimer = setTimeout(() => {
+      this.shareTimer = null;
+      const settings = this.shareSettings();
+      if (settings && this.active && this.tool === 'finder') FinderShare.publishSettings(settings);
+    }, SHARE_SETTINGS_MS);
+  }
+
+  // What the finder shows, for the phone to edit: every satellite with its
+  // LNB setup, transponder list, and the transponder it tunes.
+  private shareSettings(): FinderSettings | null {
+    const current = this.config;
+    if (!current || !this.configs || this.loadState !== 'ready') return null;
+    const satellites = this.configs.map((config): SharedSatellite => {
+      const known = this.transponders.get(config.id) ?? [];
+      const form = config === current ? this.form : storedForm(config) ?? this.form;
+      const match = config === current ? Number(this.selectedTp()) || 0
+        : known.find(item => formMatches(item, form))?.id ?? 0;
+      return {
+        id: config.id,
+        name: config.satelliteName,
+        lnb: LNB_PRESETS.findIndex(preset => preset.min === config.lnb.min && preset.max === config.lnb.max),
+        lnbLabel: lnbLabel(config),
+        diseqc: config.diseqc,
+        tone: config.tone,
+        lnbPower: config.lnbPower,
+        form: { ...form },
+        tp: match,
+        tps: known.map(item => [item.id, item.frequency, item.polarization === 'V' ? 'V' : 'H', item.symbolRate || 0,
+          item.system === 'DVB-S' || item.system === 'DVB-S2' ? item.system : '']),
+      };
+    });
+    return {
+      satellite: current.id,
+      satellites,
+      lnbs: LNB_PRESETS.map(preset => ({ label: preset.label, universal: preset.min !== preset.max })),
+      diseqcs: DISEQC_PORTS.map(port => ({ value: port, label: diseqcLabel(port) })),
+      tones: TONES.map(tone => ({ value: tone.value, label: tone.label || t('common.off') })),
+    };
+  }
+
+  // The phone's settings replace the form and the satellite's LNB setup, as
+  // if picked with the remote; false when the finder can't tune them now.
+  private applyFromPhone(message: ApplyMessage): boolean {
+    const reason = this.phoneRejection(message);
+    const configs = this.configs;
+    if (reason || !configs) {
+      log.warn('Phone settings rejected', 'event=satellite.share.rejected', `reason=${reason ?? 'busy'}`);
+      return false;
+    }
+    const at = configs.findIndex(item => item.id === message.satellite);
+    const config = configs[at];
+    this.commitDigits(false);
+    this.caretInput()?.blur();
+    this.menuOpen = false;
+    if (at !== this.configIndex) {
+      this.configIndex = at;
+      void this.loadTransponders(config);
+    }
+    this.newTp = false;
+    this.form = { ...message.form };
+    this.tpResult = null;
+    this.saveResult = null;
+    const preset = message.lnb >= 0 ? LNB_PRESETS[message.lnb] : null;
+    const lnb = preset ? { type: preset.type, min: preset.min, max: preset.max } : config.lnb;
+    const lnbSame = lnb.type === config.lnb.type && lnb.min === config.lnb.min && lnb.max === config.lnb.max
+      && message.diseqc === config.diseqc && message.tone === config.tone && message.lnbPower === config.lnbPower;
+    if (lnbSame) {
+      this.render();
+      this.scheduleRetune(0);
+      return true;
+    }
+    config.lnb = lnb;
+    config.diseqc = message.diseqc;
+    config.tone = message.tone;
+    config.lnbPower = message.lnbPower;
+    // Saves the setup, then retunes on it.
+    this.lnbChanged(config);
+    return true;
+  }
+
+  private phoneRejection(message: ApplyMessage): string | null {
+    if (!this.active || this.tool !== 'finder' || this.loadState !== 'ready' || SatelliteScanSession.busy
+      || this.tpResult === 'saving' || this.saveResult === 'saving') return 'busy';
+    if (!this.configs || !this.configs.some(item => item.id === message.satellite)) return 'satellite';
+    if (message.lnb >= LNB_PRESETS.length || (DISEQC_PORTS as readonly string[]).indexOf(message.diseqc) < 0
+      || !TONES.some(tone => tone.value === message.tone)) return 'invalid';
+    return null;
   }
 
   private onShareChange(): void {
@@ -1284,6 +1416,7 @@ export class SatelliteTools {
     });
     if (managing) this.manager.syncFields();
     this.video.showPreview();
+    this.scheduleShareSettings();
   }
 
   private renderContent(): Safe {

@@ -144,7 +144,64 @@
     cursor: pointer;
   }
   button[aria-pressed="true"] { color: #fff; background: var(--accent); border-color: var(--accent); }
+  button:disabled { opacity: 0.45; cursor: default; }
+  button.primary { color: #fff; background: var(--accent); border-color: var(--accent); }
   .stale .meters { opacity: 0.45; }
+  .tuning { margin-top: 12px; }
+  fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+  fieldset:disabled { opacity: 0.45; }
+  .field { display: block; }
+  .field + .field, .field + .pair, .pair + .field { margin-top: 16px; }
+  .field-label { display: block; margin-bottom: 6px; font-size: 15px; color: var(--muted); }
+  select, input[type="text"] {
+    display: block;
+    width: 100%;
+    min-height: 48px;
+    padding: 0 12px;
+    font: inherit;
+    font-size: 16px;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  input[type="text"] { font-variant-numeric: tabular-nums; }
+  input[aria-invalid="true"] { border-color: var(--poor); }
+  .pair { display: flex; gap: 12px; }
+  .pair .field { flex: 1; min-width: 0; margin-top: 0; }
+  .segmented { display: flex; gap: 8px; }
+  .segmented button { min-width: 0; padding: 0 8px; }
+  .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .switch-row .field-label { margin: 0; }
+  .switch {
+    position: relative;
+    flex: 0 0 auto;
+    width: 52px;
+    height: 32px;
+    margin: 0;
+    border-radius: 16px;
+    background: var(--track);
+    border: 1px solid var(--border);
+    appearance: none;
+    -webkit-appearance: none;
+    cursor: pointer;
+  }
+  .switch::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    transition: transform 0.15s ease-out;
+  }
+  .switch:checked { background: var(--accent); border-color: var(--accent); }
+  .switch:checked::after { transform: translateX(20px); }
+  .send-status { margin: 16px 0 0; font-size: 15px; color: var(--muted); }
+  .send-status[data-error="true"] { color: var(--poor); }
 </style>
 </head>
 <body>
@@ -181,6 +238,36 @@
     <button type="button" id="sound" aria-pressed="false" data-label="sound"></button>
     <button type="button" id="reset" data-label="resetPeak"></button>
   </div>
+  <section class="card tuning" id="tuning" hidden>
+    <fieldset id="tuning-fields">
+      <label class="field"><span class="field-label" data-label="satellite"></span><select id="f-satellite"></select></label>
+      <label class="field"><span class="field-label" data-label="lnb"></span><select id="f-lnb"></select></label>
+      <div class="field"><span class="field-label" data-label="diseqc"></span><div class="segmented" id="f-diseqc"></div></div>
+      <div class="field"><span class="field-label" data-label="tone"></span><div class="segmented" id="f-tone"></div></div>
+      <label class="field switch-row">
+        <span class="field-label" data-label="lnbPower"></span>
+        <input type="checkbox" class="switch" id="f-power" role="switch">
+      </label>
+      <label class="field"><span class="field-label" data-label="transponder"></span><select id="f-tp"></select></label>
+      <div class="pair">
+        <label class="field" id="f-frequency-field">
+          <span class="field-label" data-label="frequency"></span>
+          <input id="f-frequency" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="5" autocomplete="off">
+        </label>
+        <label class="field">
+          <span class="field-label" data-label="symbolRate"></span>
+          <input id="f-symbol-rate" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="5" autocomplete="off">
+        </label>
+      </div>
+      <div class="field"><span class="field-label" data-label="polarization"></span><div class="segmented" id="f-pol"></div></div>
+      <div class="field"><span class="field-label" data-label="system"></span><div class="segmented" id="f-system"></div></div>
+    </fieldset>
+    <p class="send-status" id="send-status" role="status" hidden></p>
+    <div class="controls">
+      <button type="button" id="cancel" data-label="cancel" hidden></button>
+      <button type="button" id="send" class="primary" data-label="send"></button>
+    </div>
+  </section>
 </main>
 <!-- VIEWER_SCRIPT -->
 </body>

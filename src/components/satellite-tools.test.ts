@@ -41,12 +41,12 @@ vi.mock('../services/broadcast-cache', () => ({
     saveChannels: vi.fn(() => true),
   },
 }));
-vi.mock('../services/finder-share', () => ({
-  FinderShare: {
-    subscribe: () => () => undefined, stop: vi.fn(), start: vi.fn(), publish: vi.fn(),
-    state: 'off', active: false, viewerUrl: null,
-  },
+const share = vi.hoisted(() => ({
+  subscribe: () => () => undefined, stop: vi.fn(), start: vi.fn(async () => undefined), publish: vi.fn(),
+  publishSettings: vi.fn(), state: 'off', active: false, viewerUrl: null,
+  onApply: null as ((message: unknown) => boolean) | null,
 }));
+vi.mock('../services/finder-share', () => ({ FinderShare: share }));
 vi.mock('./broadcast-video', () => ({
   BroadcastVideo: class {
     prepare(): Promise<string | null> { return Promise.resolve(video.broadcastId); }
@@ -267,6 +267,79 @@ describe('SatelliteTools', () => {
     // Already saved: closing writes nothing more.
     tools.close();
     expect(scan.saveLnb).not.toHaveBeenCalled();
+  });
+
+  describe('settings from the phone', () => {
+    const apply = (patch: Record<string, unknown> = {}) => ({
+      v: 1, req: 'abcdef01', satellite: 2, lnb: 2, diseqc: 'B_DISEQC', tone: 'A_22KHZTONE', lnbPower: false,
+      form: { frequency: 12000, polarization: 'V', symbolRate: 22000, system: 'DVB-S' }, ...patch,
+    });
+
+    afterEach(() => {
+      share.state = 'off';
+      video.broadcastId = null;
+    });
+
+    it('tunes them as if picked on the TV, saving the satellite\u2019s new LNB setup', async () => {
+      video.broadcastId = 'b1';
+      await tools.open('finder');
+      await settle();
+      expect(share.onApply!(apply())).toBe(true);
+      expect(q('#sat-tools-satellite [aria-pressed="true"], #sat-tools-satellite .active')?.textContent?.trim()).toBe('Bravo');
+      expect(q('#sat-tools-tp .dropdown-current')!.textContent).toBe('12000 V 22000 DVB-S');
+      await new Promise(resolve => setTimeout(resolve, 600));
+      expect(scan.saveLnb).toHaveBeenCalledWith(expect.objectContaining({
+        id: 2, lnb: { type: 'KU_BAND', min: 9750, max: 9750 }, diseqc: 'B_DISEQC', tone: 'A_22KHZTONE', lnbPower: false,
+      }));
+      expect(scan.tune).toHaveBeenLastCalledWith('b1', expect.objectContaining({ id: 2 }),
+        { frequency: 12000, polarization: 'V', symbolRate: 22000, system: 'DVB-S' }, expect.anything());
+    });
+
+    it('retunes without saving when the LNB setup is the same', async () => {
+      video.broadcastId = 'b1';
+      await tools.open('finder');
+      await settle();
+      expect(share.onApply!(apply({ satellite: 1, lnb: 0, diseqc: 'OFF_DISEQC', tone: 'OFF_22KHZTONE', lnbPower: true }))).toBe(true);
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(scan.saveLnb).not.toHaveBeenCalled();
+      expect(scan.tune).toHaveBeenLastCalledWith('b1', expect.objectContaining({ id: 1 }),
+        { frequency: 12000, polarization: 'V', symbolRate: 22000, system: 'DVB-S' }, expect.anything());
+    });
+
+    it('refuses a satellite or option the TV doesn\u2019t have, and says why', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      await tools.open('finder');
+      await settle();
+      expect(share.onApply!(apply({ satellite: 9 }))).toBe(false);
+      expect(share.onApply!(apply({ diseqc: 'E_DISEQC' }))).toBe(false);
+      expect(share.onApply!(apply({ lnb: 7 }))).toBe(false);
+      const lines = warn.mock.calls.map(call => call.join(' ')).filter(line => line.includes('event=satellite.share.rejected'));
+      expect(lines.map(line => /reason=(\w+)/.exec(line)?.[1])).toEqual(['satellite', 'invalid', 'invalid']);
+      expect(q('#sat-tools-satellite [aria-pressed="true"], #sat-tools-satellite .active')?.textContent?.trim()).toBe('Alpha');
+      warn.mockRestore();
+    });
+
+    it('refuses settings while another tool is open', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      await tools.open('scan');
+      await settle();
+      expect(share.onApply!(apply())).toBe(false);
+    });
+
+    it('shares every satellite with its transponders once the share is live', async () => {
+      await tools.open('finder');
+      await settle();
+      share.state = 'live';
+      share.subscribe = () => () => undefined;
+      key('sat-tools-new-tp')!.click();
+      await new Promise(resolve => setTimeout(resolve, 400));
+      const settings = share.publishSettings.mock.calls.at(-1)?.[0];
+      expect(settings.satellite).toBe(1);
+      expect(settings.satellites.map((item: { name: string }) => item.name)).toEqual(['Alpha', 'Bravo']);
+      expect(settings.satellites[0].tps[1]).toEqual([2, 11100, 'V', 27500, 'DVB-S']);
+      expect(settings.satellites[0].tp).toBe(0);
+      expect(settings.lnbs[0]).toEqual({ label: '9750/10600', universal: true });
+    });
   });
 
   it('opens a satellite’s transponders and deletes the selected ones', async () => {

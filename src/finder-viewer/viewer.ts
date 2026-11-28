@@ -1,11 +1,14 @@
 // The phone page for the signal finder's share, bundled on its own by
 // scripts/build-finder-viewer.mjs. It subscribes to the share's topics on
-// the relay and draws the TV's readings. Text from the relay is set only
-// through textContent.
+// the relay, draws the TV's readings, and sends the finder's settings back
+// from its tuning panel. Text from the relay is set only through
+// textContent.
 import { MqttClient } from '../services/mqtt-lite';
 import {
+  applyTopic,
   FINDER_BROKERS,
   parseReading,
+  parseSettings,
   parseStatus,
   parseViewerHash,
   shareFilter,
@@ -22,6 +25,7 @@ import {
   withStatus,
   type ViewerState,
 } from './viewer-state';
+import { TuningPanel } from './tuning-panel';
 
 const RECONNECT_MS = 3000;
 const KEEPALIVE_S = 10;
@@ -37,6 +41,8 @@ interface ScreenLock extends EventTarget {
 
 let wakeLock: ScreenLock | null = null;
 let soundOn = false;
+let client: MqttClient | null = null;
+let panel: TuningPanel | null = null;
 
 function el<T extends HTMLElement = HTMLElement>(id: string): T {
   return document.getElementById(id) as T;
@@ -88,6 +94,7 @@ function render(): void {
   el('ber').textContent = reading && reading.ber !== null ? reading.ber.toExponential(1) : '–';
   el('transponder').textContent = reading
     ? [reading.satellite, reading.transponder].filter(Boolean).join(' · ') || '–' : '–';
+  panel?.update(labels, phase === 'live' && !!client);
 }
 
 function beep(frequency: number): void {
@@ -125,7 +132,10 @@ function resumeSound(): void {
 }
 
 function onMessage(topic: string, payload: string): void {
-  if (/\/status$/.test(topic)) {
+  if (/\/settings$/.test(topic)) {
+    const settings = parseSettings(payload);
+    if (settings) panel?.onSettings(settings);
+  } else if (/\/status$/.test(topic)) {
     const status = parseStatus(payload);
     if (status) state = withStatus(state, status, Date.now());
   } else if (/\/reading$/.test(topic)) {
@@ -144,10 +154,15 @@ function connect(broker: number, id: string): void {
     clientId: `ipv${randomHex(8)}`,
     keepAliveSeconds: KEEPALIVE_S,
     connectTimeoutMs: 8000,
-  }).then((client) => {
-    client.onMessage = onMessage;
-    client.onLost = () => setTimeout(() => connect(broker, id), RECONNECT_MS);
-    client.subscribe(shareFilter(id));
+  }).then((connected) => {
+    client = connected;
+    connected.onMessage = onMessage;
+    connected.onLost = () => {
+      if (client === connected) client = null;
+      render();
+      setTimeout(() => connect(broker, id), RECONNECT_MS);
+    };
+    connected.subscribe(shareFilter(id));
   }, () => {
     setTimeout(() => connect(broker, id), RECONNECT_MS);
   });
@@ -163,6 +178,11 @@ function start(): void {
     el('notice').hidden = false;
     return;
   }
+  panel = new TuningPanel((message) => {
+    if (!client) return false;
+    client.publish(applyTopic(share.id), JSON.stringify(message));
+    return true;
+  }, () => randomHex(8));
   el('sound').addEventListener('click', () => {
     soundOn = !soundOn;
     el('sound').setAttribute('aria-pressed', soundOn ? 'true' : 'false');

@@ -2,13 +2,18 @@ import { createLogger } from '../utils/logger';
 import { KeepAwake } from './keep-awake';
 import { MqttClient, MqttConnectError, type MqttClientOptions } from './mqtt-lite';
 import {
+  applyTopic,
   FINDER_BROKERS,
   FINDER_SHARE_VERSION,
   FINDER_VIEWER_URL,
+  parseApply,
   readingTopic,
+  settingsTopic,
   statusTopic,
   viewerUrl,
+  type ApplyMessage,
   type ReadingMessage,
+  type SettingsMessage,
   type StatusMessage,
   type ViewerLabels,
 } from './finder-share-protocol';
@@ -27,6 +32,7 @@ const KEEP_AWAKE = 'finder-share';
 export type FinderShareState = 'off' | 'connecting' | 'live' | 'reconnecting' | 'failed';
 
 export type FinderReading = Omit<ReadingMessage, 'v'>;
+export type FinderSettings = Omit<SettingsMessage, 'v' | 'ack'>;
 
 interface FinderShareDeps {
   connect: (options: MqttClientOptions) => Promise<MqttClient>;
@@ -48,8 +54,9 @@ const DEFAULT_DEPS: FinderShareDeps = { connect: options => MqttClient.connect(o
 
 /**
  * Streams the signal finder's readings to a phone through a public MQTT
- * relay. The share id is random and lives as long as the app, so a phone
- * that scanned the QR keeps working when sharing is turned off and on.
+ * relay, and takes the finder's settings back from it. The share id is
+ * random and lives as long as the app, so a phone that scanned the QR
+ * keeps working when sharing is turned off and on.
  * The broker drops a retained "stopped" status in place of a TV that
  * vanishes, and stop() publishes the same. While it shares, the TV stays
  * out of its screensaver: nobody presses a key while on the roof.
@@ -64,6 +71,11 @@ export class FinderShareSession {
   private token = 0;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private statusTimer: ReturnType<typeof setInterval> | null = null;
+  private settings: FinderSettings | null = null;
+  private sentSettings: string | null = null;
+  private ack: SettingsMessage['ack'];
+  // The finder's answer to the phone's settings: true once it tunes them.
+  onApply: ((message: ApplyMessage) => boolean) | null = null;
 
   constructor(private readonly deps: FinderShareDeps = DEFAULT_DEPS) {
     // Another app in front owns the tuner and the screen; sharing ends.
@@ -128,8 +140,13 @@ export class FinderShareSession {
     this.client = null;
     if (client && this.id && this.labels) {
       client.publish(statusTopic(this.id), this.status(false), true);
+      // An empty retained message clears the settings from the relay.
+      if (this.sentSettings !== null) client.publish(settingsTopic(this.id), '', true);
       client.close();
     }
+    this.settings = null;
+    this.sentSettings = null;
+    this.ack = undefined;
     this.setState('off');
   }
 
@@ -137,6 +154,32 @@ export class FinderShareSession {
     if (!this.client || !this.id || this.stateValue !== 'live') return;
     const message: ReadingMessage = { v: FINDER_SHARE_VERSION, ...reading };
     this.client.publish(readingTopic(this.id), JSON.stringify(message));
+  }
+
+  // Retained and sent only when changed, so a phone that opens late edits
+  // what the TV shows.
+  publishSettings(settings: FinderSettings): void {
+    this.settings = settings;
+    this.sendSettings();
+  }
+
+  private sendSettings(): void {
+    if (!this.client || !this.id || !this.settings || this.stateValue !== 'live') return;
+    const message: SettingsMessage = { v: FINDER_SHARE_VERSION, ...this.settings };
+    if (this.ack) message.ack = this.ack;
+    const json = JSON.stringify(message);
+    if (json === this.sentSettings) return;
+    this.sentSettings = json;
+    this.client.publish(settingsTopic(this.id), json, true);
+  }
+
+  private receive(topic: string, payload: string): void {
+    if (!this.id || topic !== applyTopic(this.id)) return;
+    const message = parseApply(payload);
+    if (!message) return;
+    const ok = this.onApply ? this.onApply(message) : false;
+    this.ack = { req: message.req, ok };
+    this.sendSettings();
   }
 
   private open(index: number): Promise<MqttClient> {
@@ -164,7 +207,15 @@ export class FinderShareSession {
     publishOn();
     this.stopStatusRefresh();
     this.statusTimer = setInterval(publishOn, STATUS_REFRESH_MS);
+    client.onMessage = (topic, payload) => {
+      if (token === this.token && this.client === client) this.receive(topic, payload);
+    };
+    client.subscribe(applyTopic(this.id as string));
     this.setState('live');
+    // A new connection publishes the settings again: the broker may hold
+    // an older copy.
+    this.sentSettings = null;
+    this.sendSettings();
   }
 
   private stopStatusRefresh(): void {

@@ -1,20 +1,50 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FinderShareSession, KEEPALIVE_S, STATUS_REFRESH_MS, type FinderReading } from './finder-share';
+import { FinderShareSession, KEEPALIVE_S, STATUS_REFRESH_MS, type FinderReading, type FinderSettings } from './finder-share';
 import { MqttConnectError, type MqttClient, type MqttClientOptions } from './mqtt-lite';
-import { FALLBACK_LABELS, FINDER_BROKERS, parseStatus, readingTopic, statusTopic } from './finder-share-protocol';
+import {
+  applyTopic,
+  FALLBACK_LABELS,
+  FINDER_BROKERS,
+  parseSettings,
+  parseStatus,
+  readingTopic,
+  settingsTopic,
+  statusTopic,
+} from './finder-share-protocol';
 
 const ID = 'ab'.repeat(16);
 
 interface FakeClient {
   publish: ReturnType<typeof vi.fn>;
+  subscribe: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
   onLost: (() => void) | null;
-  onMessage: null;
+  onMessage: ((topic: string, payload: string, retain: boolean) => void) | null;
 }
 
 function fakeClient(): FakeClient {
-  return { publish: vi.fn(), close: vi.fn(), onLost: null, onMessage: null };
+  return { publish: vi.fn(), subscribe: vi.fn(), close: vi.fn(), onLost: null, onMessage: null };
+}
+
+const SETTINGS: FinderSettings = {
+  satellite: 1,
+  satellites: [{
+    id: 1, name: 'Alpha', lnb: 0, lnbLabel: '9750/10600', diseqc: 'A', tone: 'T0', lnbPower: true,
+    form: { frequency: 11000, polarization: 'H', symbolRate: 27500, system: 'DVB-S2' }, tp: 0, tps: [],
+  }],
+  lnbs: [{ label: '9750/10600', universal: true }],
+  diseqcs: [{ value: 'A', label: 'A' }],
+  tones: [{ value: 'T0', label: '' }],
+};
+
+const APPLY = {
+  v: 1, req: 'abcdef01', satellite: 1, lnb: 0, diseqc: 'A', tone: 'T0', lnbPower: false,
+  form: { frequency: 11100, polarization: 'V', symbolRate: 27500, system: 'DVB-S' },
+};
+
+function settingsPublishes(client: FakeClient): string[] {
+  return client.publish.mock.calls.filter(call => call[0] === settingsTopic(ID)).map(call => call[1] as string);
 }
 
 function session(outcomes: Array<FakeClient | 'fail'>) {
@@ -180,6 +210,56 @@ describe('FinderShareSession', () => {
     // Retries after the drop leave no further events.
     expect(events(warn, 'satellite.share.dropped')).toHaveLength(1);
     expect(events(warn, 'satellite.share.failed')).toHaveLength(1);
+  });
+
+  it('shares the settings retained, only when they change, and clears them on stop', async () => {
+    const client = fakeClient();
+    const { share } = session([client]);
+    share.publishSettings(SETTINGS);
+    expect(settingsPublishes(client)).toHaveLength(0);
+    await share.start(FALLBACK_LABELS);
+    expect(settingsPublishes(client).map(json => parseSettings(json)?.satellite)).toEqual([1]);
+    share.publishSettings({ ...SETTINGS });
+    expect(settingsPublishes(client)).toHaveLength(1);
+    expect(client.publish.mock.calls.find(call => call[0] === settingsTopic(ID))?.[2]).toBe(true);
+    share.stop();
+    expect(client.publish).toHaveBeenLastCalledWith(settingsTopic(ID), '', true);
+  });
+
+  it('hands the phone\u2019s settings to the finder and answers with an ack', async () => {
+    const client = fakeClient();
+    const { share } = session([client]);
+    const onApply = vi.fn(() => true);
+    share.onApply = onApply;
+    await share.start(FALLBACK_LABELS);
+    share.publishSettings(SETTINGS);
+    expect(client.subscribe).toHaveBeenCalledWith(applyTopic(ID));
+    client.onMessage?.(applyTopic(ID), JSON.stringify(APPLY), false);
+    expect(onApply).toHaveBeenCalledWith(APPLY);
+    expect(parseSettings(settingsPublishes(client).pop() as string)?.ack).toEqual({ req: APPLY.req, ok: true });
+
+    onApply.mockReturnValue(false);
+    client.onMessage?.(applyTopic(ID), JSON.stringify({ ...APPLY, req: 'abcdef02' }), false);
+    expect(parseSettings(settingsPublishes(client).pop() as string)?.ack).toEqual({ req: 'abcdef02', ok: false });
+    // Malformed or on another topic: not the finder's to see.
+    client.onMessage?.(applyTopic(ID), '{"v":1}', false);
+    client.onMessage?.(statusTopic(ID), JSON.stringify(APPLY), false);
+    expect(onApply).toHaveBeenCalledTimes(2);
+  });
+
+  it('subscribes again and republishes the settings after a reconnect', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const first = fakeClient();
+    const second = fakeClient();
+    const { share } = session([first, second]);
+    await share.start(FALLBACK_LABELS);
+    share.publishSettings(SETTINGS);
+    first.onLost?.();
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(share.state).toBe('live');
+    expect(second.subscribe).toHaveBeenCalledWith(applyTopic(ID));
+    expect(settingsPublishes(second)).toHaveLength(1);
   });
 
   it('closes a connection that answers after stop', async () => {
